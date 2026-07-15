@@ -1,0 +1,31 @@
+[project]
+name = "equivariant-attention"
+version = "0.1.0"
+description = "SE(3)-equivariant attention layers with linear, local, dense, and factorized moment paths"
+authors = [
+    { name = "eightmm" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "cuequivariance>=0.10.0",
+    "cuequivariance-ops-torch-cu13>=0.10.0",
+    "cuequivariance-torch>=0.10.0",
+    "e3nn>=0.6.0",
+    "rdkit>=2026.3.3",
+    "torch>=2.12.1",
+    "torch-geometric>=2.8.0",
+]
+
+[project.scripts]
+equivariant-attention = "equivariant_attention:main"
+
+[build-system]
+requires = ["uv_build>=0.10.3,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.20",
+]

@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.python-version.local
+build/
+dist/
+
+# Test and tool caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data, training runs, and generated artifacts
+data/
+outputs/
+checkpoints/
+artifacts/
+wandb/
+runs/
+
+# Local agent and orchestration state
+.oms/
+.omc/
+AGENTS.md
+CLAUDE.md
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
