@@ -2,7 +2,7 @@ import pytest
 import torch
 
 import equivariant_attention as package
-from equivariant_attention.moment import _factorized_attention
+import equivariant_attention.moment as moment_module
 
 
 def _make_model(dtype: torch.dtype = torch.float64) -> torch.nn.Module:
@@ -64,17 +64,49 @@ def test_batch_contract_rejects_ambiguous_graph_ids(
         model(node_feats, pos, batch=batch)
 
 
-def test_factorized_attention_accumulates_low_precision_inputs_in_float32() -> None:
-    query = torch.full((2, 1, 2), 1e-4, dtype=torch.float16)
-    key = query.clone()
+def test_structured_attention_accumulates_low_precision_inputs_in_float32() -> None:
+    query_scalar = torch.full((2, 1, 2), 1e-4, dtype=torch.float16)
+    key_scalar = query_scalar.clone()
+    query_vector = torch.zeros(2, 1, 3, dtype=torch.float16)
+    key_vector = torch.zeros_like(query_vector)
     value = torch.tensor([[[1.0]], [[3.0]]], dtype=torch.float16)
     batch = torch.zeros(2, dtype=torch.long)
 
-    output = _factorized_attention(query, key, value, batch, balanced=True, eps=1e-12)
+    output = moment_module._factorized_moment_attention(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        torch.ones(1, dtype=torch.float16),
+        value,
+        batch,
+        num_graphs=1,
+        balanced=True,
+    )
 
     assert output.dtype == torch.float16
     assert torch.isfinite(output).all()
     assert torch.allclose(output.float(), torch.full_like(output.float(), 2.0), atol=2e-3, rtol=0.0)
+
+
+def test_graph_metadata_is_derived_once_per_forward(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    original = moment_module._graph_metadata
+
+    def counted(batch: torch.Tensor) -> tuple[int, torch.Tensor]:
+        nonlocal calls
+        calls += 1
+        return original(batch)
+
+    monkeypatch.setattr(moment_module, "_graph_metadata", counted)
+    model = _make_model()
+    node_feats = torch.randn(5, 4, dtype=torch.float64)
+    pos = torch.randn(5, 3, dtype=torch.float64)
+    batch = torch.tensor([0, 0, 1, 1, 1])
+
+    model(node_feats, pos, batch=batch)
+
+    assert calls == 1
 
 
 def test_singleton_and_coincident_graphs_have_finite_backward() -> None:
@@ -120,3 +152,29 @@ def test_fp16_large_graph_geometry_remains_finite() -> None:
         outputs = model(node_feats, pos)
 
     assert all(torch.isfinite(value).all() for value in outputs.values())
+
+
+def test_fp16_features_preserve_large_fp32_coordinates_and_gradients() -> None:
+    model = package.EquivariantAttention(
+        package.EquivariantAttentionConfig(
+            node_dim=1,
+            hidden_irreps="2x0e + 1x1o",
+            output_irreps="1x0e + 1x1o + 1x2e",
+            num_layers=1,
+            num_heads=1,
+        )
+    ).to(dtype=torch.float16)
+    node_feats = torch.zeros(3, 1, dtype=torch.float16)
+    pos = torch.tensor(
+        [[-100_000.0, 0.0, 0.0], [0.0, 0.0, 0.0], [100_000.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+
+    outputs = model(node_feats, pos)
+    loss = sum(value.float().square().mean() for value in outputs.values())
+    loss.backward()
+
+    assert all(torch.isfinite(value).all() for value in outputs.values())
+    assert pos.dtype == torch.float32
+    assert pos.grad is not None and torch.isfinite(pos.grad).all()

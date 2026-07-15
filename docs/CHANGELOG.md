@@ -10,12 +10,21 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.6 -> v0.7 (2026-07-15) — bound vector queries/keys and the
+  quadratic angular scale, replace signed flattened angular reductions with
+  structured 3x3 PSD mass/denominator contractions plus signed numerator
+  summaries, preserve float32+ coordinate storage, and
+  reuse graph metadata. impact: removes the reproduced orthogonal-feature
+  cancellation and mixed-coordinate downcast while retaining linear node
+  scaling and the single quadratic-kernel mechanism.
 - [model] v0.5 -> v0.6 (2026-07-15) — consolidate the public implementation to
   one factorized-moment `EquivariantAttention`, remove base/rich/local/dense
   variants, enforce strict graph IDs, and accumulate low-precision attention
   and squared geometry/moment paths in float32. impact: narrows the mathematical
   contract and removes reproduced fp16 denominator and large-graph geometry
-  overflows.
+  overflows. This version deliberately changed the third geometry scalar from
+  normalized radius-square to `log1p(normalized radius-square)`; it is an
+  architecture change, not refactor-equivalent to earlier QM9 probes.
 - [model] v0.4 -> v0.5 (2026-07-13) — add `EquivariantMomentAttention` with persistent scalar/vector states, transient five-component l=2 moments, squared-vector linear routing, and key-mass balancing. impact: tests a richer global linear path without persistent tensor storage.
 - [training] v0.2 -> v0.3 (2026-07-03) — add `rich_linear_light`, empty-neighbor fast path, and `--amp-dtype bf16` probe option. impact: gives a faster scalar/vector-only rich regression path; bf16 is available but not always faster on small QM9 graphs.
 - [model] v0.3 -> v0.4 (2026-07-03) — add `rich_linear` regression option and vectorize batched rich linear attention with segment sums. impact: enables neighbor-free linear rich QM9 probe and removes per-graph Python loop overhead.

@@ -58,8 +58,13 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
   permutation consistent.
 - Persistent `0e` scalars and polar `1o` vectors; transient `2e`
   symmetric-traceless moments.
+- `node_feats` contains invariant scalar (`0e`) channels only; coordinates are
+  stored in float32+ independently of feature/model precision.
 - Exact graph-wise factorization with `O(N)` node scaling at fixed width,
   depth, head count, and one balancing cycle.
+- Unit-ball vector queries/keys, a bounded quadratic angular scale, and
+  structured 3x3 PSD mass/denominator contractions avoid signed
+  flattened-feature cancellation; signed value numerators remain unclamped.
 - fp16/bf16 geometry squares, angular/ST features, moment reductions, and
   invariant normalization use float32; float64 stays float64. Rank-2 moment
   outputs therefore remain float32 for low-precision model inputs.
@@ -76,6 +81,9 @@ See [the model contract](docs/MODEL.md) and [the derivation](docs/LAYER_MATH.md)
 Existing QM9 results are adaptive random-row warm-start probes, not evidence of
 scaffold or cold-target generalization. Historical experiments remain in
 `docs/EXPERIMENTS.jsonl`; removed architecture variants are not public APIs.
+The global centroid/RMS-normalized model is not a size-consistent interatomic
+potential; its intended role is a bounded-size property probe or a global
+context block above a local equivariant encoder.
 
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10

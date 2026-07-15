@@ -14,8 +14,8 @@ There is one attention implementation. `model.attention_kind` is
 
 | Name | Shape | Contract |
 |---|---:|---|
-| `node_feats` | `(N, node_dim)` | finite floating tensor |
-| `pos` | `(N, 3)` | finite coordinates on the same device |
+| `node_feats` | `(N, node_dim)` | finite O(3)-invariant scalar (`0e`) channels |
+| `pos` | `(N, 3)` | finite float32+ coordinates on the same device |
 | `batch` | `(N,)` | optional integer IDs `0..G-1` |
 
 At least one node is required. Graph IDs must be nonnegative, contiguous, and
@@ -37,9 +37,18 @@ The forward result is a tensor-only dictionary:
 Representation metadata belongs to the model rather than the output dictionary
 so compiled/tensor consumers do not receive strings.
 
+`node_tensors` and `graph_tensors` read out the last attention block's
+transient symmetric-traceless moment. They are not a persistent tensor hidden
+state computed after the final scalar/vector FFN.
+
 ## Fixed architecture choices
 
-- squared-vector positive angular kernel;
+- positive scalar content plus a bounded quadratic vector kernel;
+- finite-precision unit-ball vector queries/keys and a learned angular scale in
+  `[0, vector_kernel_max]` (mathematically open before floating-point
+  saturation);
+- structured 3x3 PSD summaries for quadratic masses and denominators, plus
+  analogous signed matrix-valued value summaries that are not clamped;
 - one key-mass balancing cycle followed by row normalization;
 - exact factorized relative vector and rank-2 moment transport;
 - scalar/vector residual updates;
@@ -54,3 +63,9 @@ and be evaluated as one isolated change.
 The current contract is O(3), not chirality-sensitive SE(3). It is appropriate
 for properties that should be unchanged by reflection. Enantiomer-sensitive
 scalar prediction is outside the current model class.
+
+Graph-wide centroid/RMS normalization and global attention do not enforce
+cluster decomposition or extensive size consistency. The standalone model is
+therefore scoped to bounded-size intensive-property probes or use as a global
+context block above a local equivariant encoder, not interatomic potentials or
+energy-conserving force fields.

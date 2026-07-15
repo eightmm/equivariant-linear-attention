@@ -1,21 +1,50 @@
 # Factorized Moment Attention
 
-For graph `g`, node `i`, and head `h`, let positive feature maps be
-`q_ih, k_jh in R^D`. The unnormalized content kernel is
+For graph `g`, node `i`, and head `h`, let `q0_ih, k0_jh in R^D` be
+positive scalar-content features. Let `q1_ih, k1_jh in R^3` be polar-vector
+features mapped by the following unit-ball transform:
 
 ```text
-K_ijh = q_ih^T k_jh >= 0.
+q1 = u / sqrt(1 + ||u||^2),   k1 = v / sqrt(1 + ||v||^2).
 ```
 
-The implementation builds each feature from positive scalar features and a
-squared-vector feature map. If `u` and `v` are head vectors,
+In exact arithmetic, the vector norms are strictly below one and the learned
+angular scale satisfies `0 < alpha_h < vector_kernel_max`. Floating-point
+rounding can saturate either bound, so the implemented contract is
+`||q1||, ||k1|| <= 1` and `0 <= alpha_h <= vector_kernel_max`. The pair kernel is
 
 ```text
-<phi(u), phi(v)> = 1 + alpha (u^T v)^2 >= 1.
+K_ijh = q0_ih^T k0_jh + 1 + alpha_h (q1_ih^T k1_jh)^2 >= 1.
 ```
 
 This is O(3)-invariant because inner products are preserved by every orthogonal
 matrix, including reflections.
+
+The individual coordinates of a flattened symmetric outer feature would be
+signed. Positivity belongs to the complete quadratic kernel, not to every
+feature coordinate. The production implementation therefore does not sum a
+signed flattened feature and then take a dot product. It contracts structured
+3x3 positive-semidefinite summaries.
+
+For row scale `r_ih`, define
+
+```text
+Q0_gh = sum_i r_ih q0_ih
+Qr_gh = sum_i r_ih
+Q2_gh = sum_i r_ih q1_ih q1_ih^T.
+```
+
+Then each key mass is evaluated as
+
+```text
+m_jh = k0_jh^T Q0_gh + Qr_gh + alpha_h k1_jh^T Q2_gh k1_jh.
+```
+
+Every mass term is nonnegative and the constant term is strictly positive.
+Value numerators use analogous scalar, constant, and matrix-valued summaries,
+but their learned values may be signed, so these summaries are not PSD and the
+quadratic numerator contraction is not clamped. This is algebraically identical
+to the explicit dense kernel and remains `O(N)` at fixed width and head count.
 
 ## One balancing cycle
 
@@ -26,16 +55,10 @@ For each graph and head, compute `m_jh = sum_i K_ijh` and use
 A_ijh = K'_ijh / sum_l K'_ilh.
 ```
 
-No pair matrix is needed. With
-
-```text
-s_h = sum_j k_jh / m_jh
-S_h = sum_j (k_jh / m_jh) outer v_jh,
-```
-
-the denominator and numerator are `d_ih = q_ih^T s_h` and
-`n_ih = q_ih^T S_h`, so the message is `n_ih / d_ih`. Tests compare this
-factorization with the explicit dense kernel in float64.
+No pair matrix is needed. Tests compare both the balanced and row-normalized
+structured factorizations with the explicit dense kernel in float64. The single
+balancing cycle remains a fixed architecture choice; whether it improves
+selectivity is an empirical P1 question rather than a positivity requirement.
 
 ## Exact relative moments
 
@@ -82,7 +105,13 @@ rank-2 moment outputs remain float32 for low-precision inputs. This prevents
 both an `eps=1e-12` clamp from becoming zero and valid normalized coordinates
 near 256 from overflowing when squared in fp16.
 
+Feature and coordinate precision are separate contracts. Low-precision model
+features may be fp16/bf16, while coordinates remain float32 unless the complete
+verification lane is float64. Finite FP32 coordinates are never cast through
+fp16 before geometry preprocessing.
+
 At fixed feature dimension, head count, depth, and one balancing cycle, time
-and intermediate storage are `O(N)`. The current wrapper still validates inputs
-and derives graph count at runtime; full-graph compile behavior remains a
-separate performance target.
+and intermediate storage are `O(N)`. The public wrapper validates inputs and
+derives graph count plus graph counts once, then reuses that metadata in every
+layer and graph readout. Validation can still create compile graph breaks;
+full-graph compilation remains a separate performance target.

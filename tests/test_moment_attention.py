@@ -4,11 +4,15 @@ import torch
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.irreps import CartesianIrreps
 from equivariant_attention.moment import (
+    _bounded_kernel_scale,
     _bounded_irrep,
-    _factorized_attention,
+    _factorized_moment_attention,
     _st_features_to_matrix,
+    _structured_key_mass,
+    _structured_numerator,
     _symmetric_traceless_cross_features,
     _symmetric_traceless_features,
+    _unit_ball,
 )
 
 
@@ -112,38 +116,110 @@ def test_forward_shapes_and_tensor_subspace() -> None:
     assert float(trace_error) < 1e-12
 
 
-def test_factorized_attention_matches_explicit_dense_kernel() -> None:
+@pytest.mark.parametrize("balanced", [False, True])
+def test_structured_attention_matches_explicit_dense_kernel(balanced: bool) -> None:
     torch.manual_seed(107)
-    query = torch.rand(7, 2, 6, dtype=torch.float64)
-    key = torch.rand(7, 2, 6, dtype=torch.float64)
+    query_scalar = torch.rand(7, 2, 4, dtype=torch.float64)
+    key_scalar = torch.rand(7, 2, 4, dtype=torch.float64)
+    query_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
+    key_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
+    kernel_scale = torch.tensor([0.2, 0.7], dtype=torch.float64)
     value = torch.randn(7, 2, 5, dtype=torch.float64)
     batch = torch.tensor([0, 0, 0, 1, 1, 1, 1])
 
-    actual = _factorized_attention(query, key, value, batch, balanced=True, eps=1e-12)
+    actual = _factorized_moment_attention(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        kernel_scale,
+        value,
+        batch,
+        num_graphs=2,
+        balanced=balanced,
+    )
     expected = torch.empty_like(value)
     for graph in range(2):
         index = batch == graph
-        kernel = torch.einsum("ihd,jhd->hij", query[index], key[index])
-        kernel = kernel / kernel.sum(dim=1, keepdim=True)
+        content = torch.einsum("ihd,jhd->hij", query_scalar[index], key_scalar[index])
+        angular_dot = torch.einsum("iha,jha->hij", query_vector[index], key_vector[index])
+        kernel = content + 1.0 + kernel_scale[:, None, None] * angular_dot.square()
+        if balanced:
+            kernel = kernel / kernel.sum(dim=1, keepdim=True)
         weights = kernel / kernel.sum(dim=2, keepdim=True)
         expected[index] = torch.einsum("hij,jhf->ihf", weights, value[index])
 
     assert _max_error(actual, expected) < 1e-10
 
 
-def test_factorized_attention_unbalanced_reference() -> None:
-    torch.manual_seed(109)
-    query = torch.rand(5, 2, 4, dtype=torch.float64)
-    key = torch.rand(5, 2, 4, dtype=torch.float64)
-    value = torch.randn(5, 2, 3, dtype=torch.float64)
-    batch = torch.zeros(5, dtype=torch.long)
+def test_structured_mass_avoids_orthogonal_quadratic_cancellation() -> None:
+    node_count = 10_000
+    direction_q = torch.tensor([1.0, 1.0, 0.0]) / torch.sqrt(torch.tensor(2.0))
+    direction_k = torch.tensor([1.0, -1.0, 0.0]) / torch.sqrt(torch.tensor(2.0))
+    query_vector = _unit_ball((100.0 * direction_q).expand(node_count, 1, 3), eps=1e-12)
+    key_vector = _unit_ball((100.0 * direction_k).expand(node_count, 1, 3), eps=1e-12)
+    query_scalar = torch.zeros(node_count, 1, 1)
+    key_scalar = torch.zeros_like(query_scalar)
+    row_scale = torch.ones(node_count, 1)
+    batch = torch.zeros(node_count, dtype=torch.long)
 
-    actual = _factorized_attention(query, key, value, batch, balanced=False, eps=1e-12)
-    kernel = torch.einsum("ihd,jhd->hij", query, key)
-    weights = kernel / kernel.sum(dim=2, keepdim=True)
-    expected = torch.einsum("hij,jhf->ihf", weights, value)
+    mass = _structured_key_mass(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        torch.ones(1),
+        row_scale,
+        batch,
+        num_graphs=1,
+    )
 
-    assert _max_error(actual, expected) < 1e-10
+    assert torch.isfinite(mass).all()
+    assert torch.allclose(mass, torch.full_like(mass, float(node_count)), atol=2e-3, rtol=1e-6)
+
+
+def test_vector_kernel_components_are_bounded() -> None:
+    value = torch.tensor([[[1e6, -1e6, 1e6]]], dtype=torch.float64)
+    bounded = _unit_ball(value, eps=1e-12)
+    interior_scale = _bounded_kernel_scale(
+        torch.tensor([-20.0, 0.0, 20.0], dtype=torch.float64),
+        maximum=0.75,
+    )
+    saturated_value = torch.tensor([[[1e6, 0.0, 0.0]]], dtype=torch.float32)
+    saturated_bound = _unit_ball(saturated_value, eps=1e-12)
+    saturated_scale = _bounded_kernel_scale(torch.tensor([-100.0, 100.0]), maximum=0.75)
+
+    assert float(bounded.norm(dim=-1).max()) < 1.0
+    assert torch.all(interior_scale > 0.0)
+    assert torch.all(interior_scale < 0.75)
+    assert torch.all(saturated_bound.norm(dim=-1) <= 1.0)
+    assert torch.all(saturated_scale >= 0.0)
+    assert torch.all(saturated_scale <= 0.75)
+
+    model = _make_model()
+    initialized = _bounded_kernel_scale(
+        model.layers[0].raw_vector_kernel,
+        model.layers[0].vector_kernel_max,
+    )
+    assert torch.allclose(initialized, torch.full_like(initialized, 0.05))
+
+
+def test_structured_numerator_preserves_signed_values() -> None:
+    one = torch.ones(1, 1, 1, dtype=torch.float64)
+    vector = torch.tensor([[[1.0, 0.0, 0.0]]], dtype=torch.float64)
+    numerator = _structured_numerator(
+        one,
+        one,
+        vector,
+        vector,
+        torch.ones(1, dtype=torch.float64),
+        torch.ones(1, 1, dtype=torch.float64),
+        torch.full((1, 1, 1), -1.0, dtype=torch.float64),
+        torch.zeros(1, dtype=torch.long),
+        num_graphs=1,
+    )
+
+    assert torch.equal(numerator, torch.full_like(numerator, -3.0))
 
 
 def test_exact_relative_second_moment_identity() -> None:
@@ -187,6 +263,15 @@ def test_symmetric_traceless_feature_storage_is_exact() -> None:
         (EquivariantAttentionConfig(node_dim=0), "node_dim"),
         (EquivariantAttentionConfig(node_dim=4, num_layers=0), "num_layers"),
         (EquivariantAttentionConfig(node_dim=4, num_heads=0), "num_heads"),
+        (EquivariantAttentionConfig(node_dim=4, vector_kernel_max=0.0), "vector_kernel_max"),
+        (
+            EquivariantAttentionConfig(
+                node_dim=4,
+                vector_kernel_init=1.0,
+                vector_kernel_max=1.0,
+            ),
+            "smaller",
+        ),
         (EquivariantAttentionConfig(node_dim=4, hidden_irreps="7x0e + 2x1o", num_heads=2), "divisible"),
         (EquivariantAttentionConfig(node_dim=4, hidden_irreps="8x0e + 1x2e"), "scalar and vector"),
     ],

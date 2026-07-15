@@ -17,6 +17,7 @@ def main() -> int:
 
     device = torch.device(device_name)
     dtype = torch.bfloat16 if use_bf16 else torch.float64
+    geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
     torch.manual_seed(23)
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -28,7 +29,7 @@ def main() -> int:
         )
     ).to(device=device, dtype=dtype)
     node_feats = torch.randn(7, 5, device=device, dtype=dtype)
-    pos = torch.randn(7, 3, device=device, dtype=dtype)
+    pos = torch.randn(7, 3, device=device, dtype=geometry_dtype)
     batch = torch.tensor([0, 0, 0, 1, 1, 1, 1], device=device)
 
     outputs = model(node_feats, pos, batch=batch)
@@ -39,6 +40,9 @@ def main() -> int:
             print(f"ml_smoke: non-finite gradient in {name}", file=sys.stderr)
             return 1
 
+    model.eval()
+    with torch.inference_mode():
+        eager_outputs = model(node_feats, pos, batch=batch)
     inference_model = prepare_for_inference(
         model,
         device=device,
@@ -50,6 +54,16 @@ def main() -> int:
     if not all(torch.isfinite(value).all() for value in inference_outputs.values()):
         print("ml_smoke: non-finite inference output", file=sys.stderr)
         return 1
+    tolerance = 5e-3 if dtype in {torch.float16, torch.bfloat16} else 1e-10
+    for key in eager_outputs:
+        if not torch.allclose(
+            eager_outputs[key],
+            inference_outputs[key],
+            atol=tolerance,
+            rtol=tolerance,
+        ):
+            print(f"ml_smoke: eager/inference mismatch in {key}", file=sys.stderr)
+            return 1
 
     print(f"ml_smoke: ok ({device}, dtype={dtype})")
     return 0

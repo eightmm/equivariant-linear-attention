@@ -25,6 +25,14 @@ def test_synthetic_dataset_collates_graph_batch() -> None:
     assert batch.sample_ids == (dataset[0].sample_id, dataset[1].sample_id)
 
 
+def test_graph_batch_separates_feature_and_geometry_precision() -> None:
+    dataset = SyntheticMoleculeDataset(num_samples=2, node_dim=4, seed=12)
+    batch = collate_graphs([dataset[0], dataset[1]]).to("cpu", dtype=torch.float16)
+
+    assert batch.node_feats.dtype == torch.float16
+    assert batch.pos.dtype == torch.float32
+
+
 def test_split_dataset_is_deterministic_and_disjoint() -> None:
     dataset = SyntheticMoleculeDataset(num_samples=12, node_dim=4, seed=13)
     train_a, val_a, test_a = split_dataset(dataset, train_size=6, val_size=3, seed=17)
@@ -80,3 +88,10 @@ def test_benchmark_cli_represents_real_batches() -> None:
 
     assert args.graphs == [1, 8, 32]
     assert args.nodes_per_graph == [16, 32]
+
+
+def test_cpu_ci_runs_the_project_fast_gate() -> None:
+    workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+
+    assert workflow.is_file()
+    assert "scripts/check.sh fast" in workflow.read_text()

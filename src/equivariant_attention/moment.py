@@ -18,6 +18,7 @@ class EquivariantAttentionConfig:
     num_layers: int = 3
     num_heads: int = 4
     vector_kernel_init: float = 0.05
+    vector_kernel_max: float = 1.0
     residual_scale_init: float = 0.1
     eps: float = 1e-12
 
@@ -46,6 +47,7 @@ class EquivariantAttention(nn.Module):
                     vectors=self.hidden_irreps.vectors,
                     num_heads=config.num_heads,
                     vector_kernel_init=config.vector_kernel_init,
+                    vector_kernel_max=config.vector_kernel_max,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -63,14 +65,23 @@ class EquivariantAttention(nn.Module):
         pos: torch.Tensor,
         batch: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        node_feats, pos, batch = self._check_inputs(node_feats, pos, batch)
+        node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
+            node_feats,
+            pos,
+            batch,
+        )
         geometry_dtype = torch.float64 if pos.dtype == torch.float64 else torch.float32
         geometry_pos = pos.to(dtype=geometry_dtype)
-        center = _scatter_mean(geometry_pos, batch)
+        center = _scatter_mean(geometry_pos, batch, num_graphs, graph_counts)
         centered = geometry_pos - center[batch]
         radius = centered.norm(dim=-1, keepdim=True)
         graph_scale = torch.sqrt(
-            _scatter_mean(centered.square().sum(dim=-1, keepdim=True), batch).clamp_min(self.config.eps)
+            _scatter_mean(
+                centered.square().sum(dim=-1, keepdim=True),
+                batch,
+                num_graphs,
+                graph_counts,
+            ).clamp_min(self.config.eps)
         )
         normalized_pos = centered / graph_scale[batch]
         model_pos = normalized_pos.to(dtype=node_feats.dtype)
@@ -90,7 +101,13 @@ class EquivariantAttention(nn.Module):
         vectors = torch.tanh(self.vector_in(scalars)).unsqueeze(-1) * model_pos.unsqueeze(1)
         transient_tensor = normalized_pos.new_zeros((normalized_pos.shape[0], self.config.num_heads, 5))
         for layer in self.layers:
-            scalars, vectors, transient_tensor = layer(scalars, vectors, normalized_pos, batch)
+            scalars, vectors, transient_tensor = layer(
+                scalars,
+                vectors,
+                normalized_pos,
+                batch,
+                num_graphs,
+            )
 
         node_scalars = self.scalar_out(self.scalar_out_norm(scalars))
         node_vectors = self.vector_out(vectors)
@@ -99,9 +116,9 @@ class EquivariantAttention(nn.Module):
             "node_scalars": node_scalars,
             "node_vectors": node_vectors,
             "node_tensors": node_tensors,
-            "graph_scalars": _scatter_mean(node_scalars, batch),
-            "graph_vectors": _scatter_mean(node_vectors, batch),
-            "graph_tensors": _scatter_mean(node_tensors, batch),
+            "graph_scalars": _scatter_mean(node_scalars, batch, num_graphs, graph_counts),
+            "graph_vectors": _scatter_mean(node_vectors, batch, num_graphs, graph_counts),
+            "graph_tensors": _scatter_mean(node_tensors, batch, num_graphs, graph_counts),
         }
 
     def _check_inputs(
@@ -109,7 +126,7 @@ class EquivariantAttention(nn.Module):
         node_feats: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, torch.Tensor]:
         if node_feats.ndim != 2 or node_feats.shape[1] != self.config.node_dim:
             raise ValueError(f"node_feats must have shape (N, {self.config.node_dim})")
         if node_feats.shape[0] == 0:
@@ -120,8 +137,6 @@ class EquivariantAttention(nn.Module):
             raise TypeError("node_feats and pos must be floating point tensors")
         if node_feats.device != pos.device:
             raise ValueError("node_feats and pos must be on the same device")
-        if node_feats.dtype != pos.dtype:
-            pos = pos.to(dtype=node_feats.dtype)
         if not torch.isfinite(node_feats).all() or not torch.isfinite(pos).all():
             raise ValueError("node_feats and pos must be finite")
         if batch is None:
@@ -140,13 +155,8 @@ class EquivariantAttention(nn.Module):
             if batch.device != node_feats.device:
                 raise ValueError("batch, node_feats, and pos must be on the same device")
             batch = batch.to(dtype=torch.long)
-        if (batch < 0).any():
-            raise ValueError("batch indices must be nonnegative")
-        graph_ids = torch.unique(batch, sorted=True)
-        expected = torch.arange(graph_ids.numel(), device=batch.device)
-        if not torch.equal(graph_ids, expected):
-            raise ValueError("batch indices must be contiguous and start at zero")
-        return node_feats, pos, batch
+        num_graphs, graph_counts = _graph_metadata(batch)
+        return node_feats, pos, batch, num_graphs, graph_counts
 
 
 class _EquivariantMomentLayer(nn.Module):
@@ -156,6 +166,7 @@ class _EquivariantMomentLayer(nn.Module):
         vectors: int,
         num_heads: int,
         vector_kernel_init: float,
+        vector_kernel_max: float,
         residual_scale_init: float,
         eps: float,
     ) -> None:
@@ -165,6 +176,7 @@ class _EquivariantMomentLayer(nn.Module):
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
         self.eps = eps
+        self.vector_kernel_max = vector_kernel_max
 
         self.norm = nn.LayerNorm(scalars)
         self.query_scalar = nn.Linear(scalars, scalars)
@@ -178,7 +190,10 @@ class _EquivariantMomentLayer(nn.Module):
         self.relative_gate = nn.Linear(scalars, num_heads)
         self.tensor_gate = nn.Linear(scalars, num_heads)
         self.raw_vector_kernel = nn.Parameter(
-            torch.full((num_heads,), _inverse_softplus(vector_kernel_init))
+            torch.full(
+                (num_heads,),
+                _inverse_sigmoid(vector_kernel_init / vector_kernel_max),
+            )
         )
         self.relative_mix = nn.Parameter(torch.full((num_heads,), 0.1))
         self.tensor_mix = nn.Parameter(torch.full((num_heads,), 0.1))
@@ -207,6 +222,7 @@ class _EquivariantMomentLayer(nn.Module):
         vectors: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
+        num_graphs: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         s_norm = self.norm(scalars)
         bounded_vectors = _bounded_irrep(vectors, self.eps)
@@ -214,22 +230,21 @@ class _EquivariantMomentLayer(nn.Module):
 
         q0 = F.elu(self.query_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0
         k0 = F.elu(self.key_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0
-        q1 = self.query_vector(bounded_vectors) * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1)
-        k1 = self.key_vector(bounded_vectors) * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1)
-        query_outer = _symmetric_outer_features(q1)
-        key_outer = _symmetric_outer_features(k1)
-        moment_dtype = query_outer.dtype
-        kernel_scale = F.softplus(self.raw_vector_kernel).to(dtype=moment_dtype)
-        ones = torch.ones(
-            (n_nodes, self.num_heads, 1),
-            dtype=moment_dtype,
-            device=scalars.device,
+        q1 = _unit_ball(
+            self.query_vector(bounded_vectors)
+            * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1),
+            self.eps,
         )
-        outer_scale = kernel_scale.sqrt()[None, :, None]
-        query_angular = torch.cat([ones, outer_scale * query_outer], dim=-1)
-        key_angular = torch.cat([ones, outer_scale * key_outer], dim=-1)
-        query = torch.cat([q0.to(dtype=moment_dtype), query_angular], dim=-1)
-        key = torch.cat([k0.to(dtype=moment_dtype), key_angular], dim=-1)
+        k1 = _unit_ball(
+            self.key_vector(bounded_vectors)
+            * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1),
+            self.eps,
+        )
+        moment_dtype = _moment_dtype(q0, k0, q1, k1, pos)
+        kernel_scale = _bounded_kernel_scale(
+            self.raw_vector_kernel,
+            self.vector_kernel_max,
+        ).to(dtype=moment_dtype)
 
         scalar_value = self.value_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)
         vector_value = self.value_vector(bounded_vectors)
@@ -249,13 +264,16 @@ class _EquivariantMomentLayer(nn.Module):
             ],
             dim=-1,
         )
-        transported = _factorized_attention(
-            query,
-            key,
+        transported = _factorized_moment_attention(
+            q0,
+            k0,
+            q1,
+            k1,
+            kernel_scale,
             value,
             batch,
+            num_graphs=num_graphs,
             balanced=True,
-            eps=self.eps,
         )
 
         offset = self.head_dim
@@ -329,55 +347,183 @@ class _ChannelMix(nn.Module):
         return torch.einsum("oc,nc...->no...", self.weight.to(dtype=value.dtype), value)
 
 
-def _factorized_attention(
-    query: torch.Tensor,
-    key: torch.Tensor,
+def _factorized_moment_attention(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
     value: torch.Tensor,
     batch: torch.Tensor,
     *,
+    num_graphs: int,
     balanced: bool,
     balance_exponent: torch.Tensor | None = None,
-    eps: float,
     sinkhorn_iterations: int = 1,
 ) -> torch.Tensor:
     if not isinstance(sinkhorn_iterations, int) or sinkhorn_iterations <= 0:
         raise ValueError("sinkhorn_iterations must be positive")
     output_dtype = value.dtype
-    reduction_dtype = torch.float64 if torch.float64 in {query.dtype, key.dtype, value.dtype} else torch.float32
-    query = query.to(dtype=reduction_dtype)
-    key = key.to(dtype=reduction_dtype)
+    reduction_dtype = _moment_dtype(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        value,
+    )
+    query_scalar = query_scalar.to(dtype=reduction_dtype)
+    key_scalar = key_scalar.to(dtype=reduction_dtype)
+    query_vector = query_vector.to(dtype=reduction_dtype)
+    key_vector = key_vector.to(dtype=reduction_dtype)
+    kernel_scale = kernel_scale.to(dtype=reduction_dtype)
     value = value.to(dtype=reduction_dtype)
     if balance_exponent is not None:
         balance_exponent = balance_exponent.to(dtype=reduction_dtype)
-    num_graphs = int(batch.max().item()) + 1
     if balanced:
-        row_scale = query.new_ones(query.shape[:2])
+        row_scale = query_scalar.new_ones(query_scalar.shape[:2])
         for _ in range(sinkhorn_iterations):
-            query_sum = _segment_sum(query * row_scale.unsqueeze(-1), batch, num_graphs)
-            key_mass = (key * query_sum[batch]).sum(dim=-1).clamp_min(eps)
+            key_mass = _structured_key_mass(
+                query_scalar,
+                key_scalar,
+                query_vector,
+                key_vector,
+                kernel_scale,
+                row_scale,
+                batch,
+                num_graphs,
+            )
             if balance_exponent is None:
                 key_scale = key_mass.reciprocal()
             else:
                 key_scale = torch.exp(-balance_exponent[None, :] * torch.log(key_mass))
-            weighted_key = key * key_scale.unsqueeze(-1)
-            key_sum = _segment_sum(weighted_key, batch, num_graphs)
-            denominator = (query * key_sum[batch]).sum(dim=-1).clamp_min(eps)
+            denominator = _structured_row_denominator(
+                query_scalar,
+                key_scalar,
+                query_vector,
+                key_vector,
+                kernel_scale,
+                key_scale,
+                batch,
+                num_graphs,
+            )
             row_scale = denominator.reciprocal()
     else:
-        key_scale = key.new_ones(key.shape[:2])
-        weighted_key = key
-        key_sum = _segment_sum(weighted_key, batch, num_graphs)
-        denominator = (query * key_sum[batch]).sum(dim=-1).clamp_min(eps)
-    summary = _segment_sum(weighted_key.unsqueeze(-1) * value.unsqueeze(-2), batch, num_graphs)
-    numerator = torch.einsum("nhd,nhdf->nhf", query, summary[batch])
+        key_scale = key_scalar.new_ones(key_scalar.shape[:2])
+        denominator = _structured_row_denominator(
+            query_scalar,
+            key_scalar,
+            query_vector,
+            key_vector,
+            kernel_scale,
+            key_scale,
+            batch,
+            num_graphs,
+        )
+    numerator = _structured_numerator(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        kernel_scale,
+        key_scale,
+        value,
+        batch,
+        num_graphs,
+    )
     return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
 
 
-def _symmetric_outer_features(value: torch.Tensor) -> torch.Tensor:
-    value = value.to(dtype=_moment_dtype(value))
-    x, y, z = value.unbind(dim=-1)
-    sqrt_two = sqrt(2.0)
-    return torch.stack([x * x, y * y, z * z, sqrt_two * x * y, sqrt_two * x * z, sqrt_two * y * z], dim=-1)
+def _structured_key_mass(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    row_scale: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    scalar_sum = _segment_sum(
+        query_scalar * row_scale.unsqueeze(-1),
+        batch,
+        num_graphs,
+    )
+    constant_sum = _segment_sum(row_scale, batch, num_graphs)
+    vector_outer_sum = _segment_sum(
+        _vector_outer(query_vector) * row_scale[..., None, None],
+        batch,
+        num_graphs,
+    )
+    content = (key_scalar * scalar_sum[batch]).sum(dim=-1)
+    quadratic = _positive_quadratic_form(key_vector, vector_outer_sum[batch])
+    return content + constant_sum[batch] + kernel_scale[None, :] * quadratic
+
+
+def _structured_row_denominator(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    key_scale: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    scalar_sum = _segment_sum(
+        key_scalar * key_scale.unsqueeze(-1),
+        batch,
+        num_graphs,
+    )
+    constant_sum = _segment_sum(key_scale, batch, num_graphs)
+    vector_outer_sum = _segment_sum(
+        _vector_outer(key_vector) * key_scale[..., None, None],
+        batch,
+        num_graphs,
+    )
+    content = (query_scalar * scalar_sum[batch]).sum(dim=-1)
+    quadratic = _positive_quadratic_form(query_vector, vector_outer_sum[batch])
+    return content + constant_sum[batch] + kernel_scale[None, :] * quadratic
+
+
+def _structured_numerator(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    key_scale: torch.Tensor,
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    weighted_value = key_scale.unsqueeze(-1) * value
+    scalar_summary = _segment_sum(
+        key_scalar.unsqueeze(-1) * weighted_value.unsqueeze(-2),
+        batch,
+        num_graphs,
+    )
+    constant_summary = _segment_sum(weighted_value, batch, num_graphs)
+    quadratic_summary = _segment_sum(
+        _vector_outer(key_vector).unsqueeze(-1) * weighted_value[..., None, None, :],
+        batch,
+        num_graphs,
+    )
+    content = torch.einsum("nhd,nhdf->nhf", query_scalar, scalar_summary[batch])
+    quadratic = torch.einsum(
+        "nha,nhabf,nhb->nhf",
+        query_vector,
+        quadratic_summary[batch],
+        query_vector,
+    )
+    return content + constant_summary[batch] + kernel_scale[None, :, None] * quadratic
+
+
+def _vector_outer(value: torch.Tensor) -> torch.Tensor:
+    return value.unsqueeze(-1) * value.unsqueeze(-2)
+
+
+def _positive_quadratic_form(vector: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
+    return torch.einsum("nha,nhab,nhb->nh", vector, matrix, vector).clamp_min(0.0)
 
 
 def _symmetric_traceless_features(value: torch.Tensor) -> torch.Tensor:
@@ -440,15 +586,30 @@ def _segment_sum(value: torch.Tensor, batch: torch.Tensor, num_segments: int) ->
     return out.index_add(0, batch, value)
 
 
-def _scatter_mean(value: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
+def _scatter_mean(
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+) -> torch.Tensor:
     output_dtype = value.dtype
     reduction_dtype = torch.float64 if value.dtype == torch.float64 else torch.float32
     reduced = value.to(dtype=reduction_dtype)
-    num_graphs = int(batch.max().item()) + 1
     summed = _segment_sum(reduced, batch, num_graphs)
-    count = torch.bincount(batch, minlength=num_graphs).to(device=value.device, dtype=reduction_dtype)
+    count = graph_counts.to(device=value.device, dtype=reduction_dtype)
     count = count.reshape(num_graphs, *((1,) * (value.ndim - 1)))
     return (summed / count).to(dtype=output_dtype)
+
+
+def _graph_metadata(batch: torch.Tensor) -> tuple[int, torch.Tensor]:
+    if (batch < 0).any():
+        raise ValueError("batch indices must be nonnegative")
+    graph_ids = torch.unique(batch, sorted=True)
+    expected = torch.arange(graph_ids.numel(), device=batch.device)
+    if not torch.equal(graph_ids, expected):
+        raise ValueError("batch indices must be contiguous and start at zero")
+    num_graphs = graph_ids.numel()
+    return num_graphs, torch.bincount(batch, minlength=num_graphs)
 
 
 def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
@@ -457,6 +618,16 @@ def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
     reduced = value.to(dtype=reduction_dtype)
     scale = torch.sqrt(1.0 + reduced.square().mean(dim=-1, keepdim=True).clamp_min(eps))
     return (reduced / scale).to(dtype=output_dtype)
+
+
+def _unit_ball(value: torch.Tensor, eps: float) -> torch.Tensor:
+    reduced = value.to(dtype=_moment_dtype(value))
+    norm_square = reduced.square().sum(dim=-1, keepdim=True).clamp_min(eps)
+    return reduced / torch.sqrt(1.0 + norm_square)
+
+
+def _bounded_kernel_scale(raw: torch.Tensor, maximum: float) -> torch.Tensor:
+    return maximum * torch.sigmoid(raw)
 
 
 def _stable_layer_norm(layer: nn.LayerNorm, value: torch.Tensor) -> torch.Tensor:
@@ -476,10 +647,10 @@ def _moment_dtype(*values: torch.Tensor) -> torch.dtype:
     return torch.float64 if any(value.dtype == torch.float64 for value in values) else torch.float32
 
 
-def _inverse_softplus(value: float) -> float:
-    if value <= 0:
-        raise ValueError("vector_kernel_init must be positive")
-    return float(torch.log(torch.expm1(torch.tensor(value))).item())
+def _inverse_sigmoid(probability: float) -> float:
+    if not 0.0 < probability < 1.0:
+        raise ValueError("probability must lie strictly between zero and one")
+    return float(torch.logit(torch.tensor(probability)).item())
 
 
 def _validate_config(config: EquivariantAttentionConfig) -> None:
@@ -495,6 +666,10 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError("residual_scale_init must be nonnegative")
     if config.vector_kernel_init <= 0:
         raise ValueError("vector_kernel_init must be positive")
+    if config.vector_kernel_max <= 0:
+        raise ValueError("vector_kernel_max must be positive")
+    if config.vector_kernel_init >= config.vector_kernel_max:
+        raise ValueError("vector_kernel_init must be smaller than vector_kernel_max")
     hidden = CartesianIrreps.parse(config.hidden_irreps)
     output = CartesianIrreps.parse(config.output_irreps)
     if hidden.scalars <= 0 or hidden.vectors <= 0 or hidden.tensors:

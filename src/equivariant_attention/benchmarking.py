@@ -24,11 +24,23 @@ class GraphBatch:
     target: torch.Tensor
     sample_ids: tuple[str, ...]
 
-    def to(self, device: torch.device | str, dtype: torch.dtype | None = None) -> GraphBatch:
+    def to(
+        self,
+        device: torch.device | str,
+        dtype: torch.dtype | None = None,
+        *,
+        geometry_dtype: torch.dtype | None = None,
+    ) -> GraphBatch:
         value_dtype = dtype if dtype is not None else self.node_feats.dtype
+        if geometry_dtype is None:
+            geometry_dtype = (
+                torch.float64
+                if torch.float64 in {value_dtype, self.pos.dtype}
+                else torch.float32
+            )
         return GraphBatch(
             node_feats=self.node_feats.to(device=device, dtype=value_dtype),
-            pos=self.pos.to(device=device, dtype=value_dtype),
+            pos=self.pos.to(device=device, dtype=geometry_dtype),
             batch=self.batch.to(device=device),
             target=self.target.to(device=device, dtype=value_dtype),
             sample_ids=self.sample_ids,

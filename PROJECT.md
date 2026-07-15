@@ -34,10 +34,17 @@
 - Numerical policy: geometry squares, angular/ST feature construction, moment
   reductions, and invariant normalization use at least float32 for fp16/bf16
   inputs; float64 remains float64. Low-precision rank-2 outputs remain float32.
+- Feature/geometry policy: `node_feats` are invariant `0e` scalars and may use
+  model precision; coordinates remain float32+ and are never downcast to the
+  feature dtype before geometry preprocessing.
 
 ## Architecture Baseline
 
-- Positive scalar content features plus squared-vector angular features.
+- Positive scalar content plus finite-precision unit-ball vector queries/keys and a bounded
+  squared-dot angular term.
+- Quadratic masses and denominators use structured 3x3 PSD summaries rather
+  than graph-summed signed flattened outer features. Value numerators use the
+  analogous signed matrix-valued summaries and are not clamped.
 - Exact graph-wise factorization of relative vector and symmetric-traceless
   second moments; no `N x N` attention tensor.
 - One key-balancing/row-normalization cycle.
@@ -64,6 +71,8 @@
 - Test evaluation remains frozen during adaptive architecture work.
 - Historical experiments remain in `docs/EXPERIMENTS.jsonl`; they do not expand
   the current public architecture contract.
+- Graph-wide centroid/RMS normalization does not provide cluster decomposition
+  or extensive size consistency; standalone force-field claims are excluded.
 
 ## Commands
 

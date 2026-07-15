@@ -10,6 +10,9 @@ scripts/check.sh fast
 Core runtime dependencies are Python 3.12+ and PyTorch. The active model does
 not require cuEquivariance, e3nn, RDKit, or PyTorch Geometric.
 
+The same fast gate runs in `.github/workflows/ci.yml` on pushes and pull
+requests using the locked environment.
+
 ## QM9 extra
 
 ```bash

@@ -20,3 +20,8 @@ Do not compare numbers from removed implementations with this benchmark: their
 semantics and batch shapes differ. No performance claim is made until eager and
 compiled batched outputs/backward are checked on identical inputs and the
 environment is recorded.
+
+`uv run python scripts/ml_smoke.py cpu compile` uses the same nontrivial batch
+for eager and compiled inference and checks output equality. Graph cardinality
+is derived once per public forward, but tensor-dependent input validation may
+still create graph breaks; no fullgraph claim is made.

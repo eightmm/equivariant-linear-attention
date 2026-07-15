@@ -6,14 +6,19 @@ graph IDs; no neighbor or dense pair tensor is generated.
 
 | Tensor | Shape | Meaning |
 |---|---:|---|
-| `node_feats` | `(N, F)` | floating node features |
-| `pos` | `(N, 3)` | Cartesian coordinates |
+| `node_feats` | `(N, F)` | O(3)-invariant scalar (`0e`) features |
+| `pos` | `(N, 3)` | Cartesian coordinates, stored in float32+ |
 | `batch` | `(N,)` | graph ID in `0..G-1` |
 | `target` | `(G, T)` | graph regression target |
 
 Synthetic smoke data is deterministic by seed. QM9 loading requires the `qm9`
 optional dependency group and target index 4 is documented as HOMO-LUMO gap in
 eV.
+
+`GraphBatch.to(dtype=...)` applies `dtype` to model features and targets, not
+coordinates. Coordinates remain float32, or float64 when either the requested
+feature lane or source coordinates are float64. An explicit `geometry_dtype=`
+may be supplied when needed.
 
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10

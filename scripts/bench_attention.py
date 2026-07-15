@@ -93,7 +93,8 @@ def benchmark(
         )
     total_nodes = graphs * nodes_per_graph
     node_feats = torch.randn(total_nodes, 32, device=device, dtype=dtype)
-    pos = torch.randn(total_nodes, 3, device=device, dtype=dtype)
+    geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
+    pos = torch.randn(total_nodes, 3, device=device, dtype=geometry_dtype)
     batch = torch.arange(graphs, device=device).repeat_interleave(nodes_per_graph)
 
     for _ in range(warmup):
