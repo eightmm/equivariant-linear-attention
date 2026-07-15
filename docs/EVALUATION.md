@@ -1,50 +1,18 @@
-# EVALUATION
+# Evaluation
 
-Evaluation protocol. Locked — changes invalidate prior numbers.
-
-## Metrics
-
-| Metric | Definition | Direction | Primary? |
-|--------|------------|-----------|----------|
-| MAE | mean absolute error of graph scalar target | down | yes |
-| RMSE | root mean squared error of graph scalar target | down | no |
-
-- Implementation: `src/equivariant_attention/training.py`
-- Target normalization: fit mean/std on train split only; metrics are reported after inverse transform.
-- Locked commit SHA:
-
-## Test Split
-
-- Path:
-- Size:
-- Frozen since (date / commit):
-- DO NOT touch during model selection.
-
-## Baseline
-
-| Model | Metric | Value | Commit | Run ID |
-|-------|--------|-------|--------|--------|
-| EGNNBaseline | MAE/RMSE | TBD | TBD | TBD |
-| RichEquivariantAttention(local) | MAE/RMSE | TBD | TBD | TBD |
-
-## Eval Command
+The repository evaluates one architecture. There is no model-selector flag.
 
 ```bash
-uv run python scripts/train_compare.py --dataset synthetic --model egnn --steps 10
-uv run python scripts/train_compare.py --dataset synthetic --model rich_local --steps 10
+uv run python scripts/train_compare.py \
+  --dataset synthetic --steps 10 --split-seed 42 --model-seed 42
 ```
 
-## Reporting
+The script reports train loss, validation MAE/RMSE, split hashes, model seed,
+parameter count, source hash, optimizer settings, target normalization, and
+whether test evaluation occurred. During architecture work use
+`--skip-test-eval` and select only on validation.
 
-- Mean ± std over N seeds:
-- CI (bootstrap): yes/no
-- Per-class / per-subgroup breakdown: yes/no
-
-## Regression Policy
-
-- Drop > X% on primary metric vs baseline -> block merge.
-- New baseline requires PR review + `EXPERIMENTS.md` entry.
-
-## Update Triggers
-
-Metric definition, test split, or eval code change -> bump eval version + re-baseline.
+QM9 numbers use target `gap` in eV and a random-row warm split. They do not
+measure scaffold, protein-target, temporal, or cold-complex generalization.
+Frozen final evaluation requires a separate preregistered split and multiple
+data/model seeds.

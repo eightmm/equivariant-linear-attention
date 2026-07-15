@@ -43,32 +43,17 @@ def main() -> None:
     run_started = time.perf_counter()
     torch.manual_seed(model_seed)
     model = build_regression_model(
-        args.model,
         node_dim=node_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
-        moment_radial_trace=args.moment_radial_trace,
-        moment_full_gram_invariants=args.moment_full_gram_invariants,
-        moment_shifted_angular_kernel=args.moment_shifted_angular_kernel,
-        moment_radial_distance_kernel=args.moment_radial_distance_kernel,
-        moment_dynamic_moment_routing=args.moment_dynamic_moment_routing,
-        moment_sinkhorn_iterations=args.moment_sinkhorn_iterations,
-        moment_learnable_balance_exponent=args.moment_learnable_balance_exponent,
-        moment_equivariant_ffn=args.moment_equivariant_ffn,
-        moment_ffn_hidden_ratio=args.moment_ffn_hidden_ratio,
-        moment_radial_distance_shift_init=args.moment_radial_distance_shift_init,
-        moment_routing_hidden_dim=args.moment_routing_hidden_dim,
-        moment_routing_delta_scale=args.moment_routing_delta_scale,
     ).to(device=device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     normalizer = None if args.no_target_normalize else fit_target_normalizer(dataset[i] for i in train_idx)
-    max_neighbors = _effective_max_neighbors(args.model, args.max_neighbors)
-
     final_loss = 0.0
     for step in range(args.steps):
         batch_indices = _cyclic_batch(train_idx, step, args.batch_size)
-        batch = collate_graphs([dataset[i] for i in batch_indices], max_neighbors=max_neighbors)
+        batch = collate_graphs([dataset[i] for i in batch_indices])
         final_loss = train_regression_step(
             model,
             batch,
@@ -78,12 +63,12 @@ def main() -> None:
             amp_dtype=amp_dtype,
         )
 
-    val_batches = list(_iter_batches(dataset, val_idx, args.batch_size, max_neighbors))
+    val_batches = list(_iter_batches(dataset, val_idx, args.batch_size))
     val_metrics = evaluate_regression(model, val_batches, target_normalizer=normalizer, amp_dtype=amp_dtype)
     elapsed_seconds = time.perf_counter() - run_started
     metrics = {
         "dataset": args.dataset,
-        "model": args.model,
+        "model": "factorized_moment",
         "steps": args.steps,
         "train_loss": final_loss,
         "val_mae": val_metrics["mae"],
@@ -105,50 +90,21 @@ def main() -> None:
         "elapsed_seconds": elapsed_seconds,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "source_sha256": _source_hash(),
-        "moment_features": {
-            "radial_trace": args.moment_radial_trace,
-            "full_gram_invariants": args.moment_full_gram_invariants,
-            "shifted_angular_kernel": args.moment_shifted_angular_kernel,
-            "radial_distance_kernel": args.moment_radial_distance_kernel,
-            "radial_distance_shift_init": args.moment_radial_distance_shift_init,
-            "dynamic_moment_routing": args.moment_dynamic_moment_routing,
-            "sinkhorn_iterations": args.moment_sinkhorn_iterations,
-            "routing_hidden_dim": args.moment_routing_hidden_dim,
-            "routing_delta_scale": args.moment_routing_delta_scale,
-            "learnable_balance_exponent": args.moment_learnable_balance_exponent,
-            "equivariant_ffn": args.moment_equivariant_ffn,
-            "ffn_hidden_ratio": args.moment_ffn_hidden_ratio,
-        },
         "run_config": _run_config(
             args,
             split_seed=split_seed,
             model_seed=model_seed,
-            effective_max_neighbors=max_neighbors,
         ),
     }
     if args.dataset == "qm9":
         metrics["target"] = _qm9_target_metadata(args.qm9_target_index)
         metrics["data_identity"] = data_identity
-    if args.model == "moment_linear" and args.moment_equivariant_ffn:
-        metrics["ffn_residual_scales"] = {
-            "scalar": [float(layer.ffn_scalar_residual_scale.detach().cpu()) for layer in model.layers],
-            "vector": [float(layer.ffn_vector_residual_scale.detach().cpu()) for layer in model.layers],
-        }
-    if args.model == "moment_linear" and args.moment_radial_distance_kernel:
-        metrics["radial_distance_shifts"] = [
-            (1.0 + torch.nn.functional.softplus(layer.raw_radial_distance_shift)).detach().cpu().tolist()
-            for layer in model.layers
-        ]
-    if args.model == "moment_linear" and args.moment_dynamic_moment_routing:
-        metrics["dynamic_routing_output_norms"] = [
-            {
-                "invariant": float(layer.routing_mlp[-1].weight.detach().float().norm().cpu()),
-                "context": float(layer.routing_context.weight.detach().float().norm().cpu()),
-            }
-            for layer in model.layers
-        ]
+    metrics["ffn_residual_scales"] = {
+        "scalar": [float(layer.ffn_scalar_residual_scale.detach().cpu()) for layer in model.layers],
+        "vector": [float(layer.ffn_vector_residual_scale.detach().cpu()) for layer in model.layers],
+    }
     if not args.skip_test_eval:
-        test_batches = list(_iter_batches(dataset, test_idx, args.batch_size, max_neighbors))
+        test_batches = list(_iter_batches(dataset, test_idx, args.batch_size))
         test_metrics = evaluate_regression(model, test_batches, target_normalizer=normalizer, amp_dtype=amp_dtype)
         metrics["test_mae"] = test_metrics["mae"]
         metrics["test_rmse"] = test_metrics["rmse"]
@@ -162,20 +118,14 @@ def main() -> None:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare EGNN and equivariant-attention on small regression benchmarks.")
+    parser = argparse.ArgumentParser(description="Train the factorized-moment equivariant attention model.")
     parser.add_argument("--dataset", choices=["synthetic", "qm9"], default="synthetic")
-    parser.add_argument(
-        "--model",
-        choices=["egnn", "rich_local", "rich_linear", "rich_linear_light", "moment_linear"],
-        default="egnn",
-    )
     parser.add_argument("--data-root", type=Path, default=Path("data/qm9"))
     parser.add_argument("--qm9-target-index", type=int, default=4)
     parser.add_argument("--num-samples", type=int, default=64)
     parser.add_argument("--train-size", type=int, default=None)
     parser.add_argument("--val-size", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--max-neighbors", type=int, default=None)
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=3)
@@ -191,22 +141,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--metrics-out", type=Path, default=None)
     parser.add_argument("--no-target-normalize", action="store_true")
     parser.add_argument("--skip-test-eval", action="store_true")
-    parser.add_argument("--moment-radial-trace", action="store_true")
-    parser.add_argument("--moment-full-gram-invariants", action="store_true")
-    parser.add_argument("--moment-shifted-angular-kernel", action="store_true")
-    parser.add_argument("--moment-radial-distance-kernel", action="store_true")
-    parser.add_argument("--moment-radial-distance-shift-init", type=float, default=1.1)
-    parser.add_argument("--moment-dynamic-moment-routing", action="store_true")
-    parser.add_argument("--moment-sinkhorn-iterations", type=int, default=1)
-    parser.add_argument("--moment-routing-hidden-dim", type=int, default=16)
-    parser.add_argument("--moment-routing-delta-scale", type=float, default=0.25)
-    parser.add_argument("--moment-learnable-balance-exponent", action="store_true")
-    parser.add_argument(
-        "--moment-equivariant-ffn",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-    )
-    parser.add_argument("--moment-ffn-hidden-ratio", type=float, default=2.0)
     return parser.parse_args(argv)
 
 
@@ -221,12 +155,6 @@ def _cyclic_batch(indices: Sequence[int], step: int, batch_size: int) -> list[in
         raise ValueError("batch_size must be positive")
     offset = (step * batch_size) % len(indices)
     return [indices[(offset + i) % len(indices)] for i in range(batch_size)]
-
-
-def _effective_max_neighbors(model_name: str, max_neighbors: int | None) -> int | None:
-    if max_neighbors is not None:
-        return max_neighbors
-    return 0 if model_name.startswith("rich_linear") or model_name == "moment_linear" else None
 
 
 def _resolve_amp_dtype(name: str) -> torch.dtype | None:
@@ -273,7 +201,6 @@ def _run_config(
     *,
     split_seed: int,
     model_seed: int,
-    effective_max_neighbors: int | None,
 ) -> dict[str, object]:
     return {
         "dataset": args.dataset,
@@ -283,10 +210,8 @@ def _run_config(
         "train_size": args.train_size,
         "val_size": args.val_size,
         "batch_size": args.batch_size,
-        "max_neighbors": args.max_neighbors,
-        "effective_max_neighbors": effective_max_neighbors,
         "steps": args.steps,
-        "model": args.model,
+        "model": "factorized_moment",
         "hidden_dim": args.hidden_dim,
         "num_layers": args.num_layers,
         "num_heads": args.num_heads,
@@ -299,18 +224,9 @@ def _run_config(
         "amp_dtype": args.amp_dtype,
         "target_normalized": not args.no_target_normalize,
         "test_evaluated": not args.skip_test_eval,
-        "moment_radial_trace": args.moment_radial_trace,
-        "moment_full_gram_invariants": args.moment_full_gram_invariants,
-        "moment_shifted_angular_kernel": args.moment_shifted_angular_kernel,
-        "moment_radial_distance_kernel": args.moment_radial_distance_kernel,
-        "moment_radial_distance_shift_init": args.moment_radial_distance_shift_init,
-        "moment_dynamic_moment_routing": args.moment_dynamic_moment_routing,
-        "moment_sinkhorn_iterations": args.moment_sinkhorn_iterations,
-        "moment_routing_hidden_dim": args.moment_routing_hidden_dim,
-        "moment_routing_delta_scale": args.moment_routing_delta_scale,
-        "moment_learnable_balance_exponent": args.moment_learnable_balance_exponent,
-        "moment_equivariant_ffn": args.moment_equivariant_ffn,
-        "moment_ffn_hidden_ratio": args.moment_ffn_hidden_ratio,
+        "attention": "factorized_moment",
+        "balance_cycles": 1,
+        "ffn_hidden_ratio": 2.0,
     }
 
 
@@ -368,11 +284,10 @@ def _iter_batches(
     dataset: Sequence[GraphSample],
     indices: Sequence[int],
     batch_size: int,
-    max_neighbors: int | None,
 ):
     for start in range(0, len(indices), batch_size):
         chunk = indices[start : start + batch_size]
-        yield collate_graphs([dataset[i] for i in chunk], max_neighbors=max_neighbors)
+        yield collate_graphs([dataset[i] for i in chunk])
 
 
 if __name__ == "__main__":

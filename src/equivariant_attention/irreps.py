@@ -9,7 +9,7 @@ _TERM = re.compile(r"^\s*(\d+)x([012])([eo])\s*$")
 
 @dataclass(frozen=True)
 class CartesianIrreps:
-    """Small e3nn-like irreps subset backed by Cartesian tensors."""
+    """Supported Cartesian O(3) channels: scalar 0e, polar 1o, and tensor 2e."""
 
     scalars: int = 0
     vectors: int = 0
@@ -17,6 +17,21 @@ class CartesianIrreps:
     scalar_parity: str = "e"
     vector_parity: str = "o"
     tensor_parity: str = "e"
+
+    def __post_init__(self) -> None:
+        counts = (self.scalars, self.vectors, self.tensors)
+        if any(isinstance(count, bool) or not isinstance(count, int) or count < 0 for count in counts):
+            raise ValueError("irreps multiplicities must be nonnegative integers")
+        parities = (self.scalar_parity, self.vector_parity, self.tensor_parity)
+        if any(parity not in {"e", "o"} for parity in parities):
+            raise ValueError("irreps parity must be 'e' or 'o'")
+        supported = (
+            (self.scalars, self.scalar_parity, "e"),
+            (self.vectors, self.vector_parity, "o"),
+            (self.tensors, self.tensor_parity, "e"),
+        )
+        if any(count > 0 and parity != expected for count, parity, expected in supported):
+            raise ValueError("CartesianIrreps supports only 0e, polar 1o, and 2e channels")
 
     @classmethod
     def parse(cls, spec: str | CartesianIrreps) -> CartesianIrreps:
@@ -37,6 +52,9 @@ class CartesianIrreps:
             parity = match.group(3)
             if count <= 0:
                 raise ValueError("irreps multiplicities must be positive")
+            expected_parity = {0: "e", 1: "o", 2: "e"}[degree]
+            if parity != expected_parity:
+                raise ValueError("CartesianIrreps supports only 0e, polar 1o, and 2e channels")
             counts[degree] += count
             parities[degree] = parity
 

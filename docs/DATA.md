@@ -1,37 +1,25 @@
-# DATA
+# Data Contract
 
-No dataset is part of this prototype.
+`GraphSample` stores node features, coordinates, a graph target, and a stable
+sample ID. `collate_graphs` concatenates nodes and creates contiguous integer
+graph IDs; no neighbor or dense pair tensor is generated.
 
-Benchmark smoke data is available through `SyntheticMoleculeDataset`; it is
-deterministic and uses an invariant pair-distance target for pipeline tests.
-Real QM9 loading is optional through `load_qm9_samples(...)` and requires
-`torch-geometric` plus RDKit in the environment.
+| Tensor | Shape | Meaning |
+|---|---:|---|
+| `node_feats` | `(N, F)` | floating node features |
+| `pos` | `(N, 3)` | Cartesian coordinates |
+| `batch` | `(N,)` | graph ID in `0..G-1` |
+| `target` | `(G, T)` | graph regression target |
 
-Expected future input contract:
-
-| Field | Shape | Notes |
-|-------|-------|-------|
-| `node_feats` | `(N, node_dim)` | invariant atom/residue features |
-| `pos` | `(N, 3)` | Cartesian coordinates in one unit convention |
-| `edge_feats` | `(N, N, edge_dim)` | optional dense pair context; dense attention only |
-| `batch` | `(N,)` | graph id for batched global attention |
-| `neighbor_index` | `(N, K)` | optional local-mode absolute neighbor ids for O(NK) attention |
-| `neighbor_mask` | `(N, K)` | optional bool mask for padded local neighbors |
-
-Before training on molecular or protein data, define standardization, dedup,
-split policy, label semantics, leakage boundary, metric, and baseline here.
-
-## Benchmark Commands
+Synthetic smoke data is deterministic by seed. QM9 loading requires the `qm9`
+optional dependency group and target index 4 is documented as HOMO-LUMO gap in
+eV.
 
 ```bash
-uv run python scripts/download_dataset.py --dataset qm9 --data-root data/qm9
-uv run python scripts/train_compare.py --dataset synthetic --model egnn --steps 10
-uv run python scripts/train_compare.py --dataset synthetic --model rich_local --steps 10
+uv run python scripts/train_compare.py --dataset synthetic --steps 10
+uv run --extra qm9 python scripts/train_compare.py \
+  --dataset qm9 --data-root data/qm9 --qm9-target-index 4
 ```
 
-QM9:
-
-```bash
-uv run python scripts/train_compare.py --dataset qm9 --data-root data/qm9 --model egnn --num-samples 1000
-uv run python scripts/train_compare.py --dataset qm9 --data-root data/qm9 --model rich_local --num-samples 1000
-```
+The current QM9 split is a seeded random-row warm-start split. See
+`QM9_CONTRACT.md` before interpreting results.

@@ -22,8 +22,6 @@ class GraphBatch:
     pos: torch.Tensor
     batch: torch.Tensor
     target: torch.Tensor
-    neighbor_index: torch.Tensor
-    neighbor_mask: torch.Tensor
     sample_ids: tuple[str, ...]
 
     def to(self, device: torch.device | str, dtype: torch.dtype | None = None) -> GraphBatch:
@@ -33,8 +31,6 @@ class GraphBatch:
             pos=self.pos.to(device=device, dtype=value_dtype),
             batch=self.batch.to(device=device),
             target=self.target.to(device=device, dtype=value_dtype),
-            neighbor_index=self.neighbor_index.to(device=device),
-            neighbor_mask=self.neighbor_mask.to(device=device),
             sample_ids=self.sample_ids,
         )
 
@@ -65,7 +61,7 @@ class SyntheticMoleculeDataset(Dataset[GraphSample]):
         return self.samples[index]
 
 
-def collate_graphs(samples: Sequence[GraphSample], max_neighbors: int | None = None) -> GraphBatch:
+def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
     if not samples:
         raise ValueError("at least one graph sample is required")
     node_feats = torch.cat([sample.node_feats for sample in samples], dim=0)
@@ -75,58 +71,13 @@ def collate_graphs(samples: Sequence[GraphSample], max_neighbors: int | None = N
         [torch.full((sample.node_feats.shape[0],), i, dtype=torch.long) for i, sample in enumerate(samples)],
         dim=0,
     )
-    neighbor_index, neighbor_mask = make_full_neighbors(batch, max_neighbors=max_neighbors)
     return GraphBatch(
         node_feats=node_feats,
         pos=pos,
         batch=batch,
         target=target,
-        neighbor_index=neighbor_index,
-        neighbor_mask=neighbor_mask,
         sample_ids=tuple(sample.sample_id for sample in samples),
     )
-
-
-def make_full_neighbors(batch: torch.Tensor, max_neighbors: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-    if batch.ndim != 1:
-        raise ValueError("batch must have shape (N,)")
-    if batch.numel() == 0:
-        raise ValueError("batch must contain at least one node")
-    if (batch < 0).any():
-        raise ValueError("batch indices must be nonnegative")
-    if max_neighbors is not None and max_neighbors < 0:
-        raise ValueError("max_neighbors must be nonnegative")
-    if max_neighbors == 0:
-        return (
-            torch.empty((batch.numel(), 0), dtype=torch.long, device=batch.device),
-            torch.empty((batch.numel(), 0), dtype=torch.bool, device=batch.device),
-        )
-
-    rows: list[list[int]] = []
-    masks: list[list[bool]] = []
-    graph_ids = torch.unique(batch, sorted=True)
-    max_width = 0
-    by_graph: dict[int, list[int]] = {}
-    for graph_id in graph_ids.tolist():
-        members = torch.nonzero(batch == graph_id, as_tuple=False).flatten().tolist()
-        by_graph[int(graph_id)] = members
-        width = len(members) if max_neighbors is None else min(max_neighbors, len(members))
-        max_width = max(max_width, width)
-
-    for node_id, graph_id in enumerate(batch.tolist()):
-        members = by_graph[int(graph_id)]
-        start = members.index(node_id)
-        ordered = members[start:] + members[:start]
-        width = len(members) if max_neighbors is None else min(max_neighbors, len(members))
-        selected = ordered[:width]
-        mask = [True] * len(selected)
-        while len(selected) < max_width:
-            selected.append(node_id)
-            mask.append(False)
-        rows.append(selected)
-        masks.append(mask)
-
-    return torch.tensor(rows, dtype=torch.long, device=batch.device), torch.tensor(masks, dtype=torch.bool, device=batch.device)
 
 
 def split_dataset(dataset: Dataset[GraphSample], train_size: int, val_size: int, seed: int) -> tuple[list[int], list[int], list[int]]:

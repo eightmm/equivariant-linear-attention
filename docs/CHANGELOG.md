@@ -10,6 +10,12 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.5 -> v0.6 (2026-07-15) — consolidate the public implementation to
+  one factorized-moment `EquivariantAttention`, remove base/rich/local/dense
+  variants, enforce strict graph IDs, and accumulate low-precision attention
+  and squared geometry/moment paths in float32. impact: narrows the mathematical
+  contract and removes reproduced fp16 denominator and large-graph geometry
+  overflows.
 - [model] v0.4 -> v0.5 (2026-07-13) — add `EquivariantMomentAttention` with persistent scalar/vector states, transient five-component l=2 moments, squared-vector linear routing, and key-mass balancing. impact: tests a richer global linear path without persistent tensor storage.
 - [training] v0.2 -> v0.3 (2026-07-03) — add `rich_linear_light`, empty-neighbor fast path, and `--amp-dtype bf16` probe option. impact: gives a faster scalar/vector-only rich regression path; bf16 is available but not always faster on small QM9 graphs.
 - [model] v0.3 -> v0.4 (2026-07-03) — add `rich_linear` regression option and vectorize batched rich linear attention with segment sums. impact: enables neighbor-free linear rich QM9 probe and removes per-graph Python loop overhead.
@@ -21,7 +27,7 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 - [data] v0.1: initial schema and splits
 - [model] v0.1: baseline architecture
-- [training] v0.1: Muon+AdamW + WSD trapezoidal schedule
+- [training] v0.1: AdamW constant-learning-rate probe
 - [eval] v0.1: primary metric + frozen test split
 - [ckpt] v0.1: schema with data/model version pins
 - [config] v0.1: default config keys

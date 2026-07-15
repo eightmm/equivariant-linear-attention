@@ -1,33 +1,28 @@
-# SETUP
+# Setup
 
-## Tooling
-
-- Package manager: `uv`
-- Python: `>=3.12`
-- Install: `uv sync`
-- CPU verification: `scripts/check.sh fast`
-- GPU smoke: `scripts/check.sh gpu`
-- Attention benchmark: `uv run python scripts/bench_attention.py --device cuda`
-- BF16/compile smoke: `uv run python scripts/ml_smoke.py cuda bf16 compile`
-
-## Core Dependencies
-
-- `torch`
-- `cuequivariance`
-- `cuequivariance-torch`
-- `cuequivariance-ops-torch-cu13`
-- `e3nn`
-- `pytest`, `ruff`
-
-## Hardware Target
-
-- CUDA 13 GPU path is enabled through cuEquivariance CUDA 13 ops.
-- CPU path remains valid through cuEquivariance/e3nn fallback behavior.
-
-## First Run
+## Core
 
 ```bash
-uv sync
+uv sync --locked
 scripts/check.sh fast
+```
+
+Core runtime dependencies are Python 3.12+ and PyTorch. The active model does
+not require cuEquivariance, e3nn, RDKit, or PyTorch Geometric.
+
+## QM9 extra
+
+```bash
+uv sync --locked --extra qm9
+```
+
+This adds RDKit and PyTorch Geometric only for the local QM9 loader.
+
+## GPU smoke
+
+```bash
 scripts/check.sh gpu
 ```
+
+The GPU smoke checks bf16 forward/backward and inference. A successful CPU run
+does not establish CUDA mixed-precision correctness.

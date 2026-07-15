@@ -35,15 +35,17 @@ def test_qm9_data_identity_rejects_changed_data(tmp_path: Path) -> None:
         data_identity(tmp_path, expected={"processed/data_v3.pt": "0" * 64})
 
 
-def test_run_config_records_sinkhorn_iterations() -> None:
+def test_run_config_records_single_architecture() -> None:
     symbols = _script_symbols()
-    args = symbols["parse_args"](["--moment-sinkhorn-iterations", "2"])
+    args = symbols["parse_args"]([])
 
     config = symbols["_run_config"](
         args,
         split_seed=42,
         model_seed=43,
-        effective_max_neighbors=0,
     )
 
-    assert config["moment_sinkhorn_iterations"] == 2
+    assert config["model"] == "factorized_moment"
+    assert config["attention"] == "factorized_moment"
+    assert config["balance_cycles"] == 1
+    assert config["ffn_hidden_ratio"] == 2.0

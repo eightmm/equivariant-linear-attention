@@ -1,18 +1,18 @@
 [project]
 name = "equivariant-attention"
 version = "0.1.0"
-description = "SE(3)-equivariant attention layers with linear, local, dense, and factorized moment paths"
+description = "O(3)-equivariant global attention with exact factorized geometric moments"
 authors = [
     { name = "eightmm" }
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "cuequivariance>=0.10.0",
-    "cuequivariance-ops-torch-cu13>=0.10.0",
-    "cuequivariance-torch>=0.10.0",
-    "e3nn>=0.6.0",
-    "rdkit>=2026.3.3",
     "torch>=2.12.1",
+]
+
+[project.optional-dependencies]
+qm9 = [
+    "rdkit>=2026.3.3",
     "torch-geometric>=2.8.0",
 ]
 
@@ -25,6 +25,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "numpy>=2.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
