@@ -16,6 +16,9 @@ def build_regression_model(
     hidden_dim: int = 64,
     num_layers: int = 3,
     num_heads: int = 4,
+    linear_kernel_init: float = 0.05,
+    use_linear_kernel: bool = True,
+    use_key_balancing: bool = True,
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -24,6 +27,9 @@ def build_regression_model(
             output_irreps="1x0e",
             num_layers=num_layers,
             num_heads=num_heads,
+            linear_kernel_init=linear_kernel_init,
+            use_linear_kernel=use_linear_kernel,
+            use_key_balancing=use_key_balancing,
         )
     )
     _zero_init_linear(model.scalar_out)

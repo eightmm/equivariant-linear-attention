@@ -48,4 +48,6 @@ def test_run_config_records_single_architecture() -> None:
     assert config["model"] == "factorized_moment"
     assert config["attention"] == "factorized_moment"
     assert config["balance_cycles"] == 1
+    assert config["key_balancing"] is True
+    assert config["linear_kernel_init"] > 0.0
     assert config["ffn_hidden_ratio"] == 2.0

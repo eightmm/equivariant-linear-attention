@@ -10,13 +10,14 @@ from equivariant_attention import EquivariantAttention, EquivariantAttentionConf
 def main() -> int:
     device_name = sys.argv[1] if len(sys.argv) > 1 else "cpu"
     use_bf16 = "bf16" in sys.argv[2:]
+    use_auto = "auto" in sys.argv[2:]
     use_compile = "compile" in sys.argv[2:]
     if device_name == "cuda" and not torch.cuda.is_available():
         print("ml_smoke: cuda requested but unavailable", file=sys.stderr)
         return 1
 
     device = torch.device(device_name)
-    dtype = torch.bfloat16 if use_bf16 else torch.float64
+    dtype = torch.float32 if use_auto else (torch.bfloat16 if use_bf16 else torch.float64)
     geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
     torch.manual_seed(23)
     model = EquivariantAttention(
@@ -46,19 +47,22 @@ def main() -> int:
     inference_model = prepare_for_inference(
         model,
         device=device,
-        dtype=dtype,
+        dtype="auto" if use_auto else dtype,
         compile_model=use_compile,
     )
+    if use_auto and {parameter.dtype for parameter in inference_model.parameters()} != {torch.float32}:
+        print("ml_smoke: auto inference did not preserve fp32 parameters", file=sys.stderr)
+        return 1
     with torch.inference_mode():
         inference_outputs = inference_model(node_feats, pos, batch=batch)
     if not all(torch.isfinite(value).all() for value in inference_outputs.values()):
         print("ml_smoke: non-finite inference output", file=sys.stderr)
         return 1
-    tolerance = 5e-3 if dtype in {torch.float16, torch.bfloat16} else 1e-10
+    tolerance = 5e-3 if use_auto or dtype in {torch.float16, torch.bfloat16} else 1e-10
     for key in eager_outputs:
         if not torch.allclose(
-            eager_outputs[key],
-            inference_outputs[key],
+            eager_outputs[key].float(),
+            inference_outputs[key].float(),
             atol=tolerance,
             rtol=tolerance,
         ):

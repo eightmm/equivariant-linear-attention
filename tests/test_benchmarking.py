@@ -77,6 +77,8 @@ def test_config_and_training_cli_share_defaults() -> None:
 
     assert config.num_layers == args.num_layers == 3
     assert config.num_heads == args.num_heads == 4
+    assert config.linear_kernel_init == args.linear_kernel_init
+    assert config.use_key_balancing == (not args.no_key_balancing)
     assert not hasattr(args, "model")
     assert not hasattr(args, "moment_sinkhorn_iterations")
 
@@ -94,4 +96,7 @@ def test_cpu_ci_runs_the_project_fast_gate() -> None:
     workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 
     assert workflow.is_file()
-    assert "scripts/check.sh fast" in workflow.read_text()
+    content = workflow.read_text()
+    assert "scripts/check.sh fast" in content
+    assert "astral-sh/setup-uv@v8.3.2" in content
+    assert "astral-sh/setup-uv@v8\n" not in content

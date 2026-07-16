@@ -7,6 +7,8 @@ from equivariant_attention.moment import (
     _bounded_kernel_scale,
     _bounded_irrep,
     _factorized_moment_attention,
+    _normalize_positive_features,
+    _stable_vector_norm,
     _st_features_to_matrix,
     _structured_key_mass,
     _structured_numerator,
@@ -119,11 +121,18 @@ def test_forward_shapes_and_tensor_subspace() -> None:
 @pytest.mark.parametrize("balanced", [False, True])
 def test_structured_attention_matches_explicit_dense_kernel(balanced: bool) -> None:
     torch.manual_seed(107)
-    query_scalar = torch.rand(7, 2, 4, dtype=torch.float64)
-    key_scalar = torch.rand(7, 2, 4, dtype=torch.float64)
+    query_scalar = _normalize_positive_features(
+        torch.rand(7, 2, 4, dtype=torch.float64),
+        eps=1e-12,
+    )
+    key_scalar = _normalize_positive_features(
+        torch.rand(7, 2, 4, dtype=torch.float64),
+        eps=1e-12,
+    )
     query_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
     key_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
-    kernel_scale = torch.tensor([0.2, 0.7], dtype=torch.float64)
+    linear_scale = torch.tensor([0.1, 0.3], dtype=torch.float64)
+    quadratic_scale = torch.tensor([0.2, 0.7], dtype=torch.float64)
     value = torch.randn(7, 2, 5, dtype=torch.float64)
     batch = torch.tensor([0, 0, 0, 1, 1, 1, 1])
 
@@ -132,24 +141,124 @@ def test_structured_attention_matches_explicit_dense_kernel(balanced: bool) -> N
         key_scalar,
         query_vector,
         key_vector,
-        kernel_scale,
+        quadratic_scale,
         value,
         batch,
         num_graphs=2,
         balanced=balanced,
+        linear_scale=linear_scale,
+        kernel_floor=0.5,
     )
     expected = torch.empty_like(value)
     for graph in range(2):
         index = batch == graph
         content = torch.einsum("ihd,jhd->hij", query_scalar[index], key_scalar[index])
         angular_dot = torch.einsum("iha,jha->hij", query_vector[index], key_vector[index])
-        kernel = content + 1.0 + kernel_scale[:, None, None] * angular_dot.square()
+        kernel = (
+            0.5
+            + content
+            + linear_scale[:, None, None] * (1.0 + angular_dot)
+            + quadratic_scale[:, None, None] * angular_dot.square()
+        )
         if balanced:
             kernel = kernel / kernel.sum(dim=1, keepdim=True)
         weights = kernel / kernel.sum(dim=2, keepdim=True)
         expected[index] = torch.einsum("hij,jhf->ihf", weights, value[index])
 
     assert _max_error(actual, expected) < 1e-10
+
+
+def test_bounded_degree2_kernel_distinguishes_alignment_sign() -> None:
+    beta = torch.tensor([0.25], dtype=torch.float64)
+    gamma = torch.tensor([0.75], dtype=torch.float64)
+    query = torch.tensor([[[0.6, 0.0, 0.0]], [[0.6, 0.0, 0.0]]], dtype=torch.float64)
+    key = torch.tensor([[[0.5, 0.0, 0.0]], [[-0.5, 0.0, 0.0]]], dtype=torch.float64)
+    positive = torch.ones(2, 1, 1, dtype=torch.float64)
+    value = torch.tensor([[[1.0]], [[-1.0]]], dtype=torch.float64)
+    batch = torch.zeros(2, dtype=torch.long)
+
+    sign_sensitive = _factorized_moment_attention(
+        positive,
+        positive,
+        query,
+        key,
+        gamma,
+        value,
+        batch,
+        num_graphs=1,
+        balanced=False,
+        linear_scale=beta,
+        kernel_floor=1.0,
+    )
+    quadratic_only = _factorized_moment_attention(
+        positive,
+        positive,
+        query,
+        key,
+        gamma,
+        value,
+        batch,
+        num_graphs=1,
+        balanced=False,
+        linear_scale=torch.zeros_like(beta),
+        kernel_floor=1.0,
+    )
+    t = torch.tensor(0.3, dtype=torch.float64)
+    aligned_kernel = 2.0 + beta * (1.0 + t) + gamma * t.square()
+    anti_kernel = 2.0 + beta * (1.0 - t) + gamma * t.square()
+
+    assert torch.allclose(aligned_kernel - anti_kernel, 2.0 * beta * t, atol=1e-12, rtol=0.0)
+    assert torch.all(sign_sensitive > 0.0)
+    assert torch.allclose(quadratic_only, torch.zeros_like(quadratic_only), atol=1e-12, rtol=0.0)
+
+
+def test_kernel_v2_declared_bounds_hold_at_finite_precision_endpoints() -> None:
+    query_scalar = _normalize_positive_features(
+        torch.tensor([[[1e20, 1.0]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    key_scalar = query_scalar.clone()
+    query_vector = _unit_ball(
+        torch.tensor([[[1e10, 0.0, 0.0]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    key_vector = query_vector.clone()
+    beta = torch.tensor([0.75], dtype=torch.float32)
+    gamma = torch.tensor([0.5], dtype=torch.float32)
+    content = (query_scalar * key_scalar).sum(dim=-1)
+    angular = (query_vector * key_vector).sum(dim=-1)
+    kernel = 0.25 + content + beta * (1.0 + angular) + gamma * angular.square()
+
+    assert torch.isfinite(kernel).all()
+    assert torch.all(query_scalar.norm(dim=-1) > 0.99)
+    assert torch.all(kernel >= 0.25)
+    assert torch.all(kernel <= 0.25 + 1.0 + 2.0 * beta + gamma)
+
+
+def test_kernel_v2_strict_upper_bound_holds_for_general_float32_directions() -> None:
+    torch.manual_seed(109)
+    sample_count = 100_000
+    magnitudes = torch.logspace(-20, 20, sample_count, dtype=torch.float32).unsqueeze(-1)
+    query_scalar = _normalize_positive_features(
+        torch.rand(sample_count, 1, 16, dtype=torch.float32) * magnitudes.unsqueeze(-1),
+        eps=1e-12,
+    )
+    key_scalar = query_scalar.clone()
+    query_vector = _unit_ball(
+        torch.randn(sample_count, 1, 3, dtype=torch.float32) * magnitudes.unsqueeze(-1),
+        eps=1e-12,
+    )
+    key_vector = query_vector.clone()
+    beta = torch.tensor([0.75], dtype=torch.float32)
+    gamma = torch.tensor([0.5], dtype=torch.float32)
+    content = (query_scalar * key_scalar).sum(dim=-1)
+    angular = (query_vector * key_vector).sum(dim=-1)
+    kernel = 0.25 + content + beta * (1.0 + angular) + gamma * angular.square()
+    upper = torch.tensor(3.25, dtype=torch.float32)
+
+    assert torch.all(_stable_vector_norm(query_scalar) <= 1.0)
+    assert torch.all(_stable_vector_norm(query_vector) <= 1.0)
+    assert torch.all(kernel <= upper)
 
 
 def test_structured_mass_avoids_orthogonal_quadratic_cancellation() -> None:
@@ -172,6 +281,8 @@ def test_structured_mass_avoids_orthogonal_quadratic_cancellation() -> None:
         row_scale,
         batch,
         num_graphs=1,
+        linear_scale=torch.zeros(1),
+        kernel_floor=1.0,
     )
 
     assert torch.isfinite(mass).all()
@@ -187,12 +298,17 @@ def test_vector_kernel_components_are_bounded() -> None:
     )
     saturated_value = torch.tensor([[[1e6, 0.0, 0.0]]], dtype=torch.float32)
     saturated_bound = _unit_ball(saturated_value, eps=1e-12)
+    extreme_bound = _unit_ball(
+        torch.tensor([[[1e20, 0.0, 0.0]]], dtype=torch.float32),
+        eps=1e-12,
+    )
     saturated_scale = _bounded_kernel_scale(torch.tensor([-100.0, 100.0]), maximum=0.75)
 
     assert float(bounded.norm(dim=-1).max()) < 1.0
     assert torch.all(interior_scale > 0.0)
     assert torch.all(interior_scale < 0.75)
     assert torch.all(saturated_bound.norm(dim=-1) <= 1.0)
+    assert torch.all(extreme_bound.norm(dim=-1) > 0.99)
     assert torch.all(saturated_scale >= 0.0)
     assert torch.all(saturated_scale <= 0.75)
 
@@ -217,6 +333,8 @@ def test_structured_numerator_preserves_signed_values() -> None:
         torch.full((1, 1, 1), -1.0, dtype=torch.float64),
         torch.zeros(1, dtype=torch.long),
         num_graphs=1,
+        linear_scale=torch.zeros(1, dtype=torch.float64),
+        kernel_floor=1.0,
     )
 
     assert torch.equal(numerator, torch.full_like(numerator, -3.0))
@@ -264,6 +382,8 @@ def test_symmetric_traceless_feature_storage_is_exact() -> None:
         (EquivariantAttentionConfig(node_dim=4, num_layers=0), "num_layers"),
         (EquivariantAttentionConfig(node_dim=4, num_heads=0), "num_heads"),
         (EquivariantAttentionConfig(node_dim=4, vector_kernel_max=0.0), "vector_kernel_max"),
+        (EquivariantAttentionConfig(node_dim=4, linear_kernel_max=0.0), "linear_kernel_max"),
+        (EquivariantAttentionConfig(node_dim=4, kernel_floor=0.0), "kernel_floor"),
         (
             EquivariantAttentionConfig(
                 node_dim=4,

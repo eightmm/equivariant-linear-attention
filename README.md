@@ -61,9 +61,10 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 - `node_feats` contains invariant scalar (`0e`) channels only; coordinates are
   stored in float32+ independently of feature/model precision.
 - Exact graph-wise factorization with `O(N)` node scaling at fixed width,
-  depth, head count, and one balancing cycle.
-- Unit-ball vector queries/keys, a bounded quadratic angular scale, and
-  structured 3x3 PSD mass/denominator contractions avoid signed
+  depth, head count, and a fixed normalization choice.
+- Unit-normalized positive scalar content, unit-ball vector queries/keys,
+  bounded linear/quadratic angular scales, and structured vector/3x3
+  mass/denominator contractions avoid signed
   flattened-feature cancellation; signed value numerators remain unclamped.
 - fp16/bf16 geometry squares, angular/ST features, moment reductions, and
   invariant normalization use float32; float64 stays float64. Rank-2 moment
@@ -71,8 +72,8 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 - Integer, nonnegative, contiguous graph IDs starting at zero.
 
 Scalar outputs are O(3)-invariant and therefore cannot distinguish
-enantiomers. Chirality-sensitive prediction requires a future, explicitly
-tested SE(3) extension with parity-odd features.
+isolated mirror pairs. Chirality-sensitive prediction requires a future,
+explicitly tested parity-complete extension.
 
 See [the model contract](docs/MODEL.md) and [the derivation](docs/LAYER_MATH.md).
 
@@ -89,6 +90,9 @@ context block above a local equivariant encoder.
 uv run python scripts/train_compare.py --dataset synthetic --steps 10
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
 ```
+
+Use `--no-linear-kernel` and `--no-key-balancing` only for controlled P1
+ablations; they do not create separate model implementations.
 
 The repository currently has no declared open-source license. Contact the owner
 before redistributing substantial portions of the code.

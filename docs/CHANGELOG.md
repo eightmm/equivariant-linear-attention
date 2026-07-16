@@ -10,6 +10,15 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.7 -> v0.8 (2026-07-16) — normalize positive scalar content,
+  promote the bounded degree-2 kernel with a linear angular term, factorize its
+  vector summary exactly, add a controlled balance-off lane and executable P2
+  counterexamples, keep auto-inference parameters in FP32, and pin the working
+  setup-uv action release. A dimension/dtype inward normalization margin closes
+  a general-direction float32 rounding overshoot. impact: establishes a finite pair-kernel bound,
+  repairs alignment-sign blindness when the linear term is enabled, and makes
+  remaining moment/cluster/parity limits testable without claiming they are
+  solved.
 - [model] v0.6 -> v0.7 (2026-07-15) — bound vector queries/keys and the
   quadratic angular scale, replace signed flattened angular reductions with
   structured 3x3 PSD mass/denominator contractions plus signed numerator

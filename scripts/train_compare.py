@@ -47,6 +47,9 @@ def main() -> None:
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
+        linear_kernel_init=args.linear_kernel_init,
+        use_linear_kernel=not args.no_linear_kernel,
+        use_key_balancing=not args.no_key_balancing,
     ).to(device=device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     normalizer = None if args.no_target_normalize else fit_target_normalizer(dataset[i] for i in train_idx)
@@ -130,6 +133,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--num-heads", type=int, default=4)
+    parser.add_argument("--linear-kernel-init", type=float, default=0.05)
+    parser.add_argument("--no-linear-kernel", action="store_true")
+    parser.add_argument("--no-key-balancing", action="store_true")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--grad-clip", type=float, default=1.0)
@@ -225,7 +231,10 @@ def _run_config(
         "target_normalized": not args.no_target_normalize,
         "test_evaluated": not args.skip_test_eval,
         "attention": "factorized_moment",
-        "balance_cycles": 1,
+        "balance_cycles": 0 if args.no_key_balancing else 1,
+        "key_balancing": not args.no_key_balancing,
+        "linear_kernel": not args.no_linear_kernel,
+        "linear_kernel_init": args.linear_kernel_init,
         "ffn_hidden_ratio": 2.0,
     }
 

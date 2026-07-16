@@ -67,8 +67,10 @@ run_ml_smoke() {
 run_gpu() {
   if command -v srun >/dev/null 2>&1; then
     srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda bf16
+    srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda auto
   else
     uv run python scripts/ml_smoke.py cuda bf16
+    uv run python scripts/ml_smoke.py cuda auto
   fi
   echo "check gpu: ok"
 }

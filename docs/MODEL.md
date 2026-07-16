@@ -43,20 +43,22 @@ state computed after the final scalar/vector FFN.
 
 ## Fixed architecture choices
 
-- positive scalar content plus a bounded quadratic vector kernel;
-- finite-precision unit-ball vector queries/keys and a learned angular scale in
-  `[0, vector_kernel_max]` (mathematically open before floating-point
-  saturation);
-- structured 3x3 PSD summaries for quadratic masses and denominators, plus
-  analogous signed matrix-valued value summaries that are not clamped;
-- one key-mass balancing cycle followed by row normalization;
+- unit-normalized positive scalar content plus a bounded degree-2 vector
+  kernel with linear and quadratic angular terms;
+- finite-precision unit-ball vector queries/keys and learned angular scales in
+  configured closed bounds;
+- structured vector and 3x3 PSD summaries for masses and denominators, plus
+  analogous signed value summaries that are not clamped;
+- row normalization, with one key-mass balancing cycle enabled by default and
+  a no-balancing lane restricted to controlled experiments;
 - exact factorized relative vector and rank-2 moment transport;
 - scalar/vector residual updates;
 - ratio-2 pointwise equivariant FFN in every block.
 
-Optional architecture flags were removed. A proposed mechanism must first add a
-dense or symbolic reference test, preserve O(3)/translation/permutation tests,
-and be evaluated as one isolated change.
+The two P1 switches alter only the degree-2 kernel and normalization inside the
+single factorized implementation. Any larger mechanism must first add a dense
+or symbolic reference test, preserve O(3)/translation/permutation tests, and be
+evaluated as one isolated change.
 
 ## Applicability
 

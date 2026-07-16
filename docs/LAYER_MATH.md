@@ -1,21 +1,46 @@
 # Factorized Moment Attention
 
-For graph `g`, node `i`, and head `h`, let `q0_ih, k0_jh in R^D` be
-positive scalar-content features. Let `q1_ih, k1_jh in R^3` be polar-vector
-features mapped by the following unit-ball transform:
+For graph `g`, node `i`, and head `h`, map positive scalar-content features
+`phi(q0_ih), phi(k0_jh) in R^D` to
+
+```text
+a_ih = phi(q0_ih) / sqrt(||phi(q0_ih)||^2 + eps)
+b_jh = phi(k0_jh) / sqrt(||phi(k0_jh)||^2 + eps).
+```
+
+Both normalized scalar features and unit-ball vectors are multiplied by an
+inward machine-precision margin `max(0.5, 1 - 4 D eps_machine)`, using their
+last-axis dimension `D`. This offsets dot-product accumulation error so the
+closed finite-precision kernel bound below is enforced for general directions,
+not only axis-aligned endpoints.
+
+Let `q1_ih, k1_jh in R^3` be polar-vector features mapped by the following
+unit-ball transform:
 
 ```text
 q1 = u / sqrt(1 + ||u||^2),   k1 = v / sqrt(1 + ||v||^2).
 ```
 
-In exact arithmetic, the vector norms are strictly below one and the learned
-angular scale satisfies `0 < alpha_h < vector_kernel_max`. Floating-point
-rounding can saturate either bound, so the implemented contract is
-`||q1||, ||k1|| <= 1` and `0 <= alpha_h <= vector_kernel_max`. The pair kernel is
+In exact arithmetic, scalar feature norms are at most one, vector norms are
+strictly below one, and the learned scales satisfy `beta_h, gamma_h > 0` below
+their configured maxima. Floating-point rounding can saturate endpoints, so
+the implemented contract uses closed bounds. The pair kernel is
 
 ```text
-K_ijh = q0_ih^T k0_jh + 1 + alpha_h (q1_ih^T k1_jh)^2 >= 1.
+K_ijh = c + a_ih^T b_jh
+        + beta_h (1 + q1_ih^T k1_jh)
+        + gamma_h (q1_ih^T k1_jh)^2.
 ```
+
+For `c > 0`, `0 <= beta_h <= beta_max`, and
+`0 <= gamma_h <= gamma_max`, finite precision preserves the declared bound
+
+```text
+c <= K_ijh <= c + 1 + 2 beta_max + gamma_max.
+```
+
+The linear term distinguishes alignment from anti-alignment. Disabling it
+recovers the quadratic-only P1 control.
 
 This is O(3)-invariant because inner products are preserved by every orthogonal
 matrix, including reflections.
@@ -29,22 +54,28 @@ signed flattened feature and then take a dot product. It contracts structured
 For row scale `r_ih`, define
 
 ```text
-Q0_gh = sum_i r_ih q0_ih
+Q0_gh = sum_i r_ih a_ih
 Qr_gh = sum_i r_ih
+Q1_gh = sum_i r_ih q1_ih
 Q2_gh = sum_i r_ih q1_ih q1_ih^T.
 ```
 
 Then each key mass is evaluated as
 
 ```text
-m_jh = k0_jh^T Q0_gh + Qr_gh + alpha_h k1_jh^T Q2_gh k1_jh.
+m_jh = b_jh^T Q0_gh
+       + (c + beta_h) Qr_gh
+       + beta_h k1_jh^T Q1_gh
+       + gamma_h k1_jh^T Q2_gh k1_jh.
 ```
 
-Every mass term is nonnegative and the constant term is strictly positive.
-Value numerators use analogous scalar, constant, and matrix-valued summaries,
-but their learned values may be signed, so these summaries are not PSD and the
-quadratic numerator contraction is not clamped. This is algebraically identical
-to the explicit dense kernel and remains `O(N)` at fixed width and head count.
+The linear contraction can be signed, but the combined angular contribution
+`beta_h (Qr_gh + k1_jh^T Q1_gh)` is nonnegative because every query/key vector
+has norm at most one. The floor contribution `c Qr_gh` is strictly positive.
+Value numerators use analogous scalar, constant, vector-valued, and
+matrix-valued summaries. Their learned values may be signed, so numerator
+summaries are not PSD and are not clamped. This is algebraically identical to
+the explicit dense kernel and remains `O(N)` at fixed width and head count.
 
 ## One balancing cycle
 
@@ -56,9 +87,9 @@ A_ijh = K'_ijh / sum_l K'_ilh.
 ```
 
 No pair matrix is needed. Tests compare both the balanced and row-normalized
-structured factorizations with the explicit dense kernel in float64. The single
-balancing cycle remains a fixed architecture choice; whether it improves
-selectivity is an empirical P1 question rather than a positivity requirement.
+structured factorizations with the explicit dense kernel in float64. One-cycle
+balancing is the default; `--no-key-balancing` is retained only for the matched
+P1 normalization study. Positivity no longer depends on balancing.
 
 ## Exact relative moments
 
@@ -110,8 +141,22 @@ features may be fp16/bf16, while coordinates remain float32 unless the complete
 verification lane is float64. Finite FP32 coordinates are never cast through
 fp16 before geometry preprocessing.
 
-At fixed feature dimension, head count, depth, and one balancing cycle, time
+At fixed feature dimension, head count, depth, and normalization choice, time
 and intermediate storage are `O(N)`. The public wrapper validates inputs and
 derives graph count plus graph counts once, then reuses that metadata in every
 layer and graph readout. Validation can still create compile graph breaks;
 full-graph compilation remains a separate performance target.
+
+## Executable representation boundaries
+
+The P2 counterexample suite records rather than hides the remaining limits:
+
+- degree-2 moments collide for distributions with equal mass/mean/variance but
+  different fourth moments;
+- two-point global normalized geometry is independent of fragment separation,
+  so the global branch has no structural cluster-decay guarantee;
+- scalar output is invariant under global reflection;
+- coordinate gradients of invariant scalar sums transform equivariantly.
+
+These tests constrain claims; they do not turn the global block into a local
+force field or parity-complete SBDD model.

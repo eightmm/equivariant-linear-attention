@@ -24,3 +24,7 @@ uv run python scripts/train_compare.py \
 smoke and run-specific environment metadata. Long training, schedulers,
 distributed execution, checkpoint selection, and resume are outside the current
 prototype contract.
+
+For the registered P1 screen, `--no-linear-kernel` selects the quadratic-only
+kernel and `--no-key-balancing` selects direct row normalization. The four
+combinations share one implementation and are recorded in `run_config`.

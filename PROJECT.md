@@ -40,14 +40,15 @@
 
 ## Architecture Baseline
 
-- Positive scalar content plus finite-precision unit-ball vector queries/keys and a bounded
-  squared-dot angular term.
-- Quadratic masses and denominators use structured 3x3 PSD summaries rather
-  than graph-summed signed flattened outer features. Value numerators use the
-  analogous signed matrix-valued summaries and are not clamped.
+- Unit-normalized positive scalar content plus finite-precision unit-ball
+  vector queries/keys and bounded linear/squared-dot angular terms.
+- Linear vector and quadratic 3x3 PSD summaries compute masses and
+  denominators without graph-summed signed flattened outer features. Value
+  numerators use analogous signed summaries and are not clamped.
 - Exact graph-wise factorization of relative vector and symmetric-traceless
   second moments; no `N x N` attention tensor.
-- One key-balancing/row-normalization cycle.
+- Row normalization with one-cycle key balancing enabled by default; the
+  no-balancing lane exists only for the registered normalization ablation.
 - Pointwise O(3)-equivariant ratio-2 FFN after each attention residual.
 - Experimental radial, dynamic-routing, alternate-Sinkhorn, dense, local, and
   rich paths are removed from the active implementation. Future additions must
@@ -60,7 +61,9 @@
   error below `1e-6`.
 - Required edge cases: singleton graphs, coincident coordinates, finite
   forward/backward, large valid fp16 graphs with extreme finite coordinates,
-  invalid batch dtype/IDs, and factorized-vs-dense equality.
+  invalid batch dtype/IDs, kernel endpoint bounds, factorized-vs-dense
+  equality, alignment sign, moment collision, cluster-normalization,
+  reflection, and coordinate-gradient equivariance.
 - Required project check: `scripts/check.sh fast` with at least 80% coverage.
 - GPU precision checks are required before making fp16/bf16 CUDA claims.
 

@@ -17,8 +17,13 @@ class EquivariantAttentionConfig:
     output_irreps: str | CartesianIrreps = "1x0e"
     num_layers: int = 3
     num_heads: int = 4
+    linear_kernel_init: float = 0.05
+    linear_kernel_max: float = 1.0
     vector_kernel_init: float = 0.05
     vector_kernel_max: float = 1.0
+    kernel_floor: float = 1.0
+    use_linear_kernel: bool = True
+    use_key_balancing: bool = True
     residual_scale_init: float = 0.1
     eps: float = 1e-12
 
@@ -46,8 +51,13 @@ class EquivariantAttention(nn.Module):
                     scalars=self.hidden_irreps.scalars,
                     vectors=self.hidden_irreps.vectors,
                     num_heads=config.num_heads,
+                    linear_kernel_init=config.linear_kernel_init,
+                    linear_kernel_max=config.linear_kernel_max,
                     vector_kernel_init=config.vector_kernel_init,
                     vector_kernel_max=config.vector_kernel_max,
+                    kernel_floor=config.kernel_floor,
+                    use_linear_kernel=config.use_linear_kernel,
+                    use_key_balancing=config.use_key_balancing,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -165,8 +175,13 @@ class _EquivariantMomentLayer(nn.Module):
         scalars: int,
         vectors: int,
         num_heads: int,
+        linear_kernel_init: float,
+        linear_kernel_max: float,
         vector_kernel_init: float,
         vector_kernel_max: float,
+        kernel_floor: float,
+        use_linear_kernel: bool,
+        use_key_balancing: bool,
         residual_scale_init: float,
         eps: float,
     ) -> None:
@@ -176,7 +191,11 @@ class _EquivariantMomentLayer(nn.Module):
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
         self.eps = eps
+        self.linear_kernel_max = linear_kernel_max
         self.vector_kernel_max = vector_kernel_max
+        self.kernel_floor = kernel_floor
+        self.use_linear_kernel = use_linear_kernel
+        self.use_key_balancing = use_key_balancing
 
         self.norm = nn.LayerNorm(scalars)
         self.query_scalar = nn.Linear(scalars, scalars)
@@ -189,6 +208,12 @@ class _EquivariantMomentLayer(nn.Module):
         self.key_vector_gate = nn.Linear(scalars, num_heads)
         self.relative_gate = nn.Linear(scalars, num_heads)
         self.tensor_gate = nn.Linear(scalars, num_heads)
+        self.raw_linear_kernel = nn.Parameter(
+            torch.full(
+                (num_heads,),
+                _inverse_sigmoid(linear_kernel_init / linear_kernel_max),
+            )
+        )
         self.raw_vector_kernel = nn.Parameter(
             torch.full(
                 (num_heads,),
@@ -228,8 +253,14 @@ class _EquivariantMomentLayer(nn.Module):
         bounded_vectors = _bounded_irrep(vectors, self.eps)
         n_nodes = scalars.shape[0]
 
-        q0 = F.elu(self.query_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0
-        k0 = F.elu(self.key_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0
+        q0 = _normalize_positive_features(
+            F.elu(self.query_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0,
+            self.eps,
+        )
+        k0 = _normalize_positive_features(
+            F.elu(self.key_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)) + 1.0,
+            self.eps,
+        )
         q1 = _unit_ball(
             self.query_vector(bounded_vectors)
             * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1),
@@ -241,6 +272,12 @@ class _EquivariantMomentLayer(nn.Module):
             self.eps,
         )
         moment_dtype = _moment_dtype(q0, k0, q1, k1, pos)
+        linear_scale = _bounded_kernel_scale(
+            self.raw_linear_kernel,
+            self.linear_kernel_max,
+        ).to(dtype=moment_dtype)
+        if not self.use_linear_kernel:
+            linear_scale = torch.zeros_like(linear_scale)
         kernel_scale = _bounded_kernel_scale(
             self.raw_vector_kernel,
             self.vector_kernel_max,
@@ -273,7 +310,9 @@ class _EquivariantMomentLayer(nn.Module):
             value,
             batch,
             num_graphs=num_graphs,
-            balanced=True,
+            balanced=self.use_key_balancing,
+            linear_scale=linear_scale,
+            kernel_floor=self.kernel_floor,
         )
 
         offset = self.head_dim
@@ -358,6 +397,8 @@ def _factorized_moment_attention(
     *,
     num_graphs: int,
     balanced: bool,
+    linear_scale: torch.Tensor | None = None,
+    kernel_floor: float = 1.0,
     balance_exponent: torch.Tensor | None = None,
     sinkhorn_iterations: int = 1,
 ) -> torch.Tensor:
@@ -376,6 +417,10 @@ def _factorized_moment_attention(
     query_vector = query_vector.to(dtype=reduction_dtype)
     key_vector = key_vector.to(dtype=reduction_dtype)
     kernel_scale = kernel_scale.to(dtype=reduction_dtype)
+    if linear_scale is None:
+        linear_scale = torch.zeros_like(kernel_scale)
+    else:
+        linear_scale = linear_scale.to(dtype=reduction_dtype)
     value = value.to(dtype=reduction_dtype)
     if balance_exponent is not None:
         balance_exponent = balance_exponent.to(dtype=reduction_dtype)
@@ -391,6 +436,8 @@ def _factorized_moment_attention(
                 row_scale,
                 batch,
                 num_graphs,
+                linear_scale=linear_scale,
+                kernel_floor=kernel_floor,
             )
             if balance_exponent is None:
                 key_scale = key_mass.reciprocal()
@@ -405,6 +452,8 @@ def _factorized_moment_attention(
                 key_scale,
                 batch,
                 num_graphs,
+                linear_scale=linear_scale,
+                kernel_floor=kernel_floor,
             )
             row_scale = denominator.reciprocal()
     else:
@@ -418,6 +467,8 @@ def _factorized_moment_attention(
             key_scale,
             batch,
             num_graphs,
+            linear_scale=linear_scale,
+            kernel_floor=kernel_floor,
         )
     numerator = _structured_numerator(
         query_scalar,
@@ -429,6 +480,8 @@ def _factorized_moment_attention(
         value,
         batch,
         num_graphs,
+        linear_scale=linear_scale,
+        kernel_floor=kernel_floor,
     )
     return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
 
@@ -442,21 +495,37 @@ def _structured_key_mass(
     row_scale: torch.Tensor,
     batch: torch.Tensor,
     num_graphs: int,
+    *,
+    linear_scale: torch.Tensor | None = None,
+    kernel_floor: float = 1.0,
 ) -> torch.Tensor:
+    if linear_scale is None:
+        linear_scale = torch.zeros_like(kernel_scale)
     scalar_sum = _segment_sum(
         query_scalar * row_scale.unsqueeze(-1),
         batch,
         num_graphs,
     )
     constant_sum = _segment_sum(row_scale, batch, num_graphs)
+    linear_sum = _segment_sum(
+        query_vector * row_scale.unsqueeze(-1),
+        batch,
+        num_graphs,
+    )
     vector_outer_sum = _segment_sum(
         _vector_outer(query_vector) * row_scale[..., None, None],
         batch,
         num_graphs,
     )
     content = (key_scalar * scalar_sum[batch]).sum(dim=-1)
+    linear = (key_vector * linear_sum[batch]).sum(dim=-1)
     quadratic = _positive_quadratic_form(key_vector, vector_outer_sum[batch])
-    return content + constant_sum[batch] + kernel_scale[None, :] * quadratic
+    return (
+        content
+        + (kernel_floor + linear_scale)[None, :] * constant_sum[batch]
+        + linear_scale[None, :] * linear
+        + kernel_scale[None, :] * quadratic
+    )
 
 
 def _structured_row_denominator(
@@ -468,21 +537,37 @@ def _structured_row_denominator(
     key_scale: torch.Tensor,
     batch: torch.Tensor,
     num_graphs: int,
+    *,
+    linear_scale: torch.Tensor | None = None,
+    kernel_floor: float = 1.0,
 ) -> torch.Tensor:
+    if linear_scale is None:
+        linear_scale = torch.zeros_like(kernel_scale)
     scalar_sum = _segment_sum(
         key_scalar * key_scale.unsqueeze(-1),
         batch,
         num_graphs,
     )
     constant_sum = _segment_sum(key_scale, batch, num_graphs)
+    linear_sum = _segment_sum(
+        key_vector * key_scale.unsqueeze(-1),
+        batch,
+        num_graphs,
+    )
     vector_outer_sum = _segment_sum(
         _vector_outer(key_vector) * key_scale[..., None, None],
         batch,
         num_graphs,
     )
     content = (query_scalar * scalar_sum[batch]).sum(dim=-1)
+    linear = (query_vector * linear_sum[batch]).sum(dim=-1)
     quadratic = _positive_quadratic_form(query_vector, vector_outer_sum[batch])
-    return content + constant_sum[batch] + kernel_scale[None, :] * quadratic
+    return (
+        content
+        + (kernel_floor + linear_scale)[None, :] * constant_sum[batch]
+        + linear_scale[None, :] * linear
+        + kernel_scale[None, :] * quadratic
+    )
 
 
 def _structured_numerator(
@@ -495,7 +580,12 @@ def _structured_numerator(
     value: torch.Tensor,
     batch: torch.Tensor,
     num_graphs: int,
+    *,
+    linear_scale: torch.Tensor | None = None,
+    kernel_floor: float = 1.0,
 ) -> torch.Tensor:
+    if linear_scale is None:
+        linear_scale = torch.zeros_like(kernel_scale)
     weighted_value = key_scale.unsqueeze(-1) * value
     scalar_summary = _segment_sum(
         key_scalar.unsqueeze(-1) * weighted_value.unsqueeze(-2),
@@ -503,19 +593,30 @@ def _structured_numerator(
         num_graphs,
     )
     constant_summary = _segment_sum(weighted_value, batch, num_graphs)
+    linear_summary = _segment_sum(
+        key_vector.unsqueeze(-1) * weighted_value.unsqueeze(-2),
+        batch,
+        num_graphs,
+    )
     quadratic_summary = _segment_sum(
         _vector_outer(key_vector).unsqueeze(-1) * weighted_value[..., None, None, :],
         batch,
         num_graphs,
     )
     content = torch.einsum("nhd,nhdf->nhf", query_scalar, scalar_summary[batch])
+    linear = torch.einsum("nha,nhaf->nhf", query_vector, linear_summary[batch])
     quadratic = torch.einsum(
         "nha,nhabf,nhb->nhf",
         query_vector,
         quadratic_summary[batch],
         query_vector,
     )
-    return content + constant_summary[batch] + kernel_scale[None, :, None] * quadratic
+    return (
+        content
+        + (kernel_floor + linear_scale)[None, :, None] * constant_summary[batch]
+        + linear_scale[None, :, None] * linear
+        + kernel_scale[None, :, None] * quadratic
+    )
 
 
 def _vector_outer(value: torch.Tensor) -> torch.Tensor:
@@ -616,14 +717,39 @@ def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
     output_dtype = value.dtype
     reduction_dtype = torch.float64 if value.dtype == torch.float64 else torch.float32
     reduced = value.to(dtype=reduction_dtype)
-    scale = torch.sqrt(1.0 + reduced.square().mean(dim=-1, keepdim=True).clamp_min(eps))
+    rms = _stable_vector_norm(reduced) / sqrt(reduced.shape[-1])
+    scale = torch.hypot(rms, torch.ones_like(rms))
     return (reduced / scale).to(dtype=output_dtype)
 
 
 def _unit_ball(value: torch.Tensor, eps: float) -> torch.Tensor:
     reduced = value.to(dtype=_moment_dtype(value))
-    norm_square = reduced.square().sum(dim=-1, keepdim=True).clamp_min(eps)
-    return reduced / torch.sqrt(1.0 + norm_square)
+    norm = _stable_vector_norm(reduced)
+    normalized = reduced / torch.hypot(norm, torch.ones_like(norm))
+    return normalized * _inward_unit_margin(normalized)
+
+
+def _normalize_positive_features(value: torch.Tensor, eps: float) -> torch.Tensor:
+    reduced = value.to(dtype=_moment_dtype(value))
+    norm = _stable_vector_norm(reduced)
+    floor = torch.full_like(norm, sqrt(eps))
+    normalized = reduced / torch.hypot(norm, floor)
+    return normalized * _inward_unit_margin(normalized)
+
+
+def _inward_unit_margin(value: torch.Tensor) -> float:
+    dimension = value.shape[-1]
+    rounding_margin = 4.0 * dimension * torch.finfo(value.dtype).eps
+    return max(0.5, 1.0 - rounding_margin)
+
+
+def _stable_vector_norm(value: torch.Tensor) -> torch.Tensor:
+    magnitude = value.abs().amax(dim=-1, keepdim=True)
+    safe_magnitude = magnitude.clamp_min(torch.finfo(value.dtype).tiny)
+    scaled = value / safe_magnitude
+    scaled_norm_square = scaled.square().sum(dim=-1, keepdim=True)
+    scaled_norm = torch.sqrt(scaled_norm_square.clamp_min(torch.finfo(value.dtype).eps))
+    return magnitude * scaled_norm
 
 
 def _bounded_kernel_scale(raw: torch.Tensor, maximum: float) -> torch.Tensor:
@@ -670,6 +796,14 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError("vector_kernel_max must be positive")
     if config.vector_kernel_init >= config.vector_kernel_max:
         raise ValueError("vector_kernel_init must be smaller than vector_kernel_max")
+    if config.linear_kernel_init <= 0:
+        raise ValueError("linear_kernel_init must be positive")
+    if config.linear_kernel_max <= 0:
+        raise ValueError("linear_kernel_max must be positive")
+    if config.linear_kernel_init >= config.linear_kernel_max:
+        raise ValueError("linear_kernel_init must be smaller than linear_kernel_max")
+    if config.kernel_floor <= 0:
+        raise ValueError("kernel_floor must be positive")
     hidden = CartesianIrreps.parse(config.hidden_irreps)
     output = CartesianIrreps.parse(config.output_irreps)
     if hidden.scalars <= 0 or hidden.vectors <= 0 or hidden.tensors:

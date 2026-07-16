@@ -21,6 +21,11 @@ semantics and batch shapes differ. No performance claim is made until eager and
 compiled batched outputs/backward are checked on identical inputs and the
 environment is recorded.
 
+Kernel normalization studies use the same training command with
+`--no-linear-kernel` and/or `--no-key-balancing`. Report validation MAE and
+wall time as exploratory unless matched multi-seed runs also record mass,
+denominator, condition-ratio, entropy, gradient, and memory diagnostics.
+
 `uv run python scripts/ml_smoke.py cpu compile` uses the same nontrivial batch
 for eager and compiled inference and checks output equality. Graph cardinality
 is derived once per public forward, but tensor-dependent input validation may
