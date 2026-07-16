@@ -4,7 +4,20 @@ import sys
 
 import torch
 
-from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig, prepare_for_inference
+from equivariant_attention import (
+    EquivariantAttention,
+    EquivariantAttentionConfig,
+    autocast_dtype,
+    prepare_for_inference,
+)
+
+
+def _comparison_tolerance(dtype: torch.dtype, *, automatic: bool) -> float:
+    if dtype == torch.bfloat16:
+        return 1e-2
+    if dtype == torch.float16:
+        return 5e-3
+    return 5e-3 if automatic else 1e-10
 
 
 def main() -> int:
@@ -17,7 +30,9 @@ def main() -> int:
         return 1
 
     device = torch.device(device_name)
-    dtype = torch.float32 if use_auto else (torch.bfloat16 if use_bf16 else torch.float64)
+    dtype = (
+        torch.float32 if use_auto else (torch.bfloat16 if use_bf16 else torch.float64)
+    )
     geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
     torch.manual_seed(23)
     model = EquivariantAttention(
@@ -50,15 +65,20 @@ def main() -> int:
         dtype="auto" if use_auto else dtype,
         compile_model=use_compile,
     )
-    if use_auto and {parameter.dtype for parameter in inference_model.parameters()} != {torch.float32}:
-        print("ml_smoke: auto inference did not preserve fp32 parameters", file=sys.stderr)
+    if use_auto and {parameter.dtype for parameter in inference_model.parameters()} != {
+        torch.float32
+    }:
+        print(
+            "ml_smoke: auto inference did not preserve fp32 parameters", file=sys.stderr
+        )
         return 1
     with torch.inference_mode():
         inference_outputs = inference_model(node_feats, pos, batch=batch)
     if not all(torch.isfinite(value).all() for value in inference_outputs.values()):
         print("ml_smoke: non-finite inference output", file=sys.stderr)
         return 1
-    tolerance = 5e-3 if use_auto or dtype in {torch.float16, torch.bfloat16} else 1e-10
+    comparison_dtype = autocast_dtype(device) if use_auto else dtype
+    tolerance = _comparison_tolerance(comparison_dtype, automatic=use_auto)
     for key in eager_outputs:
         if not torch.allclose(
             eager_outputs[key].float(),

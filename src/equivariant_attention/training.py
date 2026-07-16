@@ -17,8 +17,19 @@ def build_regression_model(
     num_layers: int = 3,
     num_heads: int = 4,
     linear_kernel_init: float = 0.05,
-    use_linear_kernel: bool = True,
+    use_alignment_linear_term: bool = True,
     use_key_balancing: bool = True,
+    kernel_floor_mode: str = "fixed",
+    local_head_counts: tuple[int, ...] | None = None,
+    local_cutoff: float = 2.5,
+    num_rbf: int = 16,
+    learn_local_radial_gate: bool = False,
+    global_memory_count: int = 1,
+    use_memory_interaction: bool = False,
+    memory_assignment_temperature: float = 1.0,
+    memory_assignment_scale: float = 2.5,
+    memory_interaction_cutoff: float = 2.5,
+    use_radial_trace: bool = False,
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -28,8 +39,19 @@ def build_regression_model(
             num_layers=num_layers,
             num_heads=num_heads,
             linear_kernel_init=linear_kernel_init,
-            use_linear_kernel=use_linear_kernel,
+            use_alignment_linear_term=use_alignment_linear_term,
             use_key_balancing=use_key_balancing,
+            kernel_floor_mode=kernel_floor_mode,
+            local_head_counts=local_head_counts,
+            local_cutoff=local_cutoff,
+            num_rbf=num_rbf,
+            learn_local_radial_gate=learn_local_radial_gate,
+            global_memory_count=global_memory_count,
+            use_memory_interaction=use_memory_interaction,
+            memory_assignment_temperature=memory_assignment_temperature,
+            memory_assignment_scale=memory_assignment_scale,
+            memory_interaction_cutoff=memory_interaction_cutoff,
+            use_radial_trace=use_radial_trace,
         )
     )
     _zero_init_linear(model.scalar_out)
@@ -105,20 +127,29 @@ class TargetNormalizer:
         self.mean = mean
         self.std = std.clamp_min(1e-12)
 
-    def to(self, device: torch.device | str, dtype: torch.dtype | None = None) -> TargetNormalizer:
+    def to(
+        self, device: torch.device | str, dtype: torch.dtype | None = None
+    ) -> TargetNormalizer:
         return TargetNormalizer(
             mean=self.mean.to(device=device, dtype=dtype),
             std=self.std.to(device=device, dtype=dtype),
         )
 
     def transform(self, value: torch.Tensor) -> torch.Tensor:
-        return (value - self.mean.to(device=value.device, dtype=value.dtype)) / self.std.to(device=value.device, dtype=value.dtype)
+        return (
+            value - self.mean.to(device=value.device, dtype=value.dtype)
+        ) / self.std.to(device=value.device, dtype=value.dtype)
 
     def inverse(self, value: torch.Tensor) -> torch.Tensor:
-        return value * self.std.to(device=value.device, dtype=value.dtype) + self.mean.to(device=value.device, dtype=value.dtype)
+        return value * self.std.to(
+            device=value.device, dtype=value.dtype
+        ) + self.mean.to(device=value.device, dtype=value.dtype)
 
     def as_dict(self) -> dict[str, list[float]]:
-        return {"mean": self.mean.reshape(-1).tolist(), "std": self.std.reshape(-1).tolist()}
+        return {
+            "mean": self.mean.reshape(-1).tolist(),
+            "std": self.std.reshape(-1).tolist(),
+        }
 
 
 def fit_target_normalizer(samples: Iterable[GraphSample]) -> TargetNormalizer:
@@ -126,10 +157,15 @@ def fit_target_normalizer(samples: Iterable[GraphSample]) -> TargetNormalizer:
     if not targets:
         raise ValueError("at least one sample is required to fit target normalizer")
     stacked = torch.cat(targets, dim=0)
-    return TargetNormalizer(mean=stacked.mean(dim=0, keepdim=True), std=stacked.std(dim=0, keepdim=True, unbiased=False))
+    return TargetNormalizer(
+        mean=stacked.mean(dim=0, keepdim=True),
+        std=stacked.std(dim=0, keepdim=True, unbiased=False),
+    )
 
 
-def _autocast_context(device: torch.device, amp_dtype: torch.dtype | None) -> Iterator[None]:
+def _autocast_context(
+    device: torch.device, amp_dtype: torch.dtype | None
+) -> Iterator[None]:
     if amp_dtype is None:
         return nullcontext()
     return torch.autocast(device_type=device.type, dtype=amp_dtype)

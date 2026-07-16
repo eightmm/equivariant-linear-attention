@@ -86,10 +86,14 @@ def test_structured_attention_accumulates_low_precision_inputs_in_float32() -> N
 
     assert output.dtype == torch.float16
     assert torch.isfinite(output).all()
-    assert torch.allclose(output.float(), torch.full_like(output.float(), 2.0), atol=2e-3, rtol=0.0)
+    assert torch.allclose(
+        output.float(), torch.full_like(output.float(), 2.0), atol=2e-3, rtol=0.0
+    )
 
 
-def test_graph_metadata_is_derived_once_per_forward(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_graph_metadata_is_derived_once_per_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = 0
     original = moment_module._graph_metadata
 
@@ -115,17 +119,25 @@ def test_singleton_and_coincident_graphs_have_finite_backward() -> None:
     pos = torch.zeros(4, 3)
     batch = torch.tensor([0, 1, 1, 1])
 
-    loss = sum(value.float().square().mean() for value in model(node_feats, pos, batch=batch).values())
+    loss = sum(
+        value.float().square().mean()
+        for value in model(node_feats, pos, batch=batch).values()
+    )
     loss.backward()
 
     assert torch.isfinite(loss)
-    assert all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in model.parameters())
+    assert all(
+        parameter.grad is None or torch.isfinite(parameter.grad).all()
+        for parameter in model.parameters()
+    )
 
 
-def test_fp16_singleton_and_coincident_graphs_remain_finite() -> None:
+def test_fp16_features_with_fp32_singleton_and_coincident_geometry_remain_finite() -> (
+    None
+):
     model = _make_model(dtype=torch.float16)
     node_feats = torch.randn(4, 4, dtype=torch.float16)
-    pos = torch.zeros(4, 3, dtype=torch.float16)
+    pos = torch.zeros(4, 3, dtype=torch.float32)
     batch = torch.tensor([0, 1, 1, 1])
 
     outputs = model(node_feats, pos, batch=batch)
@@ -133,20 +145,24 @@ def test_fp16_singleton_and_coincident_graphs_remain_finite() -> None:
     assert all(torch.isfinite(value).all() for value in outputs.values())
 
 
-def test_fp16_large_graph_geometry_remains_finite() -> None:
-    model = package.EquivariantAttention(
-        package.EquivariantAttentionConfig(
-            node_dim=1,
-            hidden_irreps="2x0e + 1x1o",
-            output_irreps="1x0e + 1x1o + 1x2e",
-            num_layers=1,
-            num_heads=1,
+def test_fp16_features_with_large_fp32_graph_geometry_remain_finite() -> None:
+    model = (
+        package.EquivariantAttention(
+            package.EquivariantAttentionConfig(
+                node_dim=1,
+                hidden_irreps="2x0e + 1x1o",
+                output_irreps="1x0e + 1x1o + 1x2e",
+                num_layers=1,
+                num_heads=1,
+            )
         )
-    ).to(dtype=torch.float16).eval()
+        .to(dtype=torch.float16)
+        .eval()
+    )
     node_count = 65_537
     node_feats = torch.zeros(node_count, 1, dtype=torch.float16)
-    pos = torch.zeros(node_count, 3, dtype=torch.float16)
-    pos[-1, 0] = torch.finfo(torch.float16).max
+    pos = torch.zeros(node_count, 3, dtype=torch.float32)
+    pos[-1, 0] = 1e34
 
     with torch.no_grad():
         outputs = model(node_feats, pos)

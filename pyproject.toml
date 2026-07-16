@@ -1,7 +1,7 @@
 [project]
 name = "equivariant-attention"
 version = "0.1.0"
-description = "O(3)-equivariant global attention with exact factorized geometric moments"
+description = "O(3)-equivariant local/global attention with factorized geometric moments"
 authors = [
     { name = "eightmm" }
 ]

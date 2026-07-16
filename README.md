@@ -1,14 +1,16 @@
 # Equivariant Linear Attention
 
-A focused PyTorch prototype of one O(3)-equivariant global attention
-architecture for 3D graphs. The model keeps scalar and polar-vector states,
-transports exact relative first and symmetric-traceless second moments through a
-factorized kernel, and never materializes an `N x N` attention matrix.
+A focused PyTorch prototype of one O(3)-equivariant local/global attention
+architecture for 3D graphs. The model keeps scalar and polar-vector states and
+transports relative first and symmetric-traceless second moments through a
+bounded degree-2 kernel. Global heads use exact structured factorization; local
+heads use same-graph cutoff edges.
 
-The repository intentionally exposes one implementation:
-`EquivariantAttention`. Earlier dense, local, rich, and backend-dependent
-variants were removed so mathematical changes can be tested against one stable
-contract.
+The repository intentionally exposes one implementation,
+`EquivariantAttention`, with routing, multi-memory (HEMM), and radial-trace
+settings on `EquivariantAttentionConfig`. Earlier dense, rich, and
+backend-dependent model families were removed so mathematical changes can be
+tested against one stable contract.
 
 ## Install and verify
 
@@ -39,6 +41,11 @@ model = EquivariantAttention(
         output_irreps="1x0e + 1x1o + 1x2e",
         num_layers=3,
         num_heads=4,
+        # Public defaults: global/global/global, one memory, no interaction.
+        local_head_counts=None,
+        global_memory_count=1,
+        use_memory_interaction=False,
+        use_radial_trace=False,
     )
 )
 
@@ -60,15 +67,25 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
   symmetric-traceless moments.
 - `node_feats` contains invariant scalar (`0e`) channels only; coordinates are
   stored in float32+ independently of feature/model precision.
-- Exact graph-wise factorization with `O(N)` node scaling at fixed width,
-  depth, head count, and a fixed normalization choice.
+- `local_head_counts=None` gives the global/global/global (`ggg`) route. The
+  registered three-block alternatives are `lgl=(H,0,H)` and `lll=(H,H,H)`.
+- Global heads use exact graph-wise structured factorization without an
+  `N x N` attention tensor. Local heads use directed raw-coordinate edges with
+  a 2.5-Angstrom cosine cutoff of squared scaled distance and 16 Gaussian RBFs
+  by default.
+- Multi-memory interaction is off by default with `M=1`. The `M=1` path reduces
+  exactly to incumbent global attention; `M=4/8` interaction arms are
+  experimental and registered only for the middle global block of `lgl`.
 - Unit-normalized positive scalar content, unit-ball vector queries/keys,
   bounded linear/quadratic angular scales, and structured vector/3x3
   mass/denominator contractions avoid signed
   flattened-feature cancellation; signed value numerators remain unclamped.
-- fp16/bf16 geometry squares, angular/ST features, moment reductions, and
-  invariant normalization use float32; float64 stays float64. Rank-2 moment
-  outputs therefore remain float32 for low-precision model inputs.
+- Turning off the alignment-linear term removes only `beta * (q dot k)` and
+  retains the same `beta` constant. Key balancing is exactly one cycle.
+- Geometry preprocessing is scale-first. Geometry squares, angular/ST
+  features, moment reductions, and invariant normalization use float32 for
+  fp16/bf16 features; float64 coordinates remain float64. Coordinates must be
+  float32 or float64 and are never downcast through model precision.
 - Integer, nonnegative, contiguous graph IDs starting at zero.
 
 Scalar outputs are O(3)-invariant and therefore cannot distinguish
@@ -82,17 +99,28 @@ See [the model contract](docs/MODEL.md) and [the derivation](docs/LAYER_MATH.md)
 Existing QM9 results are adaptive random-row warm-start probes, not evidence of
 scaffold or cold-target generalization. Historical experiments remain in
 `docs/EXPERIMENTS.jsonl`; removed architecture variants are not public APIs.
-The global centroid/RMS-normalized model is not a size-consistent interatomic
-potential; its intended role is a bounded-size property probe or a global
-context block above a local equivariant encoder.
+Any route containing a global head is not a size-consistent interatomic
+potential. The intended role is a bounded-size property probe or a global
+context block within the same local/global architecture.
 
 ```bash
-uv run python scripts/train_compare.py --dataset synthetic --steps 10
+uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
 ```
 
-Use `--no-linear-kernel` and `--no-key-balancing` only for controlled P1
-ablations; they do not create separate model implementations.
+The training CLI exposes registered `--routing ggg/lgl/lll`,
+`--memory-count 1/4/8`, `--memory-interaction`, and `--radial-trace` arms. Use
+`--no-alignment-linear-term`, `--no-key-balancing`, and
+`--kernel-floor-mode fixed/inverse_graph_size` only for matched ablations. Test
+evaluation is disabled by default and requires explicit `--evaluate-test`.
+Despite the compatibility name, `inverse_graph_size` scales the complete
+shifted positive baseline `(c + beta + delta*beta*t)` by `1/N_g` and leaves the
+content and `gamma*t^2` terms unchanged.
+
+These switches are implemented capabilities, not evidence that a non-default
+arm is more accurate or faster. Promotion requires the preregistered matched,
+multi-seed validation and resource comparison in [the evaluation
+contract](docs/EVALUATION.md).
 
 The repository currently has no declared open-source license. Contact the owner
 before redistributing substantial portions of the code.

@@ -31,12 +31,18 @@ The earlier packaged run records binary index-list hashes in
 canonical text index hashes directly in their metrics JSON.
 
 Target normalization is fit on training targets only. Architecture selection
-uses validation only; the test split is skipped by `--skip-test-eval`.
+uses validation only. Test evaluation is disabled by default and occurs only
+when the caller explicitly supplies `--evaluate-test`.
+
+Registered adaptive comparisons use three-layer/four-head `ggg`, `lgl`, or
+mechanistic-control `lll` routing; memory counts 1, 4, or 8; and isolated
+alignment, balancing, pair-floor, memory-interaction, and radial-trace changes.
+These are capabilities under study, not promoted performance defaults.
 
 ## Ledger Semantics
 
-`docs/EXPERIMENTS.jsonl` is written by `oms research-runner`. Its `gate` field
-means the preflight check and experiment command executed successfully. It does
-not mean the scientific hypothesis met its registered threshold. Hypothesis
-outcomes for the enhanced-moment study are recorded separately in
-`outputs/ablations/summary.json`.
+`docs/EXPERIMENTS.jsonl` is the immutable historical run ledger for this task.
+Its `gate` field means the preflight check and experiment command executed
+successfully; it does not mean the scientific hypothesis met its registered
+threshold. Historical test access prevents describing this random-row split as
+a pristine confirmatory holdout.

@@ -20,15 +20,19 @@ from equivariant_attention.moment import (
 
 def _make_model() -> EquivariantAttention:
     torch.manual_seed(101)
-    return EquivariantAttention(
-        EquivariantAttentionConfig(
-            node_dim=6,
-            hidden_irreps="12x0e + 3x1o",
-            output_irreps="2x0e + 2x1o + 1x2e",
-            num_layers=2,
-            num_heads=3,
+    return (
+        EquivariantAttention(
+            EquivariantAttentionConfig(
+                node_dim=6,
+                hidden_irreps="12x0e + 3x1o",
+                output_irreps="2x0e + 2x1o + 1x2e",
+                num_layers=2,
+                num_heads=3,
+            )
         )
-    ).to(dtype=torch.float64).eval()
+        .to(dtype=torch.float64)
+        .eval()
+    )
 
 
 def _make_inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -58,7 +62,9 @@ def _max_error(left: torch.Tensor, right: torch.Tensor) -> float:
 
 
 @pytest.mark.parametrize("reflection", [False, True])
-def test_attention_is_o3_equivariant_and_translation_invariant(reflection: bool) -> None:
+def test_attention_is_o3_equivariant_and_translation_invariant(
+    reflection: bool,
+) -> None:
     model = _make_model()
     node_feats, pos, batch = _make_inputs()
     reference = model(node_feats, pos, batch=batch)
@@ -69,16 +75,33 @@ def test_attention_is_o3_equivariant_and_translation_invariant(reflection: bool)
 
     assert _max_error(moved["node_scalars"], reference["node_scalars"]) < 1e-6
     assert _max_error(moved["graph_scalars"], reference["graph_scalars"]) < 1e-6
-    assert _max_error(
-        moved["node_vectors"],
-        torch.einsum("nca,ba->ncb", reference["node_vectors"], transform),
-    ) < 1e-6
-    assert _max_error(
-        moved["graph_vectors"],
-        torch.einsum("gca,ba->gcb", reference["graph_vectors"], transform),
-    ) < 1e-6
-    assert _max_error(moved["node_tensors"], _rotate_tensor(reference["node_tensors"], transform)) < 1e-6
-    assert _max_error(moved["graph_tensors"], _rotate_tensor(reference["graph_tensors"], transform)) < 1e-6
+    assert (
+        _max_error(
+            moved["node_vectors"],
+            torch.einsum("nca,ba->ncb", reference["node_vectors"], transform),
+        )
+        < 1e-6
+    )
+    assert (
+        _max_error(
+            moved["graph_vectors"],
+            torch.einsum("gca,ba->gcb", reference["graph_vectors"], transform),
+        )
+        < 1e-6
+    )
+    assert (
+        _max_error(
+            moved["node_tensors"], _rotate_tensor(reference["node_tensors"], transform)
+        )
+        < 1e-6
+    )
+    assert (
+        _max_error(
+            moved["graph_tensors"],
+            _rotate_tensor(reference["graph_tensors"], transform),
+        )
+        < 1e-6
+    )
 
 
 def test_attention_is_permutation_and_batch_consistent() -> None:
@@ -88,16 +111,30 @@ def test_attention_is_permutation_and_batch_consistent() -> None:
     permutation = torch.tensor([3, 0, 7, 5, 1, 8, 2, 6, 4])
     inverse = torch.argsort(permutation)
 
-    permuted = model(node_feats[permutation], pos[permutation], batch=batch[permutation])
+    permuted = model(
+        node_feats[permutation], pos[permutation], batch=batch[permutation]
+    )
 
     for key in ("node_scalars", "node_vectors", "node_tensors"):
         assert _max_error(permuted[key][inverse], reference[key]) < 1e-6
 
-    independent = [model(node_feats[batch == graph], pos[batch == graph]) for graph in range(2)]
+    independent = [
+        model(node_feats[batch == graph], pos[batch == graph]) for graph in range(2)
+    ]
     for key in ("node_scalars", "node_vectors", "node_tensors"):
-        assert _max_error(reference[key], torch.cat([output[key] for output in independent])) < 1e-6
+        assert (
+            _max_error(
+                reference[key], torch.cat([output[key] for output in independent])
+            )
+            < 1e-6
+        )
     for key in ("graph_scalars", "graph_vectors", "graph_tensors"):
-        assert _max_error(reference[key], torch.cat([output[key] for output in independent])) < 1e-6
+        assert (
+            _max_error(
+                reference[key], torch.cat([output[key] for output in independent])
+            )
+            < 1e-6
+        )
 
 
 def test_forward_shapes_and_tensor_subspace() -> None:
@@ -146,14 +183,17 @@ def test_structured_attention_matches_explicit_dense_kernel(balanced: bool) -> N
         batch,
         num_graphs=2,
         balanced=balanced,
-        linear_scale=linear_scale,
+        alignment_scale=linear_scale,
+        alignment_dot_scale=linear_scale,
         kernel_floor=0.5,
     )
     expected = torch.empty_like(value)
     for graph in range(2):
         index = batch == graph
         content = torch.einsum("ihd,jhd->hij", query_scalar[index], key_scalar[index])
-        angular_dot = torch.einsum("iha,jha->hij", query_vector[index], key_vector[index])
+        angular_dot = torch.einsum(
+            "iha,jha->hij", query_vector[index], key_vector[index]
+        )
         kernel = (
             0.5
             + content
@@ -187,7 +227,8 @@ def test_bounded_degree2_kernel_distinguishes_alignment_sign() -> None:
         batch,
         num_graphs=1,
         balanced=False,
-        linear_scale=beta,
+        alignment_scale=beta,
+        alignment_dot_scale=beta,
         kernel_floor=1.0,
     )
     quadratic_only = _factorized_moment_attention(
@@ -200,16 +241,21 @@ def test_bounded_degree2_kernel_distinguishes_alignment_sign() -> None:
         batch,
         num_graphs=1,
         balanced=False,
-        linear_scale=torch.zeros_like(beta),
+        alignment_scale=beta,
+        alignment_dot_scale=torch.zeros_like(beta),
         kernel_floor=1.0,
     )
     t = torch.tensor(0.3, dtype=torch.float64)
     aligned_kernel = 2.0 + beta * (1.0 + t) + gamma * t.square()
     anti_kernel = 2.0 + beta * (1.0 - t) + gamma * t.square()
 
-    assert torch.allclose(aligned_kernel - anti_kernel, 2.0 * beta * t, atol=1e-12, rtol=0.0)
+    assert torch.allclose(
+        aligned_kernel - anti_kernel, 2.0 * beta * t, atol=1e-12, rtol=0.0
+    )
     assert torch.all(sign_sensitive > 0.0)
-    assert torch.allclose(quadratic_only, torch.zeros_like(quadratic_only), atol=1e-12, rtol=0.0)
+    assert torch.allclose(
+        quadratic_only, torch.zeros_like(quadratic_only), atol=1e-12, rtol=0.0
+    )
 
 
 def test_kernel_v2_declared_bounds_hold_at_finite_precision_endpoints() -> None:
@@ -238,17 +284,27 @@ def test_kernel_v2_declared_bounds_hold_at_finite_precision_endpoints() -> None:
 def test_kernel_v2_strict_upper_bound_holds_for_general_float32_directions() -> None:
     torch.manual_seed(109)
     sample_count = 100_000
-    magnitudes = torch.logspace(-20, 20, sample_count, dtype=torch.float32).unsqueeze(-1)
+    magnitudes = torch.logspace(-20, 20, sample_count, dtype=torch.float32).unsqueeze(
+        -1
+    )
     query_scalar = _normalize_positive_features(
         torch.rand(sample_count, 1, 16, dtype=torch.float32) * magnitudes.unsqueeze(-1),
         eps=1e-12,
     )
-    key_scalar = query_scalar.clone()
+    key_scalar = _normalize_positive_features(
+        torch.rand(sample_count, 1, 16, dtype=torch.float32)
+        * magnitudes.flip(0).unsqueeze(-1),
+        eps=1e-12,
+    )
     query_vector = _unit_ball(
         torch.randn(sample_count, 1, 3, dtype=torch.float32) * magnitudes.unsqueeze(-1),
         eps=1e-12,
     )
-    key_vector = query_vector.clone()
+    key_vector = _unit_ball(
+        torch.randn(sample_count, 1, 3, dtype=torch.float32)
+        * magnitudes.flip(0).unsqueeze(-1),
+        eps=1e-12,
+    )
     beta = torch.tensor([0.75], dtype=torch.float32)
     gamma = torch.tensor([0.5], dtype=torch.float32)
     content = (query_scalar * key_scalar).sum(dim=-1)
@@ -258,7 +314,37 @@ def test_kernel_v2_strict_upper_bound_holds_for_general_float32_directions() -> 
 
     assert torch.all(_stable_vector_norm(query_scalar) <= 1.0)
     assert torch.all(_stable_vector_norm(query_vector) <= 1.0)
+    assert torch.all(kernel >= 0.25)
     assert torch.all(kernel <= upper)
+
+
+def test_kernel_bounds_hold_for_exact_antiparallel_alignment_on_and_off() -> None:
+    query_scalar = _normalize_positive_features(
+        torch.tensor([[[1e20, 1.0, 1e-20]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    key_scalar = _normalize_positive_features(
+        torch.tensor([[[1.0, 1e20, 1e-20]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    query_vector = _unit_ball(
+        torch.tensor([[[1e20, 0.0, 0.0]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    key_vector = _unit_ball(
+        torch.tensor([[[-1e20, 0.0, 0.0]]], dtype=torch.float32),
+        eps=1e-12,
+    )
+    beta = torch.tensor([0.75], dtype=torch.float32)
+    gamma = torch.tensor([0.5], dtype=torch.float32)
+    content = (query_scalar * key_scalar).sum(dim=-1)
+    angular = (query_vector * key_vector).sum(dim=-1)
+    alignment_on = 0.25 + content + beta + beta * angular + gamma * angular.square()
+    alignment_off = 0.25 + content + beta + gamma * angular.square()
+
+    assert torch.all(angular < -0.99)
+    assert torch.all((alignment_on >= 0.25) & (alignment_on <= 3.25))
+    assert torch.all((alignment_off >= 0.25) & (alignment_off <= 2.5))
 
 
 def test_structured_mass_avoids_orthogonal_quadratic_cancellation() -> None:
@@ -281,12 +367,15 @@ def test_structured_mass_avoids_orthogonal_quadratic_cancellation() -> None:
         row_scale,
         batch,
         num_graphs=1,
-        linear_scale=torch.zeros(1),
+        alignment_scale=torch.zeros(1),
+        alignment_dot_scale=torch.zeros(1),
         kernel_floor=1.0,
     )
 
     assert torch.isfinite(mass).all()
-    assert torch.allclose(mass, torch.full_like(mass, float(node_count)), atol=2e-3, rtol=1e-6)
+    assert torch.allclose(
+        mass, torch.full_like(mass, float(node_count)), atol=2e-3, rtol=1e-6
+    )
 
 
 def test_vector_kernel_components_are_bounded() -> None:
@@ -333,7 +422,8 @@ def test_structured_numerator_preserves_signed_values() -> None:
         torch.full((1, 1, 1), -1.0, dtype=torch.float64),
         torch.zeros(1, dtype=torch.long),
         num_graphs=1,
-        linear_scale=torch.zeros(1, dtype=torch.float64),
+        alignment_scale=torch.zeros(1, dtype=torch.float64),
+        alignment_dot_scale=torch.zeros(1, dtype=torch.float64),
         kernel_floor=1.0,
     )
 
@@ -381,8 +471,14 @@ def test_symmetric_traceless_feature_storage_is_exact() -> None:
         (EquivariantAttentionConfig(node_dim=0), "node_dim"),
         (EquivariantAttentionConfig(node_dim=4, num_layers=0), "num_layers"),
         (EquivariantAttentionConfig(node_dim=4, num_heads=0), "num_heads"),
-        (EquivariantAttentionConfig(node_dim=4, vector_kernel_max=0.0), "vector_kernel_max"),
-        (EquivariantAttentionConfig(node_dim=4, linear_kernel_max=0.0), "linear_kernel_max"),
+        (
+            EquivariantAttentionConfig(node_dim=4, vector_kernel_max=0.0),
+            "vector_kernel_max",
+        ),
+        (
+            EquivariantAttentionConfig(node_dim=4, linear_kernel_max=0.0),
+            "linear_kernel_max",
+        ),
         (EquivariantAttentionConfig(node_dim=4, kernel_floor=0.0), "kernel_floor"),
         (
             EquivariantAttentionConfig(
@@ -392,11 +488,21 @@ def test_symmetric_traceless_feature_storage_is_exact() -> None:
             ),
             "smaller",
         ),
-        (EquivariantAttentionConfig(node_dim=4, hidden_irreps="7x0e + 2x1o", num_heads=2), "divisible"),
-        (EquivariantAttentionConfig(node_dim=4, hidden_irreps="8x0e + 1x2e"), "scalar and vector"),
+        (
+            EquivariantAttentionConfig(
+                node_dim=4, hidden_irreps="7x0e + 2x1o", num_heads=2
+            ),
+            "divisible",
+        ),
+        (
+            EquivariantAttentionConfig(node_dim=4, hidden_irreps="8x0e + 1x2e"),
+            "scalar and vector",
+        ),
     ],
 )
-def test_config_rejects_invalid_architectures(config: EquivariantAttentionConfig, message: str) -> None:
+def test_config_rejects_invalid_architectures(
+    config: EquivariantAttentionConfig, message: str
+) -> None:
     with pytest.raises(ValueError, match=message):
         EquivariantAttention(config)
 

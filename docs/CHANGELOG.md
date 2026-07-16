@@ -10,6 +10,27 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.9 -> v0.10 (2026-07-16) — keep one
+  `EquivariantAttention` class while adding per-block local/global head routing,
+  raw-coordinate 2.5-Angstrom local edges with 16 RBFs, an optional exact
+  radial trace, and invariant multi-memory gating for the middle global block
+  of `lgl`. `ggg`, `M=1`, interaction off, and radial trace off remain the
+  public defaults. impact: makes local/global and HEMM hypotheses executable
+  without claiming that an experimental arm improves accuracy or performance;
+  `M=1` reduces exactly to the incumbent and interaction-off memories are
+  algebraically degenerate.
+- [model] v0.8 -> v0.9 (2026-07-16) — isolate the alignment ablation so it
+  removes only `beta * (q dot k)` while retaining the `beta` constant, enforce
+  exactly one balancing cycle, add fixed and global row-only graph-size-scaled
+  shifted-baseline modes, and preprocess extreme coordinates scale-first in
+  float32/float64. impact: repairs the ablation confound, exposes positive
+  baseline dilution as a testable lane, and prevents direct large-coordinate
+  reduction overflow.
+- [eval] v0.1 -> v0.2 (2026-07-16) — make test evaluation opt-in through
+  `--evaluate-test`, register `ggg/lgl/lll`, `M=1/4/8`, memory-interaction, and
+  radial-trace CLI arms, and add pure bounded diagnostic helpers. impact:
+  keeps adaptive work validation-only by default and makes expensive
+  effective-rank diagnostics explicitly size-bounded.
 - [model] v0.7 -> v0.8 (2026-07-16) — normalize positive scalar content,
   promote the bounded degree-2 kernel with a linear angular term, factorize its
   vector summary exactly, add a controlled balance-off lane and executable P2

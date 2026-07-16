@@ -38,6 +38,8 @@ class GraphBatch:
                 if torch.float64 in {value_dtype, self.pos.dtype}
                 else torch.float32
             )
+        if geometry_dtype not in {torch.float32, torch.float64}:
+            raise TypeError("geometry_dtype must be float32 or float64")
         return GraphBatch(
             node_feats=self.node_feats.to(device=device, dtype=value_dtype),
             pos=self.pos.to(device=device, dtype=geometry_dtype),
@@ -64,7 +66,10 @@ class SyntheticMoleculeDataset(Dataset[GraphSample]):
             raise ValueError("node_dim must be greater than one")
         if min_nodes <= 0 or max_nodes < min_nodes:
             raise ValueError("node count bounds are invalid")
-        self.samples = [_make_synthetic_sample(i, node_dim, min_nodes, max_nodes, seed) for i in range(num_samples)]
+        self.samples = [
+            _make_synthetic_sample(i, node_dim, min_nodes, max_nodes, seed)
+            for i in range(num_samples)
+        ]
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -80,7 +85,10 @@ def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
     pos = torch.cat([sample.pos for sample in samples], dim=0)
     target = torch.stack([sample.target.reshape(-1) for sample in samples], dim=0)
     batch = torch.cat(
-        [torch.full((sample.node_feats.shape[0],), i, dtype=torch.long) for i, sample in enumerate(samples)],
+        [
+            torch.full((sample.node_feats.shape[0],), i, dtype=torch.long)
+            for i, sample in enumerate(samples)
+        ],
         dim=0,
     )
     return GraphBatch(
@@ -92,7 +100,9 @@ def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
     )
 
 
-def split_dataset(dataset: Dataset[GraphSample], train_size: int, val_size: int, seed: int) -> tuple[list[int], list[int], list[int]]:
+def split_dataset(
+    dataset: Dataset[GraphSample], train_size: int, val_size: int, seed: int
+) -> tuple[list[int], list[int], list[int]]:
     n_samples = len(dataset)
     if train_size <= 0 or val_size <= 0:
         raise ValueError("train_size and val_size must be positive")
@@ -106,11 +116,15 @@ def split_dataset(dataset: Dataset[GraphSample], train_size: int, val_size: int,
     return train, val, test
 
 
-def load_qm9_samples(root: str | Path, target_index: int = 4, limit: int | None = None) -> list[GraphSample]:
+def load_qm9_samples(
+    root: str | Path, target_index: int = 4, limit: int | None = None
+) -> list[GraphSample]:
     try:
         from torch_geometric.datasets import QM9
     except ModuleNotFoundError as exc:
-        raise ImportError("QM9 loading requires optional dependencies: torch-geometric and rdkit") from exc
+        raise ImportError(
+            "QM9 loading requires optional dependencies: torch-geometric and rdkit"
+        ) from exc
 
     dataset = QM9(root=str(root))
     if limit is not None:
@@ -121,15 +135,25 @@ def load_qm9_samples(root: str | Path, target_index: int = 4, limit: int | None 
         node_feats = data.x.float()
         pos = data.pos.float()
         target = data.y[:, target_index].float().reshape(1)
-        samples.append(GraphSample(node_feats=node_feats, pos=pos, target=target, sample_id=f"qm9-{i}"))
+        samples.append(
+            GraphSample(
+                node_feats=node_feats, pos=pos, target=target, sample_id=f"qm9-{i}"
+            )
+        )
     return samples
 
 
-def _make_synthetic_sample(index: int, node_dim: int, min_nodes: int, max_nodes: int, seed: int) -> GraphSample:
+def _make_synthetic_sample(
+    index: int, node_dim: int, min_nodes: int, max_nodes: int, seed: int
+) -> GraphSample:
     generator = torch.Generator().manual_seed(seed + index * 1009)
-    n_nodes = int(torch.randint(min_nodes, max_nodes + 1, (1,), generator=generator).item())
+    n_nodes = int(
+        torch.randint(min_nodes, max_nodes + 1, (1,), generator=generator).item()
+    )
     atom_ids = torch.randint(0, node_dim, (n_nodes,), generator=generator)
-    node_feats = torch.nn.functional.one_hot(atom_ids, num_classes=node_dim).to(dtype=torch.float32)
+    node_feats = torch.nn.functional.one_hot(atom_ids, num_classes=node_dim).to(
+        dtype=torch.float32
+    )
     pos = torch.randn(n_nodes, 3, generator=generator)
     pos = pos - pos.mean(dim=0, keepdim=True)
 
@@ -138,4 +162,6 @@ def _make_synthetic_sample(index: int, node_dim: int, min_nodes: int, max_nodes:
     pair_weight = charge.unsqueeze(0) * charge.unsqueeze(1)
     upper = torch.triu(torch.ones_like(dist, dtype=torch.bool), diagonal=1)
     target = (torch.exp(-dist) * pair_weight)[upper].sum().reshape(1) / n_nodes
-    return GraphSample(node_feats=node_feats, pos=pos, target=target, sample_id=f"synthetic-{index}")
+    return GraphSample(
+        node_feats=node_feats, pos=pos, target=target, sample_id=f"synthetic-{index}"
+    )

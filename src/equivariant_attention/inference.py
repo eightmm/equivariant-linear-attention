@@ -19,11 +19,13 @@ def prepare_for_inference(
     the previous whole-model conversion available for controlled experiments.
     """
 
-    if allow_tf32 and torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        torch.backends.cudnn.allow_tf32 = allow_tf32
 
-    target_device = torch.device(device) if device is not None else next(model.parameters()).device
+    target_device = (
+        torch.device(device) if device is not None else next(model.parameters()).device
+    )
     automatic = dtype == "auto"
     target_dtype = torch.float32 if automatic else _resolve_dtype(dtype, target_device)
     model = model.to(device=target_device, dtype=target_dtype).eval()
@@ -42,10 +44,20 @@ class _AutocastInferenceModule(nn.Module):
         super().__init__()
         self.model = model
         self.dtype = dtype
+        self.device_type = next(model.parameters()).device.type
+        for name in (
+            "attention_kind",
+            "symmetry",
+            "config",
+            "hidden_irreps",
+            "output_irreps",
+        ):
+            if hasattr(model, name):
+                setattr(self, name, getattr(model, name))
+        self.eval()
 
     def forward(self, *args: torch.Tensor, **kwargs: torch.Tensor) -> object:
-        device = next(self.model.parameters()).device
-        with torch.autocast(device_type=device.type, dtype=self.dtype):
+        with torch.autocast(device_type=self.device_type, dtype=self.dtype):
             return self.model(*args, **kwargs)
 
 
@@ -58,7 +70,9 @@ def autocast_dtype(device: str | torch.device = "cuda") -> torch.dtype:
     return torch.float32
 
 
-def _resolve_dtype(dtype: torch.dtype | str | None, device: torch.device) -> torch.dtype:
+def _resolve_dtype(
+    dtype: torch.dtype | str | None, device: torch.device
+) -> torch.dtype:
     if dtype is None:
         return torch.float32
     if isinstance(dtype, torch.dtype):
