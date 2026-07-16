@@ -23,6 +23,8 @@ from equivariant_attention.diagnostics import (
     kernel_component_quantiles,
     kernel_parameter_summary,
     memory_assignment_summary,
+    memory_pair_gate_summary,
+    pair_gate_summary,
 )
 from equivariant_attention.training import (
     TargetNormalizer,
@@ -157,6 +159,7 @@ def main() -> None:
             if parameter.requires_grad
         ),
         **initial_state_hashes,
+        "final_state_sha256": _model_state_hashes(model)["initial_state_sha256"],
         "initialization_hash_version": "canonical_state_dict_v1",
         "source_sha256": _source_hash(),
         "run_config": _run_config(
@@ -656,8 +659,9 @@ def _bounded_model_diagnostics(
                 interaction_cutoff=layer.memory_interaction_cutoff,
                 interact=True,
             )
-            head_assignment = assignment[:, 0]
-            head_coupling = coupling[0, 0]
+            global_head_offset = head_index - layer.local_head_count
+            head_assignment = assignment[:, global_head_offset]
+            head_coupling = coupling[0, global_head_offset]
             pair_gate = torch.einsum(
                 "im,mn,jn->ij",
                 head_assignment,
@@ -667,20 +671,29 @@ def _bounded_model_diagnostics(
             memory = {
                 "status": "active",
                 "transport_connected": True,
-                "assignment_scope": "all_global_heads_in_selected_layer",
-                "assignment": memory_assignment_summary(assignment),
+                "assignment_scope": "selected_graph_and_head",
+                "assignment": memory_assignment_summary(
+                    assignment[:, global_head_offset : global_head_offset + 1]
+                ),
                 "coupling": kernel_component_quantiles(
-                    {"coupling": coupling}, quantiles=(0.0, 0.5, 1.0)
+                    {"coupling": head_coupling}, quantiles=(0.0, 0.5, 1.0)
+                ),
+                "pair_gate": pair_gate_summary(pair_gate),
+                "all_head_activation": memory_pair_gate_summary(
+                    assignment,
+                    coupling[0],
                 ),
                 "centers_finite": bool(torch.isfinite(centers).all().item()),
             }
             assignment_source = "exact_model_helper_recompute"
         elif layer.use_memory_interaction:
             assignment = key_scalar.new_ones((node_count, layer.global_head_count, 1))
+            analytic_pair_gate = key_scalar.new_ones((node_count, node_count))
             memory = {
                 "status": "exact_single_memory_bypass",
                 "transport_connected": False,
                 "assignment": memory_assignment_summary(assignment),
+                "pair_gate": pair_gate_summary(analytic_pair_gate),
             }
             assignment_source = "analytic_single_memory_identity"
         else:
@@ -808,6 +821,7 @@ def _run_config(
         "grad_clip": args.grad_clip,
         "split_seed": split_seed,
         "model_seed": model_seed,
+        "dataset_seed": args.seed,
         "device": args.device,
         "amp_dtype": args.amp_dtype,
         "target_normalized": not args.no_target_normalize,

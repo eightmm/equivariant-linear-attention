@@ -42,6 +42,18 @@ scales `(c + beta + delta*beta*t)` by `1/N_g`, not only `c`. Test evaluation is
 off unless `--evaluate-test` is supplied, and it must remain off throughout
 adaptive selection.
 
+Before scheduling any M=4/M=8 interacting-memory training, run the label-free
+mechanism gate:
+
+```bash
+uv run python scripts/probe_memory_activation.py \
+  --memory-counts 4 8 --device cpu --dtype float64
+```
+
+The current implementation returns `block_interacting_memory_arms`; the flags
+remain useful for bounded diagnostics but are not eligible for broader training
+until a separately preregistered mechanism passes Stage 0.
+
 `--amp-dtype bf16` enables autocast while coordinates remain float32. CUDA
 mixed-precision claims require the GPU smoke and run-specific environment
 metadata. Long training, schedulers, distributed execution, checkpoint

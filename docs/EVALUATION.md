@@ -21,6 +21,19 @@ All adaptive QM9 arms use target `gap` in eV, random-row split seed 42, model
 seeds 41/42/43, FP32, batch size 64, width 64, three blocks, four heads, and
 matched optimizer/schedule settings.
 
+0. Before any interacting M=4/M=8 training arm, run the fixed activation gate:
+
+   ```bash
+   uv run python scripts/probe_memory_activation.py \
+     --memory-counts 4 8 --device cpu --dtype float64
+   ```
+
+   It uses one fixed 16-node graph, seed 401, an identical state dictionary,
+   and no labels. Every head must pass the frozen assignment, occupancy,
+   coupling, pair-gate, and full-output thresholds. The current M=4/8
+   implementation fails because `C` and `G` are numerically constant; step 4
+   is blocked until a separately preregistered redesign passes Stage 0.
+
 1. On `ggg`, compare the 2x2 alignment-term/key-balancing arms. Turning off
    alignment removes only `beta * (q dot k)` and retains the `beta` constant.
 2. With the selected normalization, compare `fixed` with global row-only
@@ -55,9 +68,11 @@ not attributed independently to either mechanism.
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel
 scales, mass/denominator quantiles, entropy over log node count, maximum weight,
-effective support, column CV, gradient/residual norms, and HEMM occupancy and
-assignment entropy. Effective-rank computation is opt-in and size-bounded; row
-or column scaling does not change exact matrix rank.
+effective support, column CV, gradient/residual norms, and per-graph/per-head
+HEMM occupancy, assignment entropy, coupling, and effective pair-gate
+min/p01/median/p99/max, CV, centered-Frobenius ratio, and tolerance-defined
+nonconstant fraction. Effective-rank computation is opt-in and size-bounded;
+row or column scaling does not change exact matrix rank.
 
 QM9 numbers use a random-row warm split. They do not measure scaffold,
 protein-target, temporal, or cold-complex generalization. Historical test access

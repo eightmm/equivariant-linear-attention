@@ -202,6 +202,30 @@ factorization exactly, including gradients. With interaction disabled,
 memory count alone is not a new mechanism; the registered experimental change
 is interaction for `M=4/8` in the middle global block of `lgl`.
 
+For one graph and head, let `mu=mean(G)`. The activation gate reports
+
+```text
+CV = sqrt(mean((G - mu)^2)) / mu,
+D  = ||G - mu 11^T||_F / ||G||_F,
+f_tau = mean(|G - mu| > tau mu),  tau=1e-3.
+```
+
+These satisfy `D=CV/sqrt(1+CV^2)`, so they are an internal consistency pair,
+not independent evidence. If `G=k 11^T` for positive `k`, then `CV=D=f_tau=0`
+and multiplication by `G` cancels exactly in row-normalized attention,
+including after the registered one-cycle key balancing. Diagnostics therefore
+compute these values separately inside every graph/head normalization domain;
+pooling heads or graphs could manufacture false variation.
+
+The present router is a deterministic one-dimensional invariant projection.
+Read and write assignments are shared, and the center coupling is symmetric
+and computed from graph-normalized coordinates. It is therefore a
+shape-relative low-rank gate rather than directed typed or persistent memory.
+The registered Stage-0 probe found non-collapsed assignments but
+`C approximately 11^T` and `G approximately 11^T` for every M=4 and M=8 head,
+so those interacting-memory arms are blocked until a separately preregistered
+coupling/router redesign passes the same activation thresholds.
+
 Consistent permutation of assignment and coupling slot axes leaves the result
 unchanged. Bounded soft assignments avoid an undefined empty-slot branch but
 can still collapse on identical or symmetric inputs. No learned Cartesian

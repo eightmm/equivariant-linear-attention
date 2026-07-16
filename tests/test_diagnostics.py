@@ -10,6 +10,8 @@ from equivariant_attention.diagnostics import (
     kernel_parameter_summary,
     matrix_effective_rank,
     memory_assignment_summary,
+    memory_pair_gate_summary,
+    pair_gate_summary,
 )
 
 
@@ -173,6 +175,45 @@ def test_dense_kernel_diagnostics_reject_unrepresentable_condition_ratio() -> No
         )
 
 
+@pytest.mark.parametrize("balanced", [False, True])
+def test_positive_constant_pair_gate_cancels_from_attention_normalization(
+    balanced: bool,
+) -> None:
+    torch.manual_seed(97)
+    query_scalar = torch.rand(5, 3, dtype=torch.float64)
+    key_scalar = torch.rand(5, 3, dtype=torch.float64)
+    query_vector = torch.randn(5, 3, dtype=torch.float64) * 0.1
+    key_vector = torch.randn(5, 3, dtype=torch.float64) * 0.1
+    kwargs = {
+        "beta": 0.2,
+        "gamma": 0.3,
+        "kernel_floor": 0.5,
+        "alignment_linear_term": True,
+        "balanced": balanced,
+        "max_nodes": 5,
+    }
+
+    baseline = dense_kernel_attention_summary(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        **kwargs,
+    )
+    gated = dense_kernel_attention_summary(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        pair_gate=torch.full((5, 5), 0.25, dtype=torch.float64),
+        **kwargs,
+    )
+
+    for name, value in baseline.items():
+        if name.startswith("attention."):
+            assert gated[name] == pytest.approx(value, abs=1e-12, rel=1e-12)
+
+
 def test_memory_assignment_summary_reports_occupancy_and_entropy() -> None:
     assignment = torch.full((5, 2, 4), 0.25, dtype=torch.float64)
 
@@ -183,6 +224,121 @@ def test_memory_assignment_summary_reports_occupancy_and_entropy() -> None:
     assert summary["occupancy.max"] == pytest.approx(1.25)
     assert summary["assignment_entropy_over_log_m"] == pytest.approx(1.0)
     json.dumps(summary, allow_nan=False)
+
+
+def test_constant_pair_gate_reports_exactly_zero_variation() -> None:
+    summary = pair_gate_summary(torch.full((4, 4), 0.25, dtype=torch.float64))
+
+    assert summary["min"] == pytest.approx(0.25)
+    assert summary["p01"] == pytest.approx(0.25)
+    assert summary["median"] == pytest.approx(0.25)
+    assert summary["p99"] == pytest.approx(0.25)
+    assert summary["max"] == pytest.approx(0.25)
+    assert summary["cv"] == pytest.approx(0.0)
+    assert summary["centered_frobenius_ratio"] == pytest.approx(0.0)
+    assert summary["nonconstant_fraction"] == pytest.approx(0.0)
+    assert summary["nonconstant_relative_tolerance"] == pytest.approx(1e-3)
+    json.dumps(summary, allow_nan=False)
+
+
+def test_pair_gate_variation_is_scale_stable_and_internally_consistent() -> None:
+    gate = torch.tensor([[1.0, 0.5], [0.5, 1.0]], dtype=torch.float64)
+    summary = pair_gate_summary(gate, nonconstant_relative_tolerance=0.1)
+    tiny_summary = pair_gate_summary(
+        gate * 1e-300,
+        nonconstant_relative_tolerance=0.1,
+    )
+
+    expected_cv = 1.0 / 3.0
+    expected_frobenius = 1.0 / 10.0**0.5
+    assert summary["mean"] == pytest.approx(0.75)
+    assert summary["median"] == pytest.approx(0.75)
+    assert summary["cv"] == pytest.approx(expected_cv)
+    assert summary["centered_frobenius_ratio"] == pytest.approx(expected_frobenius)
+    assert summary["nonconstant_fraction"] == pytest.approx(1.0)
+    assert tiny_summary["cv"] == pytest.approx(summary["cv"])
+    assert tiny_summary["centered_frobenius_ratio"] == pytest.approx(
+        summary["centered_frobenius_ratio"]
+    )
+    assert tiny_summary["nonconstant_fraction"] == pytest.approx(
+        summary["nonconstant_fraction"]
+    )
+    assert summary["centered_frobenius_ratio"] == pytest.approx(
+        summary["cv"] / (1.0 + summary["cv"] ** 2) ** 0.5
+    )
+    json.dumps(summary, allow_nan=False)
+    json.dumps(tiny_summary, allow_nan=False)
+
+
+def test_memory_pair_gate_summary_never_pools_head_normalization_domains() -> None:
+    assignment = torch.zeros(3, 2, 2, dtype=torch.float64)
+    assignment[..., 0] = 1.0
+    coupling = torch.stack(
+        [
+            torch.eye(2, dtype=torch.float64) * 0.2,
+            torch.eye(2, dtype=torch.float64) * 0.8,
+        ]
+    )
+
+    summary = memory_pair_gate_summary(assignment, coupling)
+
+    assert summary["scope"] == "single_graph_per_head"
+    assert summary["head_count"] == 2
+    assert len(summary["heads"]) == 2
+    assert summary["heads"][0]["pair_gate"]["mean"] == pytest.approx(0.2)
+    assert summary["heads"][1]["pair_gate"]["mean"] == pytest.approx(0.8)
+    assert all(
+        head["pair_gate"]["cv"] == pytest.approx(0.0) for head in summary["heads"]
+    )
+    assert summary["worst_case"]["pair_gate.cv"] == pytest.approx(0.0)
+    json.dumps(summary, allow_nan=False)
+
+
+def test_single_memory_and_all_ones_coupling_have_constant_unit_pair_gate() -> None:
+    assignment = torch.softmax(torch.randn(5, 2, 4, dtype=torch.float64), dim=-1)
+    summary = memory_pair_gate_summary(
+        assignment,
+        torch.ones(2, 4, 4, dtype=torch.float64),
+    )
+
+    assert all(
+        head["pair_gate"]["mean"] == pytest.approx(1.0)
+        and head["pair_gate"]["cv"] == pytest.approx(0.0)
+        for head in summary["heads"]
+    )
+
+
+@pytest.mark.parametrize(
+    "gate, match",
+    [
+        (torch.ones(2, 2, 2), "two-dimensional"),
+        (torch.ones(2, 3), "square"),
+        (torch.tensor([[1.0, -0.1], [-0.1, 1.0]]), "nonnegative"),
+        (torch.tensor([[1.0, float("nan")], [float("nan"), 1.0]]), "finite"),
+        (torch.zeros(2, 2), "positive mass"),
+        (torch.ones(2, 2, dtype=torch.complex64), "real-valued"),
+        (torch.tensor([[1.0, 0.0], [0.5, 1.0]]), "symmetric"),
+        (torch.full((2, 2), 1.1), "at most one"),
+    ],
+)
+def test_pair_gate_summary_rejects_invalid_gates(
+    gate: torch.Tensor,
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        pair_gate_summary(gate)
+
+
+@pytest.mark.parametrize("tolerance", [True, 0.0, -0.1, 1.0, float("nan")])
+def test_pair_gate_summary_rejects_invalid_relative_tolerance(
+    tolerance: object,
+) -> None:
+    error = TypeError if isinstance(tolerance, bool) else ValueError
+    with pytest.raises(error, match="nonconstant_relative_tolerance"):
+        pair_gate_summary(
+            torch.ones(2, 2),
+            nonconstant_relative_tolerance=tolerance,  # type: ignore[arg-type]
+        )
 
 
 def test_inverse_graph_size_diagnostic_scales_positive_baseline_only() -> None:

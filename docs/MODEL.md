@@ -104,6 +104,23 @@ of `lgl`. Slot permutations leave outputs unchanged when assignments and the
 coupling are permuted together. Soft slot collapse remains possible, and no
 performance benefit is claimed without the registered validation study.
 
+This implementation is a low-rank pair gate, not a persistent memory state.
+It uses a deterministic one-dimensional invariant router, the same assignment
+for reads and writes, and a symmetric coupling derived from graph-normalized
+center coordinates. Thus the coupling is shape-relative rather than a raw
+physical-distance decay. In a mixed local/global block, local heads also read
+the shared scalar/vector state after global geometry has been injected; mixed
+heads are legal but are not a promoted independent route.
+
+The frozen 16-node Stage-0 probe uses the same state dictionary for M=1, M=4,
+and M=8 and checks every global head separately. On the current implementation,
+M=4 and M=8 have occupied, non-collapsed assignments but coupling matrices and
+effective pair gates numerically indistinguishable from all ones. The complete
+output changes by only about `1e-12` to `1e-11` in relative RMS. Therefore the
+implemented M=4/8 flags remain available for mechanism diagnostics, but broader
+memory accuracy/performance arms are blocked pending a separately
+preregistered coupling/router redesign.
+
 `use_radial_trace` controls an exact relative squared-distance moment. Its
 state slot exists in both arms and is exactly zero when disabled, while public
 rank-2 output remains symmetric traceless.

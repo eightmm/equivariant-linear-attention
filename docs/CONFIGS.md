@@ -41,7 +41,10 @@ the full shifted positive global baseline `(c + beta + delta*beta*t)` by
 `1/N_g`; content and `gamma*t^2` stay unscaled. It is rejected with key
 balancing and is never used as a proxy for local receiver degree. Enabling
 memory interaction requires the registered `lgl` route; merely raising the
-memory count with interaction off is algebraically the incumbent.
+memory count with interaction off is algebraically the incumbent. The M=4/8
+CLI values are implemented diagnostic arms, not promoted configurations: the
+frozen Stage-0 pair-gate probe currently blocks broader interacting-memory
+experiments until a redesigned mechanism passes the same thresholds.
 
 Kernel controls deliberately reject positive float32 subnormals: inverse-logit
 initialization and `c/N_g` can otherwise round them to zero and invalidate the

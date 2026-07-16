@@ -308,6 +308,229 @@ def memory_assignment_summary(assignment: torch.Tensor) -> dict[str, float | int
     }
 
 
+def pair_gate_summary(
+    pair_gate: torch.Tensor,
+    *,
+    nonconstant_relative_tolerance: float = 1e-3,
+    symmetry_tolerance: float = 1e-6,
+) -> dict[str, float]:
+    """Summarize one graph/head HEMM pair gate without pooling domains.
+
+    The current shared read/write assignment and symmetric coupling imply a
+    square, symmetric gate in ``[0, 1]``. Scale-free variation is computed
+    after division by the maximum gate value, which prevents underflow for
+    tiny but finite gates without adding an ``eps`` that would change the
+    statistic. Quantiles use linear interpolation.
+    """
+
+    if not isinstance(pair_gate, torch.Tensor) or pair_gate.ndim != 2:
+        raise ValueError("pair_gate must be a two-dimensional tensor")
+    if 0 in pair_gate.shape:
+        raise ValueError("pair_gate dimensions must be positive")
+    if pair_gate.shape[0] != pair_gate.shape[1]:
+        raise ValueError("pair_gate must be square within one graph/head domain")
+    if pair_gate.is_complex():
+        raise ValueError("pair_gate must be real-valued")
+    tolerance = _open_unit_interval(
+        "nonconstant_relative_tolerance",
+        nonconstant_relative_tolerance,
+    )
+    symmetry_limit = _open_unit_interval(
+        "symmetry_tolerance",
+        symmetry_tolerance,
+    )
+
+    values = pair_gate.detach().to(dtype=torch.float64)
+    if not bool(torch.isfinite(values).all().item()):
+        raise ValueError("pair_gate must contain only finite values")
+    if bool((values < 0.0).any().item()):
+        raise ValueError("pair_gate must be nonnegative")
+    maximum = values.max()
+    if float(maximum.item()) <= 0.0:
+        raise ValueError("pair_gate must have positive mass")
+    if float(maximum.item()) > 1.0 + symmetry_limit:
+        raise ValueError("pair_gate values must be at most one")
+    scaled = values / maximum
+    symmetry_error = (scaled - scaled.T).abs().max()
+    if float(symmetry_error.item()) > symmetry_limit:
+        raise ValueError("pair_gate must be symmetric")
+
+    mean = scaled.mean()
+    centered = scaled - mean
+    cv = centered.square().mean().sqrt() / mean
+    centered_frobenius_ratio = torch.linalg.vector_norm(
+        centered
+    ) / torch.linalg.vector_norm(scaled)
+    nonconstant_fraction = (
+        (centered.abs() > tolerance * mean).to(dtype=torch.float64).mean()
+    )
+    quantiles = torch.quantile(
+        values.reshape(-1),
+        values.new_tensor([0.0, 0.01, 0.5, 0.99, 1.0]),
+        interpolation="linear",
+    )
+    return {
+        "min": float(quantiles[0].item()),
+        "p01": float(quantiles[1].item()),
+        "median": float(quantiles[2].item()),
+        "p99": float(quantiles[3].item()),
+        "max": float(quantiles[4].item()),
+        "mean": float(values.mean().item()),
+        "cv": float(cv.item()),
+        "centered_frobenius_ratio": float(centered_frobenius_ratio.item()),
+        "nonconstant_fraction": float(nonconstant_fraction.item()),
+        "nonconstant_relative_tolerance": tolerance,
+        "symmetry_relative_max_error": float(symmetry_error.item()),
+    }
+
+
+def memory_pair_gate_summary(
+    assignment: torch.Tensor,
+    coupling: torch.Tensor,
+    *,
+    nonconstant_relative_tolerance: float = 1e-3,
+) -> dict[str, object]:
+    """Report per-head gates for one graph and conservative all-head minima.
+
+    Graphs must be selected by the caller before this function is called. This
+    prevents between-graph constants or cross-graph zeros from creating a false
+    positive coefficient of variation.
+    """
+
+    if not isinstance(assignment, torch.Tensor) or assignment.ndim != 3:
+        raise ValueError("assignment must have shape (nodes, heads, memories)")
+    if not isinstance(coupling, torch.Tensor) or coupling.ndim != 3:
+        raise ValueError("coupling must have shape (heads, memories, memories)")
+    if 0 in assignment.shape or 0 in coupling.shape:
+        raise ValueError("assignment and coupling dimensions must be positive")
+    nodes, heads, memories = assignment.shape
+    if coupling.shape != (heads, memories, memories):
+        raise ValueError("coupling shape must match assignment heads and memories")
+    if assignment.is_complex() or coupling.is_complex():
+        raise ValueError("assignment and coupling must be real-valued")
+    probabilities = assignment.detach().to(dtype=torch.float64)
+    interactions = coupling.detach().to(
+        dtype=torch.float64, device=probabilities.device
+    )
+    if not bool(torch.isfinite(probabilities).all().item()) or not bool(
+        torch.isfinite(interactions).all().item()
+    ):
+        raise ValueError("assignment and coupling must contain only finite values")
+    if bool((probabilities < 0.0).any().item()) or bool(
+        (interactions < 0.0).any().item()
+    ):
+        raise ValueError("assignment and coupling must be nonnegative")
+    if bool((interactions > 1.0 + 1e-6).any().item()):
+        raise ValueError("coupling values must be at most one")
+    if not torch.allclose(
+        interactions,
+        interactions.transpose(-1, -2),
+        atol=1e-6,
+        rtol=1e-6,
+    ):
+        raise ValueError("coupling must be symmetric")
+    row_mass = probabilities.sum(dim=-1)
+    if not torch.allclose(row_mass, torch.ones_like(row_mass), atol=1e-6, rtol=1e-6):
+        raise ValueError("assignment rows must lie on the probability simplex")
+
+    head_summaries: list[dict[str, object]] = []
+    for head in range(heads):
+        head_assignment = probabilities[:, head]
+        head_coupling = interactions[head]
+        gate = torch.einsum(
+            "im,mn,jn->ij",
+            head_assignment,
+            head_coupling,
+            head_assignment,
+        )
+        assignment_summary = memory_assignment_summary(
+            probabilities[:, head : head + 1]
+        )
+        assignment_summary["occupancy_fraction.min"] = (
+            float(assignment_summary["occupancy.min"]) / nodes
+        )
+        assignment_summary["occupancy_fraction.mean"] = (
+            float(assignment_summary["occupancy.mean"]) / nodes
+        )
+        assignment_summary["occupancy_fraction.max"] = (
+            float(assignment_summary["occupancy.max"]) / nodes
+        )
+        coupling_summary = kernel_component_quantiles(
+            {"coupling": head_coupling},
+            quantiles=(0.0, 0.5, 1.0),
+        )
+        if memories == 1:
+            off_diagonal_nonunit_fraction = 0.0
+        else:
+            off_diagonal = head_coupling[
+                ~torch.eye(
+                    memories,
+                    dtype=torch.bool,
+                    device=head_coupling.device,
+                )
+            ]
+            off_diagonal_nonunit_fraction = float(
+                ((off_diagonal - 1.0).abs() > nonconstant_relative_tolerance)
+                .to(dtype=torch.float64)
+                .mean()
+                .item()
+            )
+        coupling_summary["off_diagonal_nonunit_fraction"] = (
+            off_diagonal_nonunit_fraction
+        )
+        head_summaries.append(
+            {
+                "head_index": int(head),
+                "assignment": assignment_summary,
+                "coupling": coupling_summary,
+                "pair_gate": pair_gate_summary(
+                    gate,
+                    nonconstant_relative_tolerance=nonconstant_relative_tolerance,
+                ),
+            }
+        )
+
+    return {
+        "scope": "single_graph_per_head",
+        "node_count": int(nodes),
+        "head_count": int(heads),
+        "memory_count": int(memories),
+        "heads": head_summaries,
+        "worst_case": {
+            "assignment_entropy.min": min(
+                float(head["assignment"]["assignment_entropy_over_log_m"])
+                for head in head_summaries
+            ),
+            "assignment_entropy.max": max(
+                float(head["assignment"]["assignment_entropy_over_log_m"])
+                for head in head_summaries
+            ),
+            "occupancy_fraction.min": min(
+                float(head["assignment"]["occupancy_fraction.min"])
+                for head in head_summaries
+            ),
+            "coupling.q00.max": max(
+                float(head["coupling"]["coupling.q00"]) for head in head_summaries
+            ),
+            "coupling.off_diagonal_nonunit_fraction.min": min(
+                float(head["coupling"]["off_diagonal_nonunit_fraction"])
+                for head in head_summaries
+            ),
+            "pair_gate.cv": min(
+                float(head["pair_gate"]["cv"]) for head in head_summaries
+            ),
+            "pair_gate.centered_frobenius_ratio": min(
+                float(head["pair_gate"]["centered_frobenius_ratio"])
+                for head in head_summaries
+            ),
+            "pair_gate.nonconstant_fraction": min(
+                float(head["pair_gate"]["nonconstant_fraction"])
+                for head in head_summaries
+            ),
+        },
+    }
+
+
 def matrix_effective_rank(matrix: torch.Tensor, *, max_matrix_size: int) -> float:
     """Return entropy effective rank after an explicitly bounded full SVD.
 
@@ -399,6 +622,15 @@ def _validated_quantiles(quantiles: Sequence[float]) -> tuple[float, ...]:
     return tuple(levels)
 
 
+def _open_unit_interval(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real number")
+    numeric = float(value)
+    if not isfinite(numeric) or not 0.0 < numeric < 1.0:
+        raise ValueError(f"{name} must be finite and lie strictly between zero and one")
+    return numeric
+
+
 def _quantile_label(level: float) -> str:
     percentage = f"{level * 100.0:.6f}".rstrip("0").rstrip(".")
     whole, separator, fraction = percentage.partition(".")
@@ -429,4 +661,6 @@ __all__ = [
     "kernel_parameter_summary",
     "matrix_effective_rank",
     "memory_assignment_summary",
+    "memory_pair_gate_summary",
+    "pair_gate_summary",
 ]

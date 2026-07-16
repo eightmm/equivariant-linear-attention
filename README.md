@@ -75,7 +75,11 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
   by default.
 - Multi-memory interaction is off by default with `M=1`. The `M=1` path reduces
   exactly to incumbent global attention; `M=4/8` interaction arms are
-  experimental and registered only for the middle global block of `lgl`.
+  experimental and registered only for the middle global block of `lgl`. The
+  current HEMM is a deterministic shared-read/write symmetric low-rank pair
+  gate, not persistent memory. Its frozen Stage-0 activation probe currently
+  blocks M=4/8 promotion because the effective pair gate is numerically
+  constant on the registered probe.
 - Unit-normalized positive scalar content, unit-ball vector queries/keys,
   bounded linear/quadratic angular scales, and structured vector/3x3
   mass/denominator contractions avoid signed
@@ -106,6 +110,7 @@ context block within the same local/global architecture.
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
+uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
 
 The training CLI exposes registered `--routing ggg/lgl/lll`,

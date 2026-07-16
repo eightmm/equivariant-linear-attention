@@ -240,6 +240,7 @@ def test_run_config_records_inverse_positive_baseline_and_bounded_diagnostics() 
     assert config["bounded_diagnostics"] is True
     assert config["diagnostic_max_nodes"] == 32
     assert config["diagnostic_effective_rank"] is True
+    assert config["dataset_seed"] == args.seed
 
 
 def test_runner_json_connects_bounded_metrics_without_evaluating_test(
@@ -281,6 +282,7 @@ def test_runner_json_connects_bounded_metrics_without_evaluating_test(
     metrics = json.loads(capsys.readouterr().out)
 
     assert len(metrics["initial_state_sha256"]) == 64
+    assert len(metrics["final_state_sha256"]) == 64
     assert len(metrics["state_schema_sha256"]) == 64
     assert metrics["nonzero_gradient_parameter_count"] > 0
     assert metrics["test_evaluated"] is False
@@ -298,7 +300,10 @@ def test_runner_json_connects_bounded_metrics_without_evaluating_test(
     json.dumps(metrics, allow_nan=False)
 
 
-def test_bounded_diagnostics_connect_active_memory_without_mutating_model() -> None:
+@pytest.mark.parametrize("memory_count", [4, 8])
+def test_bounded_diagnostics_connect_active_memory_without_mutating_model(
+    memory_count: int,
+) -> None:
     symbols = _script_symbols()
     dataset = symbols["SyntheticMoleculeDataset"](
         num_samples=4,
@@ -313,12 +318,14 @@ def test_bounded_diagnostics_connect_active_memory_without_mutating_model() -> N
         num_layers=3,
         num_heads=2,
         local_head_counts=(2, 0, 2),
-        global_memory_count=4,
+        global_memory_count=memory_count,
         use_memory_interaction=True,
     )
     model.train()
     before_hashes = symbols["_model_state_hashes"](model)
     before_training = [module.training for module in model.modules()]
+    before_gradients = [parameter.grad for parameter in model.parameters()]
+    before_rng = torch.random.get_rng_state().clone()
 
     diagnostics = symbols["_bounded_model_diagnostics"](
         model,
@@ -332,8 +339,58 @@ def test_bounded_diagnostics_connect_active_memory_without_mutating_model() -> N
     assert diagnostics["instrumentation"]["layer_index"] == 1
     assert diagnostics["memory"]["status"] == "active"
     assert diagnostics["memory"]["transport_connected"] is True
-    assert diagnostics["memory"]["assignment"]["memory_count"] == 4
+    assert diagnostics["memory"]["assignment"]["memory_count"] == memory_count
     assert "coupling.q50" in diagnostics["memory"]["coupling"]
+    pair_gate = diagnostics["memory"]["pair_gate"]
+    assert pair_gate["min"] > 0.0
+    assert pair_gate["max"] <= 1.0
+    assert pair_gate["cv"] >= 0.0
+    assert pair_gate["centered_frobenius_ratio"] == pytest.approx(
+        pair_gate["cv"] / (1.0 + pair_gate["cv"] ** 2) ** 0.5
+    )
+    assert 0.0 <= pair_gate["nonconstant_fraction"] <= 1.0
+    assert pair_gate["nonconstant_relative_tolerance"] == pytest.approx(1e-3)
+    all_heads = diagnostics["memory"]["all_head_activation"]
+    assert all_heads["scope"] == "single_graph_per_head"
+    assert all_heads["head_count"] == 2
+    assert len(all_heads["heads"]) == 2
     assert symbols["_model_state_hashes"](model) == before_hashes
     assert [module.training for module in model.modules()] == before_training
+    assert [parameter.grad for parameter in model.parameters()] == before_gradients
+    assert torch.equal(torch.random.get_rng_state(), before_rng)
     json.dumps(diagnostics, allow_nan=False)
+
+
+def test_bounded_diagnostics_records_exact_single_memory_bypass() -> None:
+    symbols = _script_symbols()
+    dataset = symbols["SyntheticMoleculeDataset"](
+        num_samples=4,
+        node_dim=4,
+        min_nodes=4,
+        max_nodes=5,
+        seed=89,
+    )
+    model = symbols["build_regression_model"](
+        node_dim=4,
+        hidden_dim=8,
+        num_layers=3,
+        num_heads=2,
+        local_head_counts=(2, 0, 2),
+        global_memory_count=1,
+        use_memory_interaction=True,
+    )
+
+    diagnostics = symbols["_bounded_model_diagnostics"](
+        model,
+        dataset,
+        [0],
+        max_nodes=8,
+        include_effective_rank=False,
+    )
+
+    memory = diagnostics["memory"]
+    assert memory["status"] == "exact_single_memory_bypass"
+    assert memory["transport_connected"] is False
+    assert memory["pair_gate"]["mean"] == pytest.approx(1.0)
+    assert memory["pair_gate"]["cv"] == pytest.approx(0.0)
+    assert memory["pair_gate"]["centered_frobenius_ratio"] == pytest.approx(0.0)

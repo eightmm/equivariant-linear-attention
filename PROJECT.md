@@ -8,6 +8,11 @@
 - Evidence basis: repository tests and experiment ledger, the external review
   shared by the user, and independent read-only mathematical, implementation,
   and experiment audits of the current source tree.
+- Latest scope confirmation: the user's 2026-07-16 instruction to proceed from
+  the feedback at
+  `https://chatgpt.com/share/6a58dc3e-cff4-83ee-85dc-29a9d9cbe18f` authorizes
+  a bounded Stage-0 HEMM activation diagnostic before further architecture or
+  QM9 expansion.
 
 ## Project
 
@@ -194,6 +199,37 @@
   `scripts/check.sh gpu` before CUDA precision claims.
 
 ## Preregistered Evaluation Boundary
+
+### Stage 0: memory-mechanism activation
+
+- Before an interacting M=4 or M=8 arm is treated as a memory experiment, the
+  selected actual runtime layer must report the effective pair gate
+  `G_ijh = pi_ih^T C_h pi_jh` separately for every global head rather than infer
+  activation from assignment entropy or coupling quantiles alone. Metrics are
+  never pooled across graph or head normalization domains, and the worst head
+  determines the activation decision.
+- The JSON-safe summary reports min, p01, median, p99, max, population
+  coefficient of variation, centered-Frobenius ratio, and the fraction whose
+  absolute deviation from the mean exceeds `1e-3` times the positive mean.
+  An all-zero gate is invalid.
+- For a positive constant gate, CV, centered-Frobenius ratio, and nonconstant
+  fraction are exactly zero and row normalization cancels the gate. Such a run
+  is not evidence for multi-memory transport.
+- On the fixed bounded heterogeneous synthetic probe, both M=4 and M=8 must
+  have normalized assignment entropy in `[0.05, 0.995]`, minimum occupancy
+  fraction at least `1e-4`, coupling q00 at most `0.99`, pair-gate
+  centered-Frobenius ratio at least `1e-2`, nonconstant fraction at least
+  `0.10`, and relative RMS output difference from the matched M=1 bypass at
+  least `1e-5`. All values must be finite. CV is reported but is not a second
+  independent pass condition because `D=CV/sqrt(1+CV^2)` exactly.
+- Failure of any frozen threshold blocks the later interacting M=4/M=8 memory
+  arms and triggers a separately preregistered router/coupling redesign;
+  thresholds are not moved after observing the probe. It does not block the
+  independent Stage 1--3 kernel or local/global studies.
+- This Stage-0 change does not add a learned router, separate read/write or
+  typed memories, raw-distance coupling, segment semantics, an external sparse
+  edge API, higher-order channels, or a new default. Those remain contingent
+  on architecture-lock evidence.
 
 - Dataset/target: QM9 `gap` in eV; random-row split seed 42 with
   train/validation/test sizes 110k/10k/10k. This is not scaffold or

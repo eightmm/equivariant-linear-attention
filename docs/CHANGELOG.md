@@ -10,6 +10,13 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [eval] v0.2 -> v0.3 (2026-07-16) — add per-graph/per-head effective HEMM
+  pair-gate statistics, connect them to the bounded runtime diagnostic, and add
+  a matched-state M=1/4/8 Stage-0 activation probe. impact: detects that the
+  current M=4/8 coupling and pair gate are numerically constant despite healthy
+  assignment occupancy, blocks broader memory arms without moving thresholds,
+  and records the current HEMM as a symmetric low-rank gate rather than
+  persistent memory.
 - [model] v0.9 -> v0.10 (2026-07-16) — keep one
   `EquivariantAttention` class while adding per-block local/global head routing,
   raw-coordinate 2.5-Angstrom local edges with 16 RBFs, an optional exact
