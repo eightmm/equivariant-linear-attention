@@ -2,17 +2,19 @@
 
 ## Status
 
-- State: confirmed for local code and test changes by the user's 2026-07-16
-  instruction to incorporate the two additional review answers
-- Direction confirmed: 2026-07-16
+- State: confirmed for local code, bounded QM9 dependency setup, and at most
+  30 GPU-minutes by the user's 2026-07-17 instruction to implement the latest
+  review and measure performance properly
+- Direction confirmed: 2026-07-17
 - Evidence basis: repository tests and experiment ledger, the external review
   shared by the user, and independent read-only mathematical, implementation,
   and experiment audits of the current source tree.
-- Latest scope confirmation: the user's 2026-07-16 instruction to proceed from
-  the feedback at
-  `https://chatgpt.com/share/6a58dc3e-cff4-83ee-85dc-29a9d9cbe18f` authorizes
-  a bounded Stage-0 HEMM activation diagnostic before further architecture or
-  QM9 expansion.
+- Latest scope confirmation: the user's 2026-07-17 instruction to proceed from
+  `https://chatgpt.com/share/6a59db49-8b50-83ee-9691-07bb73a472f4`
+  authorizes the counterfactual HEMM diagnosis, the smallest repair admitted by
+  the unchanged Stage-0 thresholds, the independent `ggg`/`lgl` comparison,
+  and synchronized CUDA/QM9 measurement. The exact frozen plan is
+  `artifacts/hemm-coupling-repair-performance-20260717/scope.md`.
 
 ## Project
 
@@ -91,30 +93,38 @@
   edge and the kernel floor keep each local denominator positive in finite
   precision. Routing studies freeze learned radial-gate parameters; learning
   them is a later, separate ablation.
-- A core-only fallback may build candidate pairs per graph and use O(E)
-  transport storage, but its candidate search can remain O(N^2) for bounded
-  QM9 graphs. The retained edge indices, normalized displacement, cutoff
-  distance, and RBF basis are built once per forward and reused across local
-  stages, reducing repeated geometry work from `L*N^2` to `N^2 + L*E` without
-  changing outputs or gradients. End-to-end O(E) or production sparse-neighbor
-  performance is not claimed without an explicit edge API or radius backend.
+- The core-only fallback vectorizes the same-graph Cartesian candidates across
+  the batch and uses O(E) retained transport storage, but its candidate search
+  remains `O(sum_g N_g^2)` for bounded QM9 graphs. The retained edge indices,
+  normalized displacement, cutoff distance, and RBF basis are built once per
+  forward and reused across local stages, reducing repeated geometry work from
+  `L*N^2` to `N^2 + L*E` without changing outputs or gradients. End-to-end O(E)
+  or production sparse-neighbor performance is not claimed without an explicit
+  edge API or radius backend.
 
 ## Multi-Memory Global Transport
 
 - Version 1 is a memory-gated extension of the existing query-dependent
   factorized kernel, not a separate write/read model. A naive single-memory
   state would not reduce to the incumbent attention and is excluded.
-- Invariant local scalar states and deterministic slot codes produce bounded
-  logits and soft assignments `pi_i in simplex(M)`. One explicit refinement
-  may use a bounded squared-distance penalty to preliminary weighted
+- Invariant local scalar states and fixed invariant slot codes produce bounded
+  logits and soft assignments `pi_i in simplex(M)`. The incumbent deterministic
+  one-dimensional router is retained only as a counterfactual control. If its
+  identity-coupling gate is functionally constant under the frozen Stage-0
+  threshold, the registered repair is one shared multidimensional invariant
+  MLP whose parameters and state schema do not depend on `M`. One explicit
+  refinement may use a bounded squared-distance penalty to preliminary weighted
   centroids; no implicit assignment/centroid fixed point is used.
 - Memory centers divide by their exact positive occupancy, without adding
   `eps` to the denominator. Adding `eps` there would scale the translation
   term and violate exact translation equivariance. Bounded logits and bounded
   radial penalties prevent finite-precision slot starvation.
-- The fixed nonnegative coupling is a cosine cutoff of squared center distance,
-  with `0 <= C_mn <= 1`, `C_mm=1`, and zero value/first derivative at the
-  cutoff. There are no free Cartesian memory parameters or learned couplings.
+- The radial coupling is a cosine cutoff of squared center distance, with
+  `0 <= C_mn <= 1`, `C_mm=1`, and zero value/first derivative at the cutoff.
+  The only registered activation repair is the fixed nonparametric mixture
+  `C_lambda=(1-lambda)C_radial+lambda I`, choosing the smallest of
+  `{0.10,0.25,0.50}` that passes the unchanged Stage-0 gate. There are no free
+  Cartesian memory parameters or learned couplings.
 - The effective pair gate is
   `G_ij = sum_mn pi_im C_mn pi_jn`, and the attention kernel is `K_ij G_ij`
   followed by the registered row normalization or exact one-cycle balancing.
@@ -136,8 +146,9 @@
   and `C` are permuted consistently. Node permutation, batch isolation, O(3),
   translation, and coordinate-gradient contracts also apply.
 - Soft assignments may collapse for identical or highly symmetric nodes.
-  Occupancy and assignment entropy are recorded; no occupancy regularizer is
-  introduced before a collapse is observed. Multi-level memories, semantic
+  Occupancy, marginal/conditional assignment entropy, and their normalized
+  mutual information are recorded; no occupancy regularizer is introduced
+  before a training collapse is observed. Multi-level memories, semantic
   banks, learned interaction kernels, hard top-k, persistent tensor memories,
   and higher angular degree are deferred.
 
@@ -215,21 +226,26 @@
 - For a positive constant gate, CV, centered-Frobenius ratio, and nonconstant
   fraction are exactly zero and row normalization cancels the gate. Such a run
   is not evidence for multi-memory transport.
-- On the fixed bounded heterogeneous synthetic probe, both M=4 and M=8 must
-  have normalized assignment entropy in `[0.05, 0.995]`, minimum occupancy
+- On the feature-spatial aligned probe, both M=4 and M=8 must have conditional
+  assignment entropy in `[0.05, 0.995]`, marginal entropy at least `0.05`,
+  normalized assignment mutual information at least `1e-3`, minimum occupancy
   fraction at least `1e-4`, coupling q00 at most `0.99`, pair-gate
   centered-Frobenius ratio at least `1e-2`, nonconstant fraction at least
-  `0.10`, and relative RMS output difference from the matched M=1 bypass at
+  `0.10`, middle-message and post-middle symmetric relative RMS at least
+  `1e-5`, scalar/vector/position gradient symmetric relative RMS at least
+  `1e-5` each, and full-output relative RMS from the matched M=1 bypass at
   least `1e-5`. All values must be finite. CV is reported but is not a second
   independent pass condition because `D=CV/sqrt(1+CV^2)` exactly.
 - Failure of any frozen threshold blocks the later interacting M=4/M=8 memory
   arms and triggers a separately preregistered router/coupling redesign;
   thresholds are not moved after observing the probe. It does not block the
   independent Stage 1--3 kernel or local/global studies.
-- This Stage-0 change does not add a learned router, separate read/write or
-  typed memories, raw-distance coupling, segment semantics, an external sparse
-  edge API, higher-order channels, or a new default. Those remain contingent
-  on architecture-lock evidence.
+- Stage-0 is run at widths 16 and 64, seeds 401--403, and on aligned, crossed,
+  spatial-only, and semantic-only graphs with distinct registered roles. The
+  aligned graph is the all-seed admission gate; the other graphs diagnose
+  robustness and limitations. Separate read/write or typed memories,
+  raw-distance coupling, segment semantics, an external sparse edge API,
+  higher-order channels, occupancy loss, and a new default remain deferred.
 
 - Dataset/target: QM9 `gap` in eV; random-row split seed 42 with
   train/validation/test sizes 110k/10k/10k. This is not scaffold or
@@ -292,10 +308,10 @@
 
 ## Deferred Compute Gate
 
-- Local code and test changes are authorized. Before adaptive QM9 execution,
-  request one bounded approval for `uv sync --locked --extra qm9` and at most
-  30 GPU-minutes. Any final 10k-step/test study is a later, separate gate after
-  architecture lock.
+- The user's 2026-07-17 performance request supplies the one-time approval for
+  `uv sync --locked --extra qm9`, existing local QM9 data, one local GPU, and at
+  most 30 GPU-minutes under the run scope. Any final 10k-step/test study remains
+  a later, separate gate after architecture lock.
 
 ## Commands
 

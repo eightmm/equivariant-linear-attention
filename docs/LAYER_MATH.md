@@ -217,14 +217,56 @@ including after the registered one-cycle key balancing. Diagnostics therefore
 compute these values separately inside every graph/head normalization domain;
 pooling heads or graphs could manufacture false variation.
 
-The present router is a deterministic one-dimensional invariant projection.
-Read and write assignments are shared, and the center coupling is symmetric
-and computed from graph-normalized coordinates. It is therefore a
+The present router replaces the earlier one-dimensional deterministic
+projection with an `M`-independent invariant MLP. For each node/head it forms
+
+```text
+z_i = normalize(tanh(W_2 SiLU(W_1 b_i))) in R^8,
+ell_im = 4 z_i^T c_m,
+pi_i = softmax(ell_i),
+```
+
+where `c_m` are fixed unit DCT slot codes. Every layer allocates the same
+router parameter schema regardless of route or memory count, and the exact
+`M=1` dispatch occurs before the router is evaluated. Read and write
+assignments remain shared, while the center coupling is symmetric and computed
+from graph-normalized coordinates. The mechanism is therefore a
 shape-relative low-rank gate rather than directed typed or persistent memory.
-The registered Stage-0 probe found non-collapsed assignments but
-`C approximately 11^T` and `G approximately 11^T` for every M=4 and M=8 head,
-so those interacting-memory arms are blocked until a separately preregistered
-coupling/router redesign passes the same activation thresholds.
+
+The radial cutoff is especially flat near coincident centers. For center
+distance `d` and cutoff `R`,
+
+```text
+C_radial(d) = 0.5 (1 + cos(pi d^2/R^2))
+            = 1 - (pi^2/4) d^4/R^4 + O(d^8),
+```
+
+so its center gradient is `O(d^3)`. The registered counterfactual repair was
+
+```text
+C_lambda = (1-lambda) C_radial + lambda I,
+lambda in {0.10, 0.25, 0.50}.
+```
+
+It preserves symmetry, unit diagonal, bounds, slot-permutation covariance,
+equivariance, and the exact `M=1` limit. It does not imply a PSD kernel. No
+candidate passed the unchanged full Stage-0 matrix, so no residual-coupling
+control was promoted to the public model configuration.
+
+Assignment diagnostics distinguish marginal slot use from node dependence:
+
+```text
+pbar_m = mean_i pi_im,
+H_marg = -sum_m pbar_m log(pbar_m) / log(M),
+H_cond = -mean_i sum_m pi_im log(pi_im) / log(M),
+I_slot = H_marg - H_cond.
+```
+
+`I_slot=0` exactly when every node has the same assignment distribution. The
+registered widths 16/64, seeds 401--403, and four graph roles found the learned
+router numerically nonconstant but functionally below the frozen transport and
+gradient thresholds in 11 of 12 aligned M=4/8 lanes. Consequently all
+interacting-memory accuracy/performance arms remain blocked.
 
 Consistent permutation of assignment and coupling slot axes leaves the result
 unchanged. Bounded soft assignments avoid an undefined empty-slot branch but
@@ -265,12 +307,14 @@ At fixed feature dimension, head count, depth, and memory count, global
 structured attention is `O(N)` in nodes; the memory gate exposes
 `O(NM + M^2)` work/storage terms. Local transport stores `O(E)` retained edge
 state and reuses its edge/displacement/distance/RBF geometry across local
-layers, while the core fallback may still perform `O(N^2)` candidate search per
-graph. This changes repeated geometry work from `L*N^2` to `N^2 + L*E`; it does
-not turn discovery into a production sparse backend. The public wrapper derives
-graph metadata once and reuses it. Validation can still create compile graph
-breaks; full-graph compilation and production sparse-neighbor performance
-remain separate targets.
+layers. The core fallback builds all same-graph Cartesian candidate pairs with
+one stable batch sort and one vectorized expansion before applying the cutoff;
+its candidate work is still `O(sum_g N_g^2)`. This changes repeated geometry
+work from `L*N^2` to `N^2 + L*E` and removes the per-graph Python/GPU launch
+loop, but it does not turn discovery into a production sparse backend. The
+public wrapper derives graph metadata once and reuses it. Validation can still
+create compile graph breaks; full-graph compilation and production
+sparse-neighbor performance remain separate targets.
 
 ## Executable representation boundaries
 

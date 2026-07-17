@@ -10,6 +10,10 @@ from torch import nn
 from .irreps import CartesianIrreps
 
 
+_MEMORY_ROUTER_DIM = 8
+_MEMORY_ROUTER_LOGIT_SCALE = 4.0
+
+
 @dataclass(frozen=True)
 class EquivariantAttentionConfig:
     node_dim: int
@@ -139,6 +143,7 @@ class EquivariantAttention(nn.Module):
                 num_graphs=num_graphs,
                 cutoff=self.config.local_cutoff,
                 num_rbf=self.config.num_rbf,
+                graph_counts=graph_counts,
             )
         global_geometry_injected = False
         for layer in self.layers:
@@ -333,6 +338,9 @@ class _EquivariantMomentLayer(nn.Module):
         self.ffn_vector_residual_scale = nn.Parameter(
             torch.tensor(float(residual_scale_init))
         )
+        # Allocated for every route and M so comparisons retain one state schema.
+        self.memory_router_in = nn.Linear(self.head_dim, _MEMORY_ROUTER_DIM)
+        self.memory_router_out = nn.Linear(_MEMORY_ROUTER_DIM, _MEMORY_ROUTER_DIM)
 
     def forward(
         self,
@@ -440,6 +448,17 @@ class _EquivariantMomentLayer(nn.Module):
             )
         if self.global_head_count:
             global_heads = slice(self.local_head_count, self.num_heads)
+            memory_router_latent = None
+            if self.use_memory_interaction and self.global_memory_count > 1:
+                memory_router_latent = torch.tanh(
+                    self.memory_router_out(
+                        F.silu(self.memory_router_in(k0[:, global_heads]))
+                    )
+                )
+                router_norm = _stable_vector_norm(memory_router_latent)
+                memory_router_latent = memory_router_latent / router_norm.clamp_min(
+                    torch.finfo(memory_router_latent.dtype).tiny
+                )
             message_groups.append(
                 _global_moment_messages(
                     q0[:, global_heads],
@@ -465,6 +484,7 @@ class _EquivariantMomentLayer(nn.Module):
                     memory_temperature=self.memory_assignment_temperature,
                     memory_assignment_scale=self.memory_assignment_scale,
                     memory_interaction_cutoff=self.memory_interaction_cutoff,
+                    memory_router_latent=memory_router_latent,
                     use_memory_interaction=self.use_memory_interaction,
                     use_radial_trace=self.use_radial_trace,
                 )
@@ -565,6 +585,7 @@ def _global_moment_messages(
     memory_temperature: float,
     memory_assignment_scale: float,
     memory_interaction_cutoff: float,
+    memory_router_latent: torch.Tensor | None = None,
     use_memory_interaction: bool,
     use_radial_trace: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -613,6 +634,7 @@ def _global_moment_messages(
             temperature=memory_temperature,
             assignment_scale=memory_assignment_scale,
             interaction_cutoff=memory_interaction_cutoff,
+            router_latent=memory_router_latent,
             interact=True,
         )
         transported = _memory_factorized_attention(
@@ -858,22 +880,16 @@ def _local_geometry(
     num_graphs: int,
     cutoff: float,
     num_rbf: int,
+    graph_counts: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    receiver_parts: list[torch.Tensor] = []
-    sender_parts: list[torch.Tensor] = []
+    if graph_counts is None:
+        graph_counts = torch.bincount(batch, minlength=num_graphs)
+    receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
     cutoff_tensor = pos.new_full((), float(cutoff))
-    for graph_index in range(num_graphs):
-        nodes = torch.nonzero(batch == graph_index, as_tuple=False).flatten()
-        receiver = nodes.repeat_interleave(nodes.numel())
-        sender = nodes.repeat(nodes.numel())
-        candidate_distance = _stable_vector_norm(pos[sender] - pos[receiver]).squeeze(
-            -1
-        )
-        inside = candidate_distance < cutoff_tensor
-        receiver_parts.append(receiver[inside])
-        sender_parts.append(sender[inside])
-    receiver = torch.cat(receiver_parts)
-    sender = torch.cat(sender_parts)
+    candidate_distance = _stable_vector_norm(pos[sender] - pos[receiver]).squeeze(-1)
+    inside = candidate_distance < cutoff_tensor
+    receiver = receiver[inside]
+    sender = sender[inside]
     displacement = (pos[sender] - pos[receiver]) / cutoff_tensor
     squared_distance = displacement.square().sum(dim=-1)
     rbf_centers = torch.linspace(
@@ -888,6 +904,29 @@ def _local_geometry(
         -0.5 * ((squared_distance.unsqueeze(-1) - rbf_centers) / rbf_width).square()
     )
     return receiver, sender, displacement, squared_distance, rbf
+
+
+def _batched_complete_graph_edges(
+    batch: torch.Tensor,
+    graph_counts: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build graph-local Cartesian products with one vectorized index expansion."""
+    sorted_nodes = torch.argsort(batch, stable=True)
+    counts_per_receiver = graph_counts[batch[sorted_nodes]]
+    total_edges = int(graph_counts.square().sum().item())
+    receiver_positions = torch.arange(
+        batch.numel(), device=batch.device
+    ).repeat_interleave(counts_per_receiver, output_size=total_edges)
+    receiver = sorted_nodes[receiver_positions]
+
+    receiver_starts = torch.cumsum(counts_per_receiver, dim=0) - counts_per_receiver
+    sender_local = torch.arange(total_edges, device=batch.device) - receiver_starts[
+        receiver_positions
+    ]
+    graph_starts = torch.cumsum(graph_counts, dim=0) - graph_counts
+    sender_positions = graph_starts[batch[receiver]] + sender_local
+    sender = sorted_nodes[sender_positions]
+    return receiver, sender
 
 
 def _cosine_of_squared_distance_cutoff(
@@ -1410,31 +1449,53 @@ def _memory_assignments_and_coupling(
     assignment_scale: float,
     interaction_cutoff: float,
     interact: bool,
+    router_latent: torch.Tensor | None = None,
+    identity_mix: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     dtype = _moment_dtype(key_scalar, pos)
     key_scalar = key_scalar.to(dtype=dtype)
     pos = pos.to(dtype=dtype)
-    feature_index = torch.arange(
-        key_scalar.shape[-1],
-        dtype=dtype,
-        device=key_scalar.device,
-    )
-    feature_code = torch.cos(
-        torch.pi * (feature_index + 0.5) / (2.0 * max(1, key_scalar.shape[-1]))
-    )
-    feature_code = feature_code / _stable_vector_norm(feature_code)
-    scalar_coordinate = torch.tanh(torch.einsum("nhd,d->nh", key_scalar, feature_code))
     memory_index = torch.arange(
         memory_count,
         dtype=dtype,
         device=key_scalar.device,
     )
-    basis_index = torch.arange(
-        memory_count,
-        dtype=dtype,
-        device=key_scalar.device,
-    )
-    invariant_basis = scalar_coordinate.unsqueeze(-1).pow(basis_index)
+    if router_latent is None:
+        feature_index = torch.arange(
+            key_scalar.shape[-1],
+            dtype=dtype,
+            device=key_scalar.device,
+        )
+        feature_code = torch.cos(
+            torch.pi * (feature_index + 0.5) / (2.0 * max(1, key_scalar.shape[-1]))
+        )
+        feature_code = feature_code / _stable_vector_norm(feature_code)
+        scalar_coordinate = torch.tanh(
+            torch.einsum("nhd,d->nh", key_scalar, feature_code)
+        )
+        basis_index = torch.arange(
+            memory_count,
+            dtype=dtype,
+            device=key_scalar.device,
+        )
+        invariant_basis = scalar_coordinate.unsqueeze(-1).pow(basis_index)
+        logit_scale = 1.0
+    else:
+        if router_latent.ndim != 3 or router_latent.shape[:2] != key_scalar.shape[:2]:
+            raise ValueError(
+                "router_latent must have shape (nodes, heads, router_dimension)"
+            )
+        if router_latent.shape[-1] <= 0 or router_latent.is_complex():
+            raise ValueError("router_latent must be a nonempty real-valued tensor")
+        invariant_basis = router_latent.to(device=key_scalar.device, dtype=dtype)
+        if not bool(torch.isfinite(invariant_basis).all().item()):
+            raise ValueError("router_latent must contain only finite values")
+        basis_index = torch.arange(
+            invariant_basis.shape[-1],
+            dtype=dtype,
+            device=key_scalar.device,
+        )
+        logit_scale = _MEMORY_ROUTER_LOGIT_SCALE
     slot_codes = torch.cos(
         torch.pi
         * (memory_index[:, None] + 0.5)
@@ -1442,7 +1503,9 @@ def _memory_assignments_and_coupling(
         / memory_count
     )
     slot_codes = slot_codes / _stable_vector_norm(slot_codes)
-    projected_logits = torch.einsum("nhd,md->nhm", invariant_basis, slot_codes)
+    projected_logits = logit_scale * torch.einsum(
+        "nhd,md->nhm", invariant_basis, slot_codes
+    )
     temperature_tensor = projected_logits.new_full((), float(temperature))
     bounded_denominator = torch.maximum(
         temperature_tensor,
@@ -1481,12 +1544,41 @@ def _memory_assignments_and_coupling(
         cutoff_tensor = center_distance.new_full((), float(interaction_cutoff))
         distance_normalizer = torch.maximum(center_distance, cutoff_tensor)
         center_square = (center_distance / distance_normalizer).square()
-        coupling = _cosine_of_squared_distance_cutoff(center_square)
+        radial_coupling = _cosine_of_squared_distance_cutoff(center_square)
+        coupling = _mix_memory_coupling(radial_coupling, identity_mix)
     else:
         coupling = key_scalar.new_ones(
             (num_graphs, key_scalar.shape[1], memory_count, memory_count)
         )
     return assignment, coupling, centers
+
+
+def _mix_memory_coupling(
+    radial_coupling: torch.Tensor,
+    identity_mix: float,
+) -> torch.Tensor:
+    """Mix radial coupling with identity while retaining an exact unit diagonal."""
+
+    if isinstance(identity_mix, bool) or not isinstance(identity_mix, (int, float)):
+        raise TypeError("identity_mix must be a real number")
+    value = float(identity_mix)
+    if not isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError("identity_mix must be finite and lie in [0, 1]")
+    if radial_coupling.ndim < 2 or radial_coupling.shape[-1] != radial_coupling.shape[-2]:
+        raise ValueError("radial_coupling must contain square memory matrices")
+    if value == 0.0:
+        return radial_coupling
+    memories = radial_coupling.shape[-1]
+    diagonal = torch.eye(
+        memories,
+        dtype=torch.bool,
+        device=radial_coupling.device,
+    )
+    return torch.where(
+        diagonal,
+        torch.ones_like(radial_coupling),
+        radial_coupling * (1.0 - value),
+    )
 
 
 def _bounded_square_fraction(distance: torch.Tensor, scale: float) -> torch.Tensor:

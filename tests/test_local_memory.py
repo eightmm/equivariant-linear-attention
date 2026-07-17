@@ -197,6 +197,30 @@ def test_tiny_positive_local_cutoff_keeps_exact_self_edges() -> None:
     assert torch.equal(squared_distance, torch.zeros_like(squared_distance))
 
 
+@pytest.mark.parametrize(
+    "batch",
+    [
+        torch.tensor([0, 0, 0], dtype=torch.long),
+        torch.tensor([0, 1, 2, 3], dtype=torch.long),
+        torch.tensor([1, 0, 2, 1, 0, 2, 2], dtype=torch.long),
+    ],
+)
+def test_batched_complete_graph_edges_match_graph_loop(batch: torch.Tensor) -> None:
+    num_graphs = int(batch.max()) + 1
+    graph_counts = torch.bincount(batch, minlength=num_graphs)
+
+    receiver, sender = moment._batched_complete_graph_edges(batch, graph_counts)
+
+    expected_receiver: list[torch.Tensor] = []
+    expected_sender: list[torch.Tensor] = []
+    for graph_index in range(num_graphs):
+        nodes = torch.nonzero(batch == graph_index, as_tuple=False).flatten()
+        expected_receiver.append(nodes.repeat_interleave(nodes.numel()))
+        expected_sender.append(nodes.repeat(nodes.numel()))
+    assert torch.equal(receiver, torch.cat(expected_receiver))
+    assert torch.equal(sender, torch.cat(expected_sender))
+
+
 def test_repeated_local_stages_reuse_one_geometry_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -825,6 +849,59 @@ def test_memory_count_does_not_change_parameter_schema_or_initialization() -> No
     assert list(one.state_dict()) == list(four.state_dict())
     for name in one.state_dict():
         assert torch.equal(one.state_dict()[name], four.state_dict()[name])
+
+
+def test_shared_invariant_router_parameters_are_nonzero_and_memory_count_independent() -> (
+    None
+):
+    torch.manual_seed(359)
+    one = _hybrid_model((2, 0, 2), memory_count=1)
+    torch.manual_seed(359)
+    eight = _hybrid_model((2, 0, 2), memory_count=8)
+    router_names = [name for name in one.state_dict() if "memory_router" in name]
+
+    assert router_names
+    assert list(one.state_dict()) == list(eight.state_dict())
+    assert any(torch.count_nonzero(one.state_dict()[name]) for name in router_names)
+    for name in router_names:
+        assert torch.equal(one.state_dict()[name], eight.state_dict()[name])
+
+
+@pytest.mark.parametrize("identity_mix", [0.0, 0.1, 0.5, 1.0])
+def test_identity_residual_coupling_preserves_bounds_diagonal_and_slot_covariance(
+    identity_mix: float,
+) -> None:
+    radial = torch.tensor(
+        [[[1.0, 0.8, 0.4], [0.8, 1.0, 0.2], [0.4, 0.2, 1.0]]],
+        dtype=torch.float64,
+    )
+    permutation = torch.tensor([2, 0, 1])
+
+    mixed = moment._mix_memory_coupling(radial, identity_mix)
+    permuted = moment._mix_memory_coupling(
+        radial[..., permutation, :][..., :, permutation], identity_mix
+    )
+
+    assert torch.all((mixed >= 0.0) & (mixed <= 1.0))
+    assert torch.equal(
+        mixed.diagonal(dim1=-2, dim2=-1),
+        torch.ones_like(mixed.diagonal(dim1=-2, dim2=-1)),
+    )
+    assert torch.equal(mixed, mixed.transpose(-1, -2))
+    assert torch.equal(
+        permuted,
+        mixed[..., permutation, :][..., :, permutation],
+    )
+
+
+@pytest.mark.parametrize("identity_mix", [True, -0.1, 1.1, float("nan")])
+def test_identity_residual_coupling_rejects_invalid_mix(identity_mix: object) -> None:
+    error = TypeError if isinstance(identity_mix, bool) else ValueError
+    with pytest.raises(error, match="identity_mix"):
+        moment._mix_memory_coupling(
+            torch.eye(2, dtype=torch.float64).reshape(1, 2, 2),
+            identity_mix,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(

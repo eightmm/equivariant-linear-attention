@@ -260,7 +260,7 @@ def dense_kernel_attention_summary(
 
 
 def memory_assignment_summary(assignment: torch.Tensor) -> dict[str, float | int]:
-    """Summarize finite soft-memory occupancy and assignment entropy."""
+    """Summarize occupancy and marginal/conditional assignment information."""
 
     if not isinstance(assignment, torch.Tensor) or assignment.ndim != 3:
         raise ValueError("assignment must have shape (nodes, heads, memories)")
@@ -285,26 +285,97 @@ def memory_assignment_summary(assignment: torch.Tensor) -> dict[str, float | int
         )
     ).sum(dim=-1)
     memory_count = probabilities.shape[-1]
-    normalized_entropy = (
-        1.0
-        if memory_count == 1
-        else float(
-            (
-                entropy.mean()
-                / torch.tensor(
-                    float(memory_count),
-                    dtype=torch.float64,
-                    device=probabilities.device,
-                ).log()
-            ).item()
+    if memory_count == 1:
+        conditional_entropy = 1.0
+        marginal_entropy = 1.0
+        mutual_information = 0.0
+    else:
+        log_memory_count = torch.tensor(
+            float(memory_count),
+            dtype=torch.float64,
+            device=probabilities.device,
+        ).log()
+        conditional_entropy = float((entropy.mean() / log_memory_count).item())
+        marginal = probabilities.mean(dim=0)
+        marginal_log = torch.where(
+            marginal > 0.0,
+            marginal.log(),
+            torch.zeros_like(marginal),
         )
-    )
+        marginal_entropy = float(
+            (-(marginal * marginal_log).sum(dim=-1).mean() / log_memory_count).item()
+        )
+        mutual_information = max(0.0, marginal_entropy - conditional_entropy)
     return {
         "memory_count": int(memory_count),
         "occupancy.min": float(occupancy.min().item()),
         "occupancy.mean": float(occupancy.mean().item()),
         "occupancy.max": float(occupancy.max().item()),
-        "assignment_entropy_over_log_m": normalized_entropy,
+        "assignment_entropy_over_log_m": conditional_entropy,
+        "conditional_entropy_over_log_m": conditional_entropy,
+        "marginal_entropy_over_log_m": marginal_entropy,
+        "mutual_information_over_log_m": mutual_information,
+    }
+
+
+def memory_center_summary(
+    centers: torch.Tensor,
+    *,
+    interaction_cutoff: float,
+) -> dict[str, object]:
+    """Report invariant per-head memory-center spread and distance scales."""
+
+    if not isinstance(centers, torch.Tensor) or centers.ndim != 3:
+        raise ValueError("centers must have shape (heads, memories, 3)")
+    if centers.shape[-1] != 3 or 0 in centers.shape:
+        raise ValueError("centers must have positive heads/memories and dimension 3")
+    if centers.is_complex():
+        raise ValueError("centers must be real-valued")
+    if isinstance(interaction_cutoff, bool) or not isinstance(interaction_cutoff, Real):
+        raise TypeError("interaction_cutoff must be a real number")
+    cutoff = float(interaction_cutoff)
+    if not isfinite(cutoff) or cutoff <= 0.0:
+        raise ValueError("interaction_cutoff must be finite and positive")
+
+    values = centers.detach().to(dtype=torch.float64)
+    if not bool(torch.isfinite(values).all().item()):
+        raise ValueError("centers must contain only finite values")
+    heads, memories, _ = values.shape
+    head_summaries: list[dict[str, float | int]] = []
+    for head in range(heads):
+        head_centers = values[head]
+        centered = head_centers - head_centers.mean(dim=0, keepdim=True)
+        spread = centered.square().sum(dim=-1).mean().sqrt()
+        distance = torch.linalg.vector_norm(
+            head_centers.unsqueeze(-2) - head_centers.unsqueeze(-3),
+            dim=-1,
+        )
+        if memories == 1:
+            minimum = median = maximum = 0.0
+        else:
+            off_diagonal = distance[
+                ~torch.eye(memories, dtype=torch.bool, device=distance.device)
+            ]
+            minimum = float(off_diagonal.min().item())
+            median = float(off_diagonal.median().item())
+            maximum = float(off_diagonal.max().item())
+        head_summaries.append(
+            {
+                "head_index": int(head),
+                "center_spread_rms": float(spread.item()),
+                "offdiagonal_distance.min": minimum,
+                "offdiagonal_distance.median": median,
+                "offdiagonal_distance.max": maximum,
+                "distance_over_cutoff.q00": minimum / cutoff,
+                "distance_over_cutoff.q50": median / cutoff,
+                "distance_over_cutoff.q100": maximum / cutoff,
+            }
+        )
+    return {
+        "scope": "single_graph_per_head",
+        "head_count": int(heads),
+        "memory_count": int(memories),
+        "heads": head_summaries,
     }
 
 
@@ -350,6 +421,8 @@ def pair_gate_summary(
         raise ValueError("pair_gate must have positive mass")
     if float(maximum.item()) > 1.0 + symmetry_limit:
         raise ValueError("pair_gate values must be at most one")
+    values = values.clamp_max(1.0)
+    maximum = values.max()
     scaled = values / maximum
     symmetry_error = (scaled - scaled.T).abs().max()
     if float(symmetry_error.item()) > symmetry_limit:
@@ -478,6 +551,10 @@ def memory_pair_gate_summary(
         coupling_summary["off_diagonal_nonunit_fraction"] = (
             off_diagonal_nonunit_fraction
         )
+        coupling_summary["centered_frobenius_ratio"] = pair_gate_summary(
+            head_coupling,
+            nonconstant_relative_tolerance=nonconstant_relative_tolerance,
+        )["centered_frobenius_ratio"]
         head_summaries.append(
             {
                 "head_index": int(head),
@@ -661,6 +738,7 @@ __all__ = [
     "kernel_parameter_summary",
     "matrix_effective_rank",
     "memory_assignment_summary",
+    "memory_center_summary",
     "memory_pair_gate_summary",
     "pair_gate_summary",
 ]

@@ -69,10 +69,13 @@ Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel
 scales, mass/denominator quantiles, entropy over log node count, maximum weight,
 effective support, column CV, gradient/residual norms, and per-graph/per-head
-HEMM occupancy, assignment entropy, coupling, and effective pair-gate
-min/p01/median/p99/max, CV, centered-Frobenius ratio, and tolerance-defined
-nonconstant fraction. Effective-rank computation is opt-in and size-bounded;
-row or column scaling does not change exact matrix rank.
+HEMM occupancy, assignment marginal/conditional entropy and normalized mutual
+information, center spread, off-diagonal center distances, coupling, and
+effective pair-gate min/p01/median/p99/max, CV, centered-Frobenius ratio, and
+tolerance-defined nonconstant fraction. The Stage-0 probe also records
+middle-message, post-middle-state, scalar/vector/position-gradient, and
+full-output symmetric relative RMS. Effective-rank computation is opt-in and
+size-bounded; row or column scaling does not change exact matrix rank.
 
 QM9 numbers use a random-row warm split. They do not measure scaffold,
 protein-target, temporal, or cold-complex generalization. Historical test access

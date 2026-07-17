@@ -10,9 +10,75 @@ from equivariant_attention.diagnostics import (
     kernel_parameter_summary,
     matrix_effective_rank,
     memory_assignment_summary,
+    memory_center_summary,
     memory_pair_gate_summary,
     pair_gate_summary,
 )
+
+
+@pytest.mark.parametrize(
+    "assignment, expected",
+    [
+        (
+            torch.full((4, 1, 2), 0.5, dtype=torch.float64),
+            (1.0, 1.0, 0.0),
+        ),
+        (
+            torch.tensor(
+                [[[1.0, 0.0]], [[0.0, 1.0]], [[1.0, 0.0]], [[0.0, 1.0]]],
+                dtype=torch.float64,
+            ),
+            (1.0, 0.0, 1.0),
+        ),
+        (
+            torch.tensor(
+                [[[1.0, 0.0]], [[1.0, 0.0]], [[1.0, 0.0]], [[1.0, 0.0]]],
+                dtype=torch.float64,
+            ),
+            (0.0, 0.0, 0.0),
+        ),
+    ],
+)
+def test_assignment_summary_separates_marginal_conditional_and_mutual_information(
+    assignment: torch.Tensor,
+    expected: tuple[float, float, float],
+) -> None:
+    summary = memory_assignment_summary(assignment)
+
+    assert summary["marginal_entropy_over_log_m"] == pytest.approx(expected[0])
+    assert summary["conditional_entropy_over_log_m"] == pytest.approx(expected[1])
+    assert summary["mutual_information_over_log_m"] == pytest.approx(expected[2])
+    assert summary["assignment_entropy_over_log_m"] == pytest.approx(expected[1])
+    json.dumps(summary, allow_nan=False)
+
+
+def test_memory_center_summary_is_invariant_and_reports_exact_two_center_geometry() -> (
+    None
+):
+    centers = torch.tensor(
+        [[[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]]], dtype=torch.float64
+    )
+    rotation = torch.tensor(
+        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=torch.float64,
+    )
+
+    summary = memory_center_summary(centers, interaction_cutoff=2.0)
+    moved = memory_center_summary(
+        centers @ rotation.T + torch.tensor([7.0, -2.0, 1.0]),
+        interaction_cutoff=2.0,
+    )
+
+    assert summary == moved
+    head = summary["heads"][0]
+    assert head["center_spread_rms"] == pytest.approx(1.5)
+    assert head["offdiagonal_distance.min"] == pytest.approx(3.0)
+    assert head["offdiagonal_distance.median"] == pytest.approx(3.0)
+    assert head["offdiagonal_distance.max"] == pytest.approx(3.0)
+    assert head["distance_over_cutoff.q00"] == pytest.approx(1.5)
+    assert head["distance_over_cutoff.q50"] == pytest.approx(1.5)
+    assert head["distance_over_cutoff.q100"] == pytest.approx(1.5)
+    json.dumps(summary, allow_nan=False)
 
 
 def test_uniform_attention_has_interpretable_scalar_diagnostics() -> None:
@@ -306,6 +372,20 @@ def test_single_memory_and_all_ones_coupling_have_constant_unit_pair_gate() -> N
         and head["pair_gate"]["cv"] == pytest.approx(0.0)
         for head in summary["heads"]
     )
+
+
+def test_memory_pair_gate_reports_centered_coupling_without_pooling_heads() -> None:
+    assignment = torch.tensor(
+        [[[1.0, 0.0]], [[0.0, 1.0]]], dtype=torch.float64
+    )
+    summary = memory_pair_gate_summary(
+        assignment,
+        torch.eye(2, dtype=torch.float64).unsqueeze(0),
+    )
+
+    coupling = summary["heads"][0]["coupling"]
+    assert coupling["centered_frobenius_ratio"] == pytest.approx(2**-0.5)
+    assert coupling["off_diagonal_nonunit_fraction"] == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(

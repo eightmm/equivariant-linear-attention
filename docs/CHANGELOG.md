@@ -10,6 +10,17 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.10 -> v0.11 (2026-07-17) — replace the functionally inactive
+  one-dimensional HEMM router with an M-shared invariant MLP and fixed DCT slot
+  codes, add exact residual-coupling counterfactuals, and vectorize batched local
+  candidate construction. impact: preserves M=1 dispatch and route/memory
+  parameter schema, makes the proposed coupling repair falsifiable, and removes
+  the per-graph GPU launch loop from local geometry.
+- [eval] v0.3 -> v0.4 (2026-07-17) — extend frozen Stage-0 to four graph roles,
+  widths 16/64, seeds 401--403, entropy/MI/center diagnostics, actual transport,
+  post-state, and input gradients. impact: rejects every registered M=4/M=8
+  residual-coupling candidate without moving thresholds and keeps those arms
+  out of QM9 performance studies.
 - [eval] v0.2 -> v0.3 (2026-07-16) — add per-graph/per-head effective HEMM
   pair-gate statistics, connect them to the bounded runtime diagnostic, and add
   a matched-state M=1/4/8 Stage-0 activation probe. impact: detects that the

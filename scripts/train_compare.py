@@ -23,6 +23,7 @@ from equivariant_attention.diagnostics import (
     kernel_component_quantiles,
     kernel_parameter_summary,
     memory_assignment_summary,
+    memory_center_summary,
     memory_pair_gate_summary,
     pair_gate_summary,
 )
@@ -511,6 +512,7 @@ def _bounded_model_diagnostics(
         _bounded_irrep,
         _memory_assignments_and_coupling,
         _normalize_positive_features,
+        _stable_vector_norm,
         _unit_ball,
     )
 
@@ -648,6 +650,14 @@ def _bounded_model_diagnostics(
         pair_gate = None
         memory: dict[str, object]
         if layer.use_memory_interaction and layer.global_memory_count > 1:
+            router_latent = torch.tanh(
+                layer.memory_router_out(
+                    F.silu(layer.memory_router_in(key_scalar[:, global_heads]))
+                )
+            )
+            router_latent = router_latent / _stable_vector_norm(
+                router_latent
+            ).clamp_min(torch.finfo(router_latent.dtype).tiny)
             assignment, coupling, centers = _memory_assignments_and_coupling(
                 key_scalar[:, global_heads],
                 global_pos,
@@ -658,6 +668,7 @@ def _bounded_model_diagnostics(
                 assignment_scale=layer.memory_assignment_scale,
                 interaction_cutoff=layer.memory_interaction_cutoff,
                 interact=True,
+                router_latent=router_latent,
             )
             global_head_offset = head_index - layer.local_head_count
             head_assignment = assignment[:, global_head_offset]
@@ -683,9 +694,13 @@ def _bounded_model_diagnostics(
                     assignment,
                     coupling[0],
                 ),
+                "centers": memory_center_summary(
+                    centers[0],
+                    interaction_cutoff=layer.memory_interaction_cutoff,
+                ),
                 "centers_finite": bool(torch.isfinite(centers).all().item()),
             }
-            assignment_source = "exact_model_helper_recompute"
+            assignment_source = "shared_invariant_router_exact_recompute"
         elif layer.use_memory_interaction:
             assignment = key_scalar.new_ones((node_count, layer.global_head_count, 1))
             analytic_pair_gate = key_scalar.new_ones((node_count, node_count))

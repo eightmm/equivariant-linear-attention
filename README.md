@@ -76,10 +76,11 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 - Multi-memory interaction is off by default with `M=1`. The `M=1` path reduces
   exactly to incumbent global attention; `M=4/8` interaction arms are
   experimental and registered only for the middle global block of `lgl`. The
-  current HEMM is a deterministic shared-read/write symmetric low-rank pair
-  gate, not persistent memory. Its frozen Stage-0 activation probe currently
-  blocks M=4/8 promotion because the effective pair gate is numerically
-  constant on the registered probe.
+  current HEMM uses an M-shared invariant MLP router with fixed DCT slot codes
+  and a shared-read/write symmetric low-rank pair gate, not persistent memory.
+  The full frozen Stage-0 matrix still blocks M=4/8 promotion: radial coupling
+  collapses and neither identity nor the registered residual mixtures produce
+  sufficient transport/gradient activation across all aligned lanes.
 - Unit-normalized positive scalar content, unit-ball vector queries/keys,
   bounded linear/quadratic angular scales, and structured vector/3x3
   mass/denominator contractions avoid signed

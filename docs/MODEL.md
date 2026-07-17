@@ -78,7 +78,8 @@ attention tensor. Local heads construct directed same-graph raw-coordinate
 edges with self edges, a default 2.5-Angstrom cutoff, 16 Gaussian RBFs, and a
 positive cosine gate of squared scaled distance. The core fallback stores
 `O(E)` transport and reuses one geometry/RBF construction across all local
-stages, but may search `O(N^2)` candidate pairs. Thus the repeated work is
+stages. It vectorizes all same-graph Cartesian candidates across the batch, but
+still searches `O(sum_g N_g^2)` pairs. Thus the repeated work is
 `N^2 + L*E`, while no production end-to-end `O(E)` claim is made.
 
 Global preprocessing is scale-first: coordinates are scaled by each graph's
@@ -105,21 +106,22 @@ coupling are permuted together. Soft slot collapse remains possible, and no
 performance benefit is claimed without the registered validation study.
 
 This implementation is a low-rank pair gate, not a persistent memory state.
-It uses a deterministic one-dimensional invariant router, the same assignment
-for reads and writes, and a symmetric coupling derived from graph-normalized
-center coordinates. Thus the coupling is shape-relative rather than a raw
-physical-distance decay. In a mixed local/global block, local heads also read
-the shared scalar/vector state after global geometry has been injected; mixed
-heads are legal but are not a promoted independent route.
+It uses an M-independent two-layer invariant router with fixed unit DCT slot
+codes, the same assignment for reads and writes, and a symmetric coupling
+derived from graph-normalized center coordinates. Thus the coupling is
+shape-relative rather than a raw physical-distance decay. In a mixed
+local/global block, local heads also read the shared scalar/vector state after
+global geometry has been injected; mixed heads are legal but are not a
+promoted independent route.
 
-The frozen 16-node Stage-0 probe uses the same state dictionary for M=1, M=4,
-and M=8 and checks every global head separately. On the current implementation,
-M=4 and M=8 have occupied, non-collapsed assignments but coupling matrices and
-effective pair gates numerically indistinguishable from all ones. The complete
-output changes by only about `1e-12` to `1e-11` in relative RMS. Therefore the
-implemented M=4/8 flags remain available for mechanism diagnostics, but broader
-memory accuracy/performance arms are blocked pending a separately
-preregistered coupling/router redesign.
+The frozen Stage-0 suite uses the same state dictionary for M=1, M=4, and M=8
+at widths 16/64, seeds 401--403, and four graph roles. It checks assignment
+marginal/conditional entropy and mutual information, centers, radial and
+effective coupling, actual middle transport, post-state, input gradients, and
+full output. Radial, identity, and fixed residual-coupling counterfactuals all
+failed the all-aligned-lane admission rule. Therefore M=4/8 flags remain
+available for mechanism diagnostics, but broader memory accuracy/performance
+arms are blocked pending another separately preregistered redesign.
 
 `use_radial_trace` controls an exact relative squared-distance moment. Its
 state slot exists in both arms and is exactly zero when disabled, while public

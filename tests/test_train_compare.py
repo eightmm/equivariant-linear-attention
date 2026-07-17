@@ -340,6 +340,12 @@ def test_bounded_diagnostics_connect_active_memory_without_mutating_model(
     assert diagnostics["memory"]["status"] == "active"
     assert diagnostics["memory"]["transport_connected"] is True
     assert diagnostics["memory"]["assignment"]["memory_count"] == memory_count
+    assert diagnostics["memory"]["assignment"]["marginal_entropy_over_log_m"] >= 0.0
+    assert diagnostics["memory"]["assignment"]["mutual_information_over_log_m"] >= 0.0
+    assert diagnostics["instrumentation"]["assignment_source"] == (
+        "shared_invariant_router_exact_recompute"
+    )
+    assert diagnostics["memory"]["centers"]["scope"] == "single_graph_per_head"
     assert "coupling.q50" in diagnostics["memory"]["coupling"]
     pair_gate = diagnostics["memory"]["pair_gate"]
     assert pair_gate["min"] > 0.0

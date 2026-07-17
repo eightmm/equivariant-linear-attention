@@ -39,6 +39,20 @@ mechanistic-control `lll` routing; memory counts 1, 4, or 8; and isolated
 alignment, balancing, pair-floor, memory-interaction, and radial-trace changes.
 These are capabilities under study, not promoted performance defaults.
 
+Interacting M=4/M=8 runs additionally require the frozen Stage-0 mechanism
+gate to pass at widths 16/64 and seeds 401--403 before any QM9 labels are used.
+The 2026-07-17 full matrix rejected every registered residual-coupling
+candidate, so this contract admits only the independent M=1 `ggg` versus `lgl`
+comparison. Its validation-only promotion rule is paired across model seeds
+41--43: mean MAE improvement at least 0.010 eV, improvement in at least two
+seeds, and worst-seed regression no larger than 0.020 eV.
+
+Before the three-seed comparison, synchronized eager CUDA measurements use 64
+graphs with 18 and 29 nodes, 20 warm-up plus 50 measured iterations, five
+fresh processes, and process-mean medians. Both forward and forward/backward
+latency and peak allocated memory must remain within 20% of `ggg`. Test labels
+remain disabled throughout this adaptive gate.
+
 ## Ledger Semantics
 
 `docs/EXPERIMENTS.jsonl` is the immutable historical run ledger for this task.
