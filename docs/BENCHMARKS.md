@@ -53,9 +53,35 @@ compatibility statement, not a compile speedup claim.
 Do not compare numbers from removed implementations with this benchmark: their
 semantics and batch shapes differ. Route, local cutoff/RBF, interacting
 `M=4/8`, radial trace, and fixed-versus-graph-size-scaled positive-baseline
-accuracy comparisons belong in matched training/instrumented runs. No
-accuracy, speed, or memory improvement is claimed from implementing or timing
-these capabilities.
+accuracy comparisons belong in matched training/instrumented runs.
+
+## Registered M=1 routing result (2026-07-17)
+
+On clean commit `a8bda61`, the validation-only QM9 `gap` comparison used the
+registered random-row warm split, 2,000 FP32 steps, and paired model seeds
+41--43. Only routing/local-head layout changed; source, data, split, parameter
+count (153,285), state schema, and each seed's initial state hash matched.
+
+| seed | GGG MAE (eV) | LGL MAE (eV) | improvement (eV) |
+|---:|---:|---:|---:|
+| 41 | 0.530218 | 0.507433 | 0.022785 |
+| 42 | 0.589037 | 0.572078 | 0.016958 |
+| 43 | 0.631137 | 0.512559 | 0.118578 |
+
+Mean improvement was 0.052774 eV, all three seeds improved, and the worst
+improvement was 0.016958 eV. This passes the registered 0.010 eV / 2-of-3 /
+-0.020 eV rule. No test metric was evaluated.
+
+The synchronized eager-FP32 resource gate used 64 graphs, 18 and 29 nodes,
+20 warm-up plus 50 measured iterations, and five fresh processes. Relative to
+GGG, LGL forward was 7.1--8.7% faster and forward/backward was 13.7--14.8%
+faster. Its largest peak-memory increase was 6.3%; other lanes used less
+memory. The local candidate builder remains `O(sum_g N_g^2)` but its exact
+same-graph Cartesian expansion is vectorized across the batch.
+
+This is adaptive three-seed evidence for this one QM9 validation protocol, not
+a test-set, cold-molecule, EGNN, or public-default claim. Interacting M=4/M=8
+remains blocked by the independent Stage-0 mechanism gate.
 
 The helpers in `equivariant_attention.diagnostics` are pure and bounded: they
 detach inputs, return JSON-safe Python scalars, do not mutate model state, and

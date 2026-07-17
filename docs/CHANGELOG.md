@@ -10,6 +10,11 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [eval] v0.4 -> v0.5 (2026-07-17) — run the registered clean-source M=1
+  `ggg`/`lgl` CUDA and three-seed QM9 gap comparison with test evaluation off.
+  impact: `lgl` passes with 0.052774 eV mean validation-MAE improvement, 3/3
+  improving seeds, and lower measured step latency; this remains a bounded
+  validation result and does not admit Stage-0-blocked M=4/M=8.
 - [model] v0.10 -> v0.11 (2026-07-17) — replace the functionally inactive
   one-dimensional HEMM router with an M-shared invariant MLP and fixed DCT slot
   codes, add exact residual-coupling counterfactuals, and vectorize batched local

@@ -108,6 +108,12 @@ Any route containing a global head is not a size-consistent interatomic
 potential. The intended role is a bounded-size property probe or a global
 context block within the same local/global architecture.
 
+The latest registered validation-only comparison found M=1 `lgl` better than
+matched M=1 `ggg` on all three seeds (mean gap-MAE improvement 0.052774 eV),
+while also passing the CUDA latency/memory ceiling. This does not change the
+public default or admit the Stage-0-blocked M=4/M=8 interaction arms. See
+[the benchmark record](docs/BENCHMARKS.md#registered-m1-routing-result-2026-07-17).
+
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
@@ -123,10 +129,10 @@ Despite the compatibility name, `inverse_graph_size` scales the complete
 shifted positive baseline `(c + beta + delta*beta*t)` by `1/N_g` and leaves the
 content and `gamma*t^2` terms unchanged.
 
-These switches are implemented capabilities, not evidence that a non-default
-arm is more accurate or faster. Promotion requires the preregistered matched,
-multi-seed validation and resource comparison in [the evaluation
-contract](docs/EVALUATION.md).
+Except for the registered M=1 `lgl` probe above, these switches are implemented
+capabilities rather than evidence that a non-default arm is better. Any further
+promotion requires the preregistered matched, multi-seed validation and
+resource comparison in [the evaluation contract](docs/EVALUATION.md).
 
 The repository currently has no declared open-source license. Contact the owner
 before redistributing substantial portions of the code.
