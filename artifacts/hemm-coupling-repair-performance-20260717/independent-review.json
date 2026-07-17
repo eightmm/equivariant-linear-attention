@@ -1,0 +1,141 @@
+{
+  "status": "passed",
+  "reviewer": "codex-science-independent-subagent:/root/independent_science_review",
+  "independent": true,
+  "reviewed_at": "2026-07-17T09:07:09Z",
+  "reviewed_manifest_sha256": "163df5d693775b3b25857be928eaa59c9a209fd9a1e5eaadfd0f035ca6c701ae",
+  "structural_validation": {
+    "status": "passed",
+    "receipt": "structural-review-independent.json",
+    "receipt_sha256": "901c63d7d00aa05be77f85b488662475ee888b1ce79414f4d60f515898faa0df"
+  },
+  "independent_recomputations": {
+    "stage0": {
+      "lane_count": 24,
+      "memory_arm_count": 48,
+      "counterfactual_count": 288,
+      "head_summary_count": 1152,
+      "serialized_check_count": 12096,
+      "decision_mismatch_count": 0,
+      "selected_identity_mix": null,
+      "semantic_identity_active": false,
+      "decision": "block_interacting_memory_arms"
+    },
+    "qm9": {
+      "paired_improvement_eV": [
+        0.022785334062576323,
+        0.016958455371856695,
+        0.11857820463180535
+      ],
+      "mean_improvement_eV": 0.05277399802207946,
+      "sample_std_improvement_eV": 0.057062538801482626,
+      "positive_seed_count": 3,
+      "minimum_improvement_eV": 0.016958455371856695,
+      "test_evaluated": false,
+      "decision": "lgl_m1_passes_registered_qm9_probe"
+    },
+    "cuda": {
+      "maximum_latency_increase_fraction": -0.07078012001846434,
+      "maximum_peak_memory_increase_fraction": 0.06312292358803973,
+      "all_registered_comparisons_within_20_percent": true
+    },
+    "artifact_hash_audit": {
+      "artifact_count": 32,
+      "artifact_mismatch_count": 0,
+      "code_mismatch_count": 0
+    }
+  },
+  "findings": [],
+  "resolved_findings": [
+    {
+      "id": "IR-001",
+      "severity": "minor",
+      "claim": "The performance report is reproducible from the saved analysis code and six QM9 outputs.",
+      "evidence": "The first reviewed report disclosed 151400 gradient-bearing elements and route-specific nonzero counts 151080/150504, while the then-current analyzer did not generate or validate that paragraph.",
+      "why_it_matters": "A manually amended report can drift from its declared analysis path even when the numbers are correct.",
+      "required_correction": "Make the analyzer validate the six raw gradient counts and generate the disclosure, then regenerate the report and manifest.",
+      "resolution_status": "resolved",
+      "resolution": "The analyzer now derives and validates the counts, the regenerated report matches all six raw outputs, and its final hash is recorded in the reviewed manifest."
+    },
+    {
+      "id": "IR-002",
+      "severity": "major",
+      "claim": "The environment record identifies the interpreter and packages used by the registered runs.",
+      "evidence": "The initial record exposed the catalog capture interpreter as Python 3.11.15 although repository commands ran through the Python 3.12.12 project environment required by pyproject.toml and uv.lock.",
+      "why_it_matters": "Confusing the capture-process interpreter with the experiment interpreter makes the registered environment internally inconsistent and impairs reproduction.",
+      "required_correction": "Separate catalog and experiment runtimes and record the project Python, PyTorch/CUDA, PyG, RDKit, GPU, and lock/project hashes.",
+      "resolution_status": "resolved",
+      "resolution": "compute-environment.json and the manifest now distinguish the two runtimes and record Python 3.12.12, torch 2.12.1+cu130, CUDA 13.0, PyG 2.8.0, RDKit 2026.03.3, the GPU, and dependency-file hashes."
+    },
+    {
+      "id": "IR-003",
+      "severity": "major",
+      "claim": "The Stage-0 decision applies to the final implementation source.",
+      "evidence": "The first official suite recorded source hash 7aa505d8..., while the final vectorized implementation produced source hash 52e6a9e2....",
+      "why_it_matters": "Exact-semantics tests are strong bridging evidence but do not replace a final-source execution receipt for the registered all-lane decision.",
+      "required_correction": "Rerun all 24 registered Stage-0 lanes on a tracked-clean final source and regenerate raw, compressed, summary, report, and manifest evidence.",
+      "resolution_status": "resolved",
+      "resolution": "The clean rerun on commit 3f99b165... records source 52e6a9e2..., reproduces the same block decision and numerical aggregates, and is bound by stage0-rerun-provenance.json."
+    },
+    {
+      "id": "IR-004",
+      "severity": "major",
+      "claim": "The preliminary failing CUDA benchmark causally establishes that vectorization removed the bottleneck.",
+      "evidence": "cuda-benchmarks.json records protocol and benchmark-script identity but not the model source hash or git state.",
+      "why_it_matters": "Without a pinned pre-change model, the before/after causal comparison is not independently reproducible.",
+      "required_correction": "Either pin and rerun the pre-change source or narrow the claim to the reproducible final-source resource result.",
+      "resolution_status": "resolved",
+      "resolution": "The manifest and performance narrative now label the earlier file an unpinned preliminary diagnostic and claim only that the pinned exact-semantics final implementation passes the registered CUDA gate."
+    },
+    {
+      "id": "IR-005",
+      "severity": "minor",
+      "claim": "The CUDA table in the execution narrative matches the final pinned benchmark artifact.",
+      "evidence": "The first reviewed table contained stale medians and deltas from a prior vectorized run.",
+      "why_it_matters": "The conclusion was unchanged, but reported values must trace exactly to the cited raw artifact.",
+      "required_correction": "Replace the table with medians and ratios recomputed from cuda-benchmarks-vectorized.json.",
+      "resolution_status": "resolved",
+      "resolution": "The table now reports 6.499/6.039, 21.196/18.286, 6.528/5.961, and 21.336/18.177 ms with the exact corresponding latency and memory deltas."
+    },
+    {
+      "id": "IR-006",
+      "severity": "major",
+      "claim": "Every manifest artifact hash identifies the current reviewed file.",
+      "evidence": "A late patch initially left stale hashes for analyze_performance.py and build_manifest.py even though the deterministic structural validator returned passed.",
+      "why_it_matters": "A structural pass alone does not prove content integrity, and stale hashes break the evidence chain.",
+      "required_correction": "Rebuild the manifest after all mutations and independently recompute every artifact and code hash.",
+      "resolution_status": "resolved",
+      "resolution": "The final independent hash loop checked all 32 manifest artifacts and all listed code paths with zero mismatches; the deterministic validator also passed."
+    },
+    {
+      "id": "IR-007",
+      "severity": "minor",
+      "claim": "The publishable QM9 ledger is portable and has an exact execution/transformation chain.",
+      "evidence": "The raw runner ledger contains six machine-local repository prefixes, and the first manifest version described the sanitized ledger as the direct runner output.",
+      "why_it_matters": "Machine-local paths should not be published, while transformation provenance must not obscure which file the training runner produced.",
+      "required_correction": "Preserve the raw ledger as local checkpoint evidence, generate a path-sanitized public copy with an exact transform receipt, and record runner and publisher executions separately.",
+      "resolution_status": "resolved",
+      "resolution": "publish_qm9_ledger.py replaces only the six exact repository-root prefixes; qm9-runs-public-provenance.json binds raw/public hashes and row counts; the manifest records the runner and publisher as distinct steps."
+    },
+    {
+      "id": "IR-008",
+      "severity": "minor",
+      "claim": "The reported 9.5 GPU-minutes is an exactly reconstructible timer total.",
+      "evidence": "Saved timers sum to 496.1681034109788 seconds; the original GPU-check duration was not recorded, while the conservative bound is 570 seconds.",
+      "why_it_matters": "An operator bound and an exact timer sum are different forms of resource evidence.",
+      "required_correction": "Label the value as a conservative operator bound and expose the timed subtotal, allowance, and missing GPU-check duration receipt.",
+      "resolution_status": "resolved",
+      "resolution": "performance-summary.json and performance-report.md now record the 496.168-second timed subtotal, 73.832-second allowance, gpu_check_duration_not_recorded=true, and the conservative_operator_bound interpretation. The 30-minute budget conclusion remains well inside the registered ceiling."
+    },
+    {
+      "id": "IR-009",
+      "severity": "minor",
+      "claim": "The Stage-0 summary generator alone independently validates every stored per-arm pass boolean and report decision.",
+      "evidence": "analyze_stage0.py summarizes stored decisions and hardcodes the current report wording; its '.max' fields are maxima across per-arm worst-head minima rather than maxima over all heads.",
+      "why_it_matters": "The summary generator is not itself a second decision implementation, and ambiguous extrema can be misread.",
+      "required_correction": "Independently recompute the registered checks and clarify the extrema semantics before accepting the current claim.",
+      "resolution_status": "resolved",
+      "resolution": "The independent review recomputed all 12096 serialized checks, operators, thresholds, and booleans from the raw suite with zero mismatches, confirmed the all-lane block decision, and interprets summary maxima only as maxima of per-arm worst-head minima. No current claim relies on those maxima."
+    }
+  ]
+}

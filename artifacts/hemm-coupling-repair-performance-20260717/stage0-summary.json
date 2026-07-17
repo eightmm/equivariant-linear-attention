@@ -1,0 +1,322 @@
+{
+  "candidate": {
+    "hidden_dims": [
+      16,
+      64
+    ],
+    "lane_count": 24,
+    "scenarios": {
+      "aligned": {
+        "counterfactuals": {
+          "identity": {
+            "arm_count": 12,
+            "gradient_rsym.min": 7.414118986330012e-05,
+            "messages_rsym.min": 2.2295431629287947e-05,
+            "mutual_information.max": 0.0028702229952595193,
+            "mutual_information.min": 3.436974842174756e-05,
+            "output_relative_rms.min": 5.025536835369116e-07,
+            "pair_gate_d.max": 0.029675187291176557,
+            "pair_gate_d.min": 0.0017946699470747104,
+            "pass_count": 1,
+            "post_middle_rsym.min": 6.8074528552050855e-06
+          },
+          "lambda_0.10": {
+            "arm_count": 12,
+            "gradient_rsym.min": 5.935904991280884e-06,
+            "messages_rsym.min": 1.8325957748516793e-06,
+            "mutual_information.max": 0.0028702229952595193,
+            "mutual_information.min": 3.436974842174756e-05,
+            "output_relative_rms.min": 4.1540584678293185e-08,
+            "pair_gate_d.max": 0.001203244023756549,
+            "pair_gate_d.min": 4.349463476105286e-05,
+            "pass_count": 0,
+            "post_middle_rsym.min": 5.68275903130477e-07
+          },
+          "lambda_0.25": {
+            "arm_count": 12,
+            "gradient_rsym.min": 1.553882636940582e-05,
+            "messages_rsym.min": 4.785306813761181e-06,
+            "mutual_information.max": 0.0028702229952595193,
+            "mutual_information.min": 3.436974842174756e-05,
+            "output_relative_rms.min": 1.082798717170763e-07,
+            "pair_gate_d.max": 0.003331717403305658,
+            "pair_gate_d.min": 0.0001244511340586468,
+            "pass_count": 0,
+            "post_middle_rsym.min": 1.4823147102092533e-06
+          },
+          "lambda_0.50": {
+            "arm_count": 12,
+            "gradient_rsym.min": 3.3512973808406864e-05,
+            "messages_rsym.min": 1.0266293922707848e-05,
+            "mutual_information.max": 0.0028702229952595193,
+            "mutual_information.min": 3.436974842174756e-05,
+            "output_relative_rms.min": 2.315678883389379e-07,
+            "pair_gate_d.max": 0.008157866426188726,
+            "pair_gate_d.min": 0.0003278795060279441,
+            "pass_count": 0,
+            "post_middle_rsym.min": 3.172071369392987e-06
+          },
+          "radial": {
+            "arm_count": 12,
+            "gradient_rsym.min": 6.17111476300116e-12,
+            "messages_rsym.min": 2.0135416789402652e-12,
+            "mutual_information.max": 0.0028702229952595193,
+            "mutual_information.min": 3.436974842174756e-05,
+            "output_relative_rms.min": 6.1863280495037e-14,
+            "pair_gate_d.max": 1.3793820677554835e-08,
+            "pair_gate_d.min": 1.092332324490561e-11,
+            "pass_count": 0,
+            "post_middle_rsym.min": 6.111924060179713e-13
+          }
+        },
+        "diagnoses": {
+          "radial_coupling_collapsed": 1,
+          "router_functionally_inactive": 11
+        }
+      },
+      "crossed": {
+        "counterfactuals": {
+          "identity": {
+            "arm_count": 12,
+            "gradient_rsym.min": 7.092896177667299e-05,
+            "messages_rsym.min": 3.185489904955824e-05,
+            "mutual_information.max": 0.0012153714959394213,
+            "mutual_information.min": 1.1549311496050763e-05,
+            "output_relative_rms.min": 5.265351903023406e-07,
+            "pair_gate_d.max": 0.01511466612695134,
+            "pair_gate_d.min": 0.0009498567427373394,
+            "pass_count": 1,
+            "post_middle_rsym.min": 9.498830784077888e-06
+          },
+          "lambda_0.10": {
+            "arm_count": 12,
+            "gradient_rsym.min": 6.073503733529841e-06,
+            "messages_rsym.min": 2.585279417998776e-06,
+            "mutual_information.max": 0.0012153714959394213,
+            "mutual_information.min": 1.1549311496050763e-05,
+            "output_relative_rms.min": 3.5725370216540263e-08,
+            "pair_gate_d.max": 0.0006144543352159173,
+            "pair_gate_d.min": 2.301874556306102e-05,
+            "pass_count": 0,
+            "post_middle_rsym.min": 7.968504299312615e-07
+          },
+          "lambda_0.25": {
+            "arm_count": 12,
+            "gradient_rsym.min": 1.5814101341291348e-05,
+            "messages_rsym.min": 6.7596538129467774e-06,
+            "mutual_information.max": 0.0012153714959394213,
+            "mutual_information.min": 1.1549311496050763e-05,
+            "output_relative_rms.min": 9.500083997944482e-08,
+            "pair_gate_d.max": 0.0017043244113548169,
+            "pair_gate_d.min": 6.58643274998827e-05,
+            "pass_count": 0,
+            "post_middle_rsym.min": 2.0800852700694875e-06
+          },
+          "lambda_0.50": {
+            "arm_count": 12,
+            "gradient_rsym.min": 3.370570428932748e-05,
+            "messages_rsym.min": 1.45807006252286e-05,
+            "mutual_information.max": 0.0012153714959394213,
+            "mutual_information.min": 1.1549311496050763e-05,
+            "output_relative_rms.min": 2.1245978803015285e-07,
+            "pair_gate_d.max": 0.004171847496380231,
+            "pair_gate_d.min": 0.00017352799463221796,
+            "pass_count": 0,
+            "post_middle_rsym.min": 4.4558346537423295e-06
+          },
+          "radial": {
+            "arm_count": 12,
+            "gradient_rsym.min": 9.247049219002587e-12,
+            "messages_rsym.min": 3.4520691248250333e-12,
+            "mutual_information.max": 0.0012153714959394213,
+            "mutual_information.min": 1.1549311496050763e-05,
+            "output_relative_rms.min": 3.140498201852945e-14,
+            "pair_gate_d.max": 1.5185536360685994e-08,
+            "pair_gate_d.min": 4.960252949116743e-13,
+            "pass_count": 0,
+            "post_middle_rsym.min": 1.4487147024972909e-12
+          }
+        },
+        "diagnoses": {
+          "radial_coupling_collapsed": 1,
+          "router_functionally_inactive": 11
+        }
+      },
+      "semantic_only": {
+        "counterfactuals": {
+          "identity": {
+            "arm_count": 12,
+            "gradient_rsym.min": 0.00020627609192784218,
+            "messages_rsym.min": 0.00012548185618517618,
+            "mutual_information.max": 0.008560406974152057,
+            "mutual_information.min": 9.702752279250326e-05,
+            "output_relative_rms.min": 3.964863187915219e-06,
+            "pair_gate_d.max": 0.035453490584306906,
+            "pair_gate_d.min": 0.0018616064023708064,
+            "pass_count": 2,
+            "post_middle_rsym.min": 4.4245982206593064e-05
+          },
+          "lambda_0.10": {
+            "arm_count": 12,
+            "gradient_rsym.min": 1.6850272040000643e-05,
+            "messages_rsym.min": 1.0326415773273163e-05,
+            "mutual_information.max": 0.008560406974152057,
+            "mutual_information.min": 9.702752279250326e-05,
+            "output_relative_rms.min": 3.360346952929179e-07,
+            "pair_gate_d.max": 0.0015410545896460367,
+            "pair_gate_d.min": 5.056632338875514e-05,
+            "pass_count": 0,
+            "post_middle_rsym.min": 3.5875245034779896e-06
+          },
+          "lambda_0.25": {
+            "arm_count": 12,
+            "gradient_rsym.min": 4.404453220948176e-05,
+            "messages_rsym.min": 2.6949893384135342e-05,
+            "mutual_information.max": 0.008560406974152057,
+            "mutual_information.min": 9.702752279250326e-05,
+            "output_relative_rms.min": 8.747668039346952e-07,
+            "pair_gate_d.max": 0.004219856172490062,
+            "pair_gate_d.min": 0.0001438817907523709,
+            "pass_count": 0,
+            "post_middle_rsym.min": 9.375321687097442e-06
+          },
+          "lambda_0.50": {
+            "arm_count": 12,
+            "gradient_rsym.min": 9.467869793515112e-05,
+            "messages_rsym.min": 5.776595219894162e-05,
+            "mutual_information.max": 0.008560406974152057,
+            "mutual_information.min": 9.702752279250326e-05,
+            "output_relative_rms.min": 1.8647385078067588e-06,
+            "pair_gate_d.max": 0.010111378521056242,
+            "pair_gate_d.min": 0.0003738550329831812,
+            "pass_count": 1,
+            "post_middle_rsym.min": 2.0152984234923847e-05
+          },
+          "radial": {
+            "arm_count": 12,
+            "gradient_rsym.min": 4.243271776737046e-10,
+            "messages_rsym.min": 1.7956095805109525e-10,
+            "mutual_information.max": 0.008560406974152057,
+            "mutual_information.min": 9.702752279250326e-05,
+            "output_relative_rms.min": 6.174634328219421e-12,
+            "pair_gate_d.max": 1.4500399713030824e-05,
+            "pair_gate_d.min": 2.3771749073678597e-10,
+            "pass_count": 0,
+            "post_middle_rsym.min": 6.447841647460577e-11
+          }
+        },
+        "diagnoses": {
+          "radial_coupling_collapsed": 2,
+          "router_functionally_inactive": 10
+        }
+      },
+      "spatial_only": {
+        "counterfactuals": {
+          "identity": {
+            "arm_count": 12,
+            "gradient_rsym.min": 9.527242001601207e-07,
+            "messages_rsym.min": 5.4691750408237476e-09,
+            "mutual_information.max": 2.917060727414267e-07,
+            "mutual_information.min": 1.8510184829345633e-08,
+            "output_relative_rms.min": 2.3600397528677096e-11,
+            "pair_gate_d.max": 0.0003824012438018936,
+            "pair_gate_d.min": 1.4616512173548593e-05,
+            "pass_count": 0,
+            "post_middle_rsym.min": 1.7974843055761447e-09
+          },
+          "lambda_0.10": {
+            "arm_count": 12,
+            "gradient_rsym.min": 4.9905413282360456e-08,
+            "messages_rsym.min": 3.569419565713037e-10,
+            "mutual_information.max": 2.917060727414267e-07,
+            "mutual_information.min": 1.8510184829345633e-08,
+            "output_relative_rms.min": 1.037723847406107e-12,
+            "pair_gate_d.max": 1.5004561214342917e-05,
+            "pair_gate_d.min": 3.9881127857511905e-07,
+            "pass_count": 0,
+            "post_middle_rsym.min": 1.1444724242906348e-10
+          },
+          "lambda_0.25": {
+            "arm_count": 12,
+            "gradient_rsym.min": 1.3789963503036008e-07,
+            "messages_rsym.min": 9.48202506974552e-10,
+            "mutual_information.max": 2.917060727414267e-07,
+            "mutual_information.min": 1.8510184829345633e-08,
+            "output_relative_rms.min": 2.883431578403634e-12,
+            "pair_gate_d.max": 4.1473665859075675e-05,
+            "pair_gate_d.min": 1.1345229576521532e-06,
+            "pass_count": 0,
+            "post_middle_rsym.min": 3.0483339953311653e-10
+          },
+          "lambda_0.50": {
+            "arm_count": 12,
+            "gradient_rsym.min": 3.372654759346066e-07,
+            "messages_rsym.min": 2.11574311769144e-09,
+            "mutual_information.max": 2.917060727414267e-07,
+            "mutual_information.min": 1.8510184829345633e-08,
+            "output_relative_rms.min": 7.032906750084292e-12,
+            "pair_gate_d.max": 0.00010066998393133041,
+            "pair_gate_d.min": 2.9462044194018742e-06,
+            "pass_count": 0,
+            "post_middle_rsym.min": 6.838650054483194e-10
+          },
+          "radial": {
+            "arm_count": 12,
+            "gradient_rsym.min": 2.2416883587666656e-16,
+            "messages_rsym.min": 1.9539560021348182e-16,
+            "mutual_information.max": 2.917060727414267e-07,
+            "mutual_information.min": 1.8510184829345633e-08,
+            "output_relative_rms.min": 3.478565259548455e-17,
+            "pair_gate_d.max": 1.3129003390305665e-16,
+            "pair_gate_d.min": 0.0,
+            "pass_count": 0,
+            "post_middle_rsym.min": 3.3541787465453664e-17
+          }
+        },
+        "diagnoses": {
+          "router_functionally_inactive": 12
+        }
+      }
+    },
+    "scientific_decision": "block_interacting_memory_arms",
+    "seeds": [
+      401,
+      402,
+      403
+    ],
+    "selected_identity_mix": null,
+    "semantic_identity_active": false,
+    "source_sha256": "52e6a9e2bf7848aab11193650fc8f350ea6640e705b4de3c2f2506482def0ea5"
+  },
+  "incumbent": {
+    "base_commit": "591e7a241315f697a39c5354a48dd345639fed69",
+    "mutual_information.max": 0.0017277745069238515,
+    "mutual_information.min": 5.699493392685717e-06,
+    "pair_gate_d": {
+      "identity": {
+        "max": 0.04894487288177719,
+        "min": 0.002618325685715678
+      },
+      "lambda_0.10": {
+        "max": 0.0016224398116629372,
+        "min": 8.57328365347605e-05
+      },
+      "lambda_0.25": {
+        "max": 0.004534277774365762,
+        "min": 0.0002477910278113066
+      },
+      "lambda_0.50": {
+        "max": 0.011286425827133009,
+        "min": 0.0006698682147078694
+      },
+      "radial": {
+        "max": 1.074569250915346e-07,
+        "min": 4.482745653613553e-15
+      }
+    },
+    "row_count": 12,
+    "source_sha256": "0c8d0a7f70e5066a60acd843831a4ddc1f4b7a440cb4fd955a63cfe7455574ca"
+  },
+  "schema_version": 1,
+  "test_evaluated": false
+}

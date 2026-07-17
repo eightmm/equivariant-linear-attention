@@ -1,0 +1,279 @@
+{
+  "amp_dtype": "none",
+  "attention_residual_scales": {
+    "scalar": [
+      0.08960255980491638,
+      0.09618695080280304,
+      0.1048986166715622
+    ],
+    "vector": [
+      0.18139410018920898,
+      0.14869481325149536,
+      0.09018600732088089
+    ]
+  },
+  "bounded_diagnostics": {
+    "batch": {
+      "dataset_index": 41529,
+      "node_count": 19,
+      "split": "validation"
+    },
+    "effective_rank": {
+      "enabled": false,
+      "max_matrix_size": 32
+    },
+    "elapsed_seconds": 0.06630737101659179,
+    "enabled": true,
+    "excluded_from_elapsed_seconds": true,
+    "excluded_from_peak_cuda_memory_bytes": true,
+    "instrumentation": {
+      "activation_source": "exact_recompute_from_captured_layer_input",
+      "assignment_source": "not_used",
+      "connected": [
+        "selected_runtime_layer_input",
+        "selected_trained_query_key_projections",
+        "selected_trained_beta_gamma",
+        "configured_floor_alignment_and_balancing",
+        "selected_global_attention_matrix"
+      ],
+      "head_index": 0,
+      "layer_index": 0,
+      "unconnected": [
+        "all_other_layers_and_heads",
+        "local_attention_weights",
+        "value_transport_and_residual_updates",
+        "full_validation_distribution",
+        "amp_execution_path"
+      ]
+    },
+    "kernel_attention": {
+      "attention.column_cv": 0.00018069454661286217,
+      "attention.effective_support": 18.99815957125746,
+      "attention.entropy_over_log_n": 0.9999670993223146,
+      "attention.max_weight": 0.05348103420461492,
+      "attention.num_keys": 19,
+      "attention.num_queries": 19,
+      "beta.max": 0.05078323185443878,
+      "beta.mean": 0.05078323185443878,
+      "beta.min": 0.05078323185443878,
+      "beta_constant.q00": 0.05078323185443878,
+      "beta_constant.q01": 0.05078323185443878,
+      "beta_constant.q100": 0.05078323185443878,
+      "beta_constant.q50": 0.05078323185443878,
+      "beta_constant.q99": 0.05078323185443878,
+      "beta_dot.q00": -0.004300967107971777,
+      "beta_dot.q01": -0.002133624498483127,
+      "beta_dot.q100": 0.003499740337595857,
+      "beta_dot.q50": 0.00012404652819118707,
+      "beta_dot.q99": 0.001770077627985848,
+      "content.q00": 0.6779075686919712,
+      "content.q01": 0.7110500245567698,
+      "content.q100": 0.9014041737820012,
+      "content.q50": 0.772407371929781,
+      "content.q99": 0.9011422764146874,
+      "floor.q00": 1.0,
+      "floor.q01": 1.0,
+      "floor.q100": 1.0,
+      "floor.q50": 1.0,
+      "floor.q99": 1.0,
+      "gamma.max": 0.054339997470378876,
+      "gamma.mean": 0.054339997470378876,
+      "gamma.min": 0.054339997470378876,
+      "kernel.q00": 1.724779605929219,
+      "kernel.q01": 1.7612911731417364,
+      "kernel.q100": 1.9523199081314981,
+      "kernel.q50": 1.8242580488243485,
+      "kernel.q99": 1.9518289231099317,
+      "key_mass.max": 36.24963925311859,
+      "key_mass.max_over_min": 1.0775351006907612,
+      "key_mass.median": 36.163907031952256,
+      "key_mass.min": 33.64126071612935,
+      "quadratic.q00": 2.8739948916113565e-09,
+      "quadratic.q01": 9.937848054912422e-09,
+      "quadratic.q100": 0.00038977249078082926,
+      "quadratic.q50": 4.407959293028096e-06,
+      "quadratic.q99": 0.00012236794622306221,
+      "row_denominator.max": 1.0119139788929084,
+      "row_denominator.max_over_min": 1.0569452160485542,
+      "row_denominator.median": 1.0095139554776296,
+      "row_denominator.min": 0.95739491841971
+    },
+    "memory": {
+      "memory_count": 1,
+      "status": "disabled",
+      "transport_connected": false
+    },
+    "schema_version": 1,
+    "status": "ok"
+  },
+  "data_identity": {
+    "processed/data_v3.pt": "9254af077d7bc651631bb56a3a689fb41004731b413bdd0ec8c6efa318229f83",
+    "raw/gdb9.sdf": "98c4e97d50ac549b8c9f0b2114b348a9a944718e17e50d9a724b729f1deaa28e",
+    "raw/gdb9.sdf.csv": "73a67793e3cfa9660f001278bd019c143f57e4785db537a01811cf2ce72aa7eb"
+  },
+  "dataset": "qm9",
+  "elapsed_seconds": 48.55175127205439,
+  "ffn_residual_scales": {
+    "scalar": [
+      0.10586882382631302,
+      0.09920354932546616,
+      0.10939402878284454
+    ],
+    "vector": [
+      0.13067764043807983,
+      0.1279686987400055,
+      0.05773502588272095
+    ]
+  },
+  "final_state_sha256": "9aa70e254892b84e8648a64abf8ed07f1e2af213b538e79103b48628cc462eaf",
+  "gradient_norms": {
+    "all": 0.9999998691077067,
+    "beta_raw": 0.00019863064708119203,
+    "gamma_raw": 6.773017473509474e-06
+  },
+  "gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "measurement_point": "after_final_training_backward_clip_and_optimizer_step",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_definition": "finite_gradient_not_equal_zero",
+    "nonzero_gradient_parameter_count": 151080,
+    "parameter_tensors_with_gradient_count": 134,
+    "parameters_with_gradient_count": 151400
+  },
+  "initial_state_sha256": "3cca3ff4c37ec27ad23b06c684250ec4c38499cc611324cb6ad656b5311a6d3a",
+  "initialization_hash_version": "canonical_state_dict_v1",
+  "kernel_parameters": {
+    "beta.max": 0.05344771221280098,
+    "beta.mean": 0.049996773091455296,
+    "beta.min": 0.04641631618142128,
+    "gamma.max": 0.055325351655483246,
+    "gamma.mean": 0.052440143190324306,
+    "gamma.min": 0.04723970219492912
+  },
+  "model": "factorized_moment",
+  "model_seed": 43,
+  "node_count_strata": {
+    "excluded_from_elapsed_seconds": true,
+    "excluded_from_peak_cuda_memory_bytes": true,
+    "metrics": {
+      "1-16": {
+        "mae": 0.6170375933899687,
+        "observed_max_nodes": 16,
+        "observed_min_nodes": 4,
+        "rmse": 0.7934545401887468,
+        "sample_count": 2889
+      },
+      "17-32": {
+        "mae": 0.6368652151834946,
+        "observed_max_nodes": 29,
+        "observed_min_nodes": 17,
+        "rmse": 0.7956189707088145,
+        "sample_count": 7111
+      }
+    },
+    "registered_upper_bounds": [
+      16,
+      32,
+      64,
+      128,
+      512,
+      2048
+    ],
+    "schema_version": 1,
+    "split": "validation"
+  },
+  "nonzero_gradient_parameter_count": 151080,
+  "parameter_count": 153285,
+  "peak_cuda_memory_bytes": 245148672,
+  "run_config": {
+    "alignment_constant_retained": true,
+    "alignment_linear_term": true,
+    "amp_dtype": "none",
+    "attention": "factorized_moment",
+    "balance_cycles": 1,
+    "batch_size": 64,
+    "bounded_diagnostics": true,
+    "data_root": "data/qm9",
+    "dataset": "qm9",
+    "dataset_seed": 42,
+    "device": "cuda",
+    "diagnostic_effective_rank": false,
+    "diagnostic_max_nodes": 32,
+    "ffn_hidden_ratio": 2.0,
+    "grad_clip": 1.0,
+    "graph_size_scaled_positive_baseline": false,
+    "graph_size_scaled_terms": [],
+    "graph_size_unscaled_terms": [
+      "content",
+      "alignment_quadratic"
+    ],
+    "hidden_dim": 64,
+    "kernel_floor_mode": "fixed",
+    "kernel_formula": "a_dot_b + c + beta*(1 + delta*t) + gamma*t^2",
+    "kernel_scaling_formula_version": "positive_baseline_v1",
+    "kernel_version": 3,
+    "key_balancing": true,
+    "learn_local_radial_gate": false,
+    "linear_kernel_init": 0.05,
+    "local_cutoff": 2.5,
+    "local_head_counts": [
+      0,
+      0,
+      0
+    ],
+    "lr": 0.0003,
+    "memory_assignment_scale": 2.5,
+    "memory_assignment_temperature": 1.0,
+    "memory_count": 1,
+    "memory_interaction": false,
+    "memory_interaction_cutoff": 2.5,
+    "model": "factorized_moment",
+    "model_seed": 43,
+    "num_heads": 4,
+    "num_layers": 3,
+    "num_rbf": 16,
+    "num_samples": 130000,
+    "qm9_target_index": 4,
+    "radial_trace": false,
+    "routing": "ggg",
+    "split_seed": 42,
+    "steps": 2000,
+    "target_normalized": true,
+    "test_evaluated": false,
+    "train_size": 110000,
+    "val_size": 10000,
+    "weight_decay": 0.01
+  },
+  "source_sha256": "9e1f54d02d52c1235bce18554e9e109d9a0b40f49a67967d738eb3318805f63d",
+  "split_hashes": {
+    "test": "e100088efe42eddf557ed033486cc8ec7b88b092a118fc83002c3748bf2e0a80",
+    "train": "45c1c82beaa13d91b2ff066b2163bebf701f85186e75a1d90279ac634e917928",
+    "validation": "4a98066cf3a91ebc6a1f3b951e65474f3d945baa22e80e9bbfca791c4780fc0b"
+  },
+  "split_kind": "seeded_random_row_warm_start",
+  "split_seed": 42,
+  "state_schema_sha256": "380bd22c660c456eb1cd960686a4150b54a380a2f1395ffa02368ff3c5761195",
+  "steps": 2000,
+  "target": {
+    "index": 4,
+    "name": "gap",
+    "unit": "eV"
+  },
+  "target_normalized": true,
+  "target_normalizer": {
+    "mean": [
+      6.859706878662109
+    ],
+    "std": [
+      1.2787190675735474
+    ]
+  },
+  "test_evaluated": false,
+  "test_size": 10000,
+  "train_loss": 0.4287719130516052,
+  "train_size": 110000,
+  "trainable_parameter_count": 153081,
+  "val_mae": 0.6311370170593261,
+  "val_rmse": 0.7949942743347121,
+  "val_size": 10000
+}
