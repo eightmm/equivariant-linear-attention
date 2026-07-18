@@ -164,6 +164,36 @@ sum_j A_ijh a_jh ||x_j - x_i||^2
 The corresponding scalar slot is reserved in both configurations and is
 exactly zero when `use_radial_trace=False`.
 
+## Global transport controls
+
+The learned mode uses the factorized kernel above. The uniform control replaces
+its normalized pair weights by
+
+```text
+A_ij = 1/N_g  if b_i=b_j, else 0.
+```
+
+For every concatenated value/moment statistic `V`, the implementation computes
+
+```text
+U(V)_i = (sum_{j:b_j=b_i} V_j) / N_{b_i}
+```
+
+once per graph and broadcasts it, so the control is O(N) and never constructs
+an `N x N` tensor. Because the weights are invariant scalars, this operator is
+permutation consistent and O(3) equivariant. Substituting its graph means into
+the same relative first/ST/radial identities above preserves translation
+invariance exactly. It retains query-vector use in the shared equivariant
+updater but removes learned query/key selectivity from transport weights.
+
+The `none` control has zero global transport Jacobian. An all-global block skips
+the query/key/value projections and the complete attention updater residual,
+including its biases, then applies only the pointwise FFN. Feeding zero messages
+through the updater would not be equivalent because its LayerNorm/MLP biases
+could create a residual. Registered routes use all-local or all-global blocks;
+mixed-head `none` is legal but its shared updater is not a head-separable
+ablation.
+
 ## Local heads
 
 Local heads use raw-coordinate directed edges `i <- j` within the same graph.
@@ -288,7 +318,9 @@ Geometry preprocessing is scale-first: for each graph, coordinates are first
 divided by their maximum absolute value, then centered and RMS-normalized in
 the scaled frame. Physical log-radius/log-scale features are assembled without
 forming an overflow-prone direct product. On ordinary float64 inputs this
-agrees with the direct formula to the tested tolerance.
+agrees with the direct formula to the tested tolerance. It is initialized only
+before the first learned or uniform global stage; local-only and `none` routes
+do not execute it.
 
 Geometry squares, angular and symmetric-traceless feature construction,
 attention sums, masses, denominators, graph means, and the moment-invariant

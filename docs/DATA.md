@@ -13,7 +13,10 @@ graph IDs; no neighbor or dense pair tensor is generated.
 
 Synthetic smoke data is deterministic by seed. QM9 loading requires the `qm9`
 optional dependency group and target index 4 is documented as HOMO-LUMO gap in
-eV.
+eV. Loaded QM9 sample IDs keep the processed row, PyG's zero-based raw-record
+`data.idx`, and the dataset molecule name as distinct fields, for example
+`qm9-row-3055-raw-index-3111-name-gdb_3112`. The raw index is deliberately not
+called a GDB9 molecule identifier because the external name is one-based.
 
 `GraphBatch.to(dtype=...)` applies `dtype` to model features and targets, not
 coordinates. Coordinates remain float32, or float64 when either the requested

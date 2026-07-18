@@ -54,6 +54,8 @@ def test_run_config_records_single_architecture() -> None:
     assert config["key_balancing"] is True
     assert config["linear_kernel_init"] > 0.0
     assert config["ffn_hidden_ratio"] == 2.0
+    assert config["global_transport_mode"] == "learned"
+    assert config["global_attention_formula"] == "factorized_learned_kernel"
 
 
 def test_test_evaluation_is_opt_in() -> None:
@@ -81,6 +83,8 @@ def test_test_evaluation_is_opt_in() -> None:
     "routing, expected",
     [
         ("ggg", (0, 0, 0)),
+        ("lgg", (4, 0, 0)),
+        ("ggl", (0, 0, 4)),
         ("lgl", (4, 0, 4)),
         ("lll", (4, 4, 4)),
     ],
@@ -113,6 +117,166 @@ def test_run_config_records_local_memory_and_trace_controls() -> None:
     assert config["memory_count"] == 4
     assert config["memory_interaction"] is True
     assert config["radial_trace"] is True
+    assert config["hemm_admission_status"] == "stage0_blocked_experimental"
+
+
+@pytest.mark.parametrize(
+    ("mode", "formula", "balancing"),
+    [
+        ("learned", "factorized_learned_kernel", "one_cycle"),
+        ("uniform", "exact_graph_mean", "not_applicable"),
+        ("none", "no_global_transport", "not_applicable"),
+    ],
+)
+def test_run_config_records_actual_global_transport(
+    mode: str,
+    formula: str,
+    balancing: str,
+) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](["--global-transport-mode", mode])
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+
+    assert config["global_transport_mode"] == mode
+    assert config["global_attention_formula"] == formula
+    assert config["global_key_balancing"] == balancing
+
+
+@pytest.mark.parametrize("mode", ["learned", "uniform", "none"])
+def test_local_only_run_config_marks_global_transport_not_executed(mode: str) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        ["--routing", "lll", "--global-transport-mode", mode]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+
+    assert config["global_transport_mode"] == mode
+    assert config["global_transport_executed"] is False
+    assert config["global_attention_formula"] == "not_applicable_no_global_heads"
+    assert config["global_key_balancing"] == "not_applicable"
+
+
+def test_internal_static_egnn_run_config_is_explicitly_nonofficial() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "internal_static_egnn_baseline",
+            "--hidden-dim",
+            "91",
+        ]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["model"] == "internal_static_egnn_baseline"
+    assert config["comparison_role"] == "internal_same_harness_baseline"
+    assert config["official_reproduction"] is False
+    assert config["coordinate_updates"] is False
+    assert config["global_transport_mode"] == "not_applicable"
+    assert config["readout"] == "layernorm_node_linear_graph_mean"
+    assert sum(parameter.numel() for parameter in model.parameters()) == 152_065
+
+
+def test_model_specific_hidden_width_defaults_are_parameter_matched() -> None:
+    symbols = _script_symbols()
+
+    factorized = symbols["parse_args"]([])
+    egnn = symbols["parse_args"](
+        ["--benchmark-model", "internal_static_egnn_baseline"]
+    )
+    explicit = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "internal_static_egnn_baseline",
+            "--hidden-dim",
+            "16",
+        ]
+    )
+
+    assert factorized.hidden_dim == 64
+    assert egnn.hidden_dim == 91
+    assert explicit.hidden_dim == 16
+
+
+@pytest.mark.parametrize(
+    ("arguments", "control"),
+    [
+        (["--num-heads", "8"], "num_heads"),
+        (["--linear-kernel-init", "0.9"], "linear_kernel_init"),
+        (["--local-cutoff", "9.0"], "local_cutoff"),
+        (["--num-rbf", "9"], "num_rbf"),
+        (
+            ["--memory-assignment-temperature", "0.5"],
+            "memory_assignment_temperature",
+        ),
+        (["--memory-assignment-scale", "3.0"], "memory_assignment_scale"),
+        (["--memory-interaction-cutoff", "3.0"], "memory_interaction_cutoff"),
+        (["--diagnostic-max-nodes", "32"], "diagnostic_max_nodes"),
+        (["--diagnostic-effective-rank"], "diagnostic_effective_rank"),
+    ],
+)
+def test_internal_egnn_rejects_ignored_factorized_controls(
+    arguments: list[str],
+    control: str,
+) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        ["--benchmark-model", "internal_static_egnn_baseline", *arguments]
+    )
+
+    with pytest.raises(ValueError, match=control):
+        symbols["_build_benchmark_model"](args, node_dim=11)
+
+
+def test_internal_static_egnn_runner_uses_shared_training_and_hides_test(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "internal_static_egnn_baseline",
+            "--num-samples",
+            "12",
+            "--train-size",
+            "7",
+            "--val-size",
+            "2",
+            "--batch-size",
+            "2",
+            "--steps",
+            "1",
+            "--hidden-dim",
+            "8",
+            "--num-layers",
+            "2",
+            "--bounded-diagnostics",
+        ]
+    )
+    monkeypatch.setattr(
+        symbols["argparse"].ArgumentParser,
+        "parse_args",
+        lambda self, argv=None: args,
+    )
+
+    symbols["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["model"] == "internal_static_egnn_baseline"
+    assert metrics["test_evaluated"] is False
+    assert "test_mae" not in metrics
+    assert metrics["run_config"]["official_reproduction"] is False
+    assert metrics["bounded_diagnostics"]["status"] == (
+        "not_applicable_internal_static_egnn_baseline"
+    )
+    assert metrics["node_count_strata"]["metrics"]
+    assert metrics["nonzero_gradient_parameter_count"] > 0
+    json.dumps(metrics, allow_nan=False)
 
 
 def test_gradient_diagnostics_are_finite_json_scalars() -> None:
@@ -400,3 +564,78 @@ def test_bounded_diagnostics_records_exact_single_memory_bypass() -> None:
     assert memory["pair_gate"]["mean"] == pytest.approx(1.0)
     assert memory["pair_gate"]["cv"] == pytest.approx(0.0)
     assert memory["pair_gate"]["centered_frobenius_ratio"] == pytest.approx(0.0)
+
+
+def test_bounded_diagnostics_connects_one_trained_local_head() -> None:
+    symbols = _script_symbols()
+    dataset = symbols["SyntheticMoleculeDataset"](
+        num_samples=4,
+        node_dim=4,
+        min_nodes=4,
+        max_nodes=5,
+        seed=97,
+    )
+    model = symbols["build_regression_model"](
+        node_dim=4,
+        hidden_dim=8,
+        num_layers=3,
+        num_heads=2,
+        local_head_counts=(2, 0, 2),
+    )
+
+    diagnostics = symbols["_bounded_model_diagnostics"](
+        model,
+        dataset,
+        [0],
+        max_nodes=8,
+        include_effective_rank=False,
+    )
+
+    local = diagnostics["local_attention"]
+    assert local["status"] == "ok"
+    assert local["layer_index"] == 0
+    assert local["transport_connected"] is True
+    assert local["summary"]["degree.min"] >= 1
+    assert local["summary"]["attention.row_mass_max_abs_error"] < 1e-6
+    assert local["summary"]["distance_over_cutoff.q100"] < 1.0
+    assert diagnostics["batch"]["sample_id"] == dataset[0].sample_id
+    assert "selected_trained_local_attention_weights" in diagnostics[
+        "instrumentation"
+    ]["connected"]
+    assert "local_attention_weights" not in diagnostics["instrumentation"][
+        "unconnected"
+    ]
+    json.dumps(diagnostics, allow_nan=False)
+
+
+@pytest.mark.parametrize("mode", ["uniform", "none"])
+def test_bounded_diagnostics_reports_the_executed_transport_control(mode: str) -> None:
+    symbols = _script_symbols()
+    dataset = symbols["SyntheticMoleculeDataset"](
+        num_samples=4, node_dim=4, min_nodes=4, max_nodes=5, seed=101
+    )
+    model = symbols["build_regression_model"](
+        node_dim=4,
+        hidden_dim=8,
+        num_layers=3,
+        num_heads=2,
+        local_head_counts=(2, 0, 2),
+        global_transport_mode=mode,
+    )
+
+    diagnostics = symbols["_bounded_model_diagnostics"](
+        model, dataset, [0], max_nodes=8, include_effective_rank=True
+    )
+
+    assert diagnostics["instrumentation"]["global_transport_mode"] == mode
+    assert diagnostics["local_attention"]["status"] == "ok"
+    if mode == "uniform":
+        kernel = diagnostics["kernel_attention"]
+        assert kernel["status"] == "exact_uniform_transport"
+        assert kernel["attention.entropy_over_log_n"] == pytest.approx(1.0)
+        assert kernel["attention.effective_rank"] == pytest.approx(1.0)
+    else:
+        assert diagnostics["kernel_attention"]["status"] == (
+            "disabled_no_global_transport"
+        )
+    json.dumps(diagnostics, allow_nan=False)

@@ -1,7 +1,10 @@
 # Evaluation
 
-The repository evaluates one `EquivariantAttention` class. Routing and memory
-flags select registered arms of that class; there is no model-family selector.
+The public architecture remains one `EquivariantAttention` class. Routing,
+global transport, and memory flags select registered arms of that class. The
+runner also contains one explicitly private `internal_static_egnn_baseline`
+selector for a same-data/training comparison; it is not exported or described
+as an official-paper reproduction.
 
 ```bash
 uv run python scripts/train_compare.py \
@@ -17,9 +20,10 @@ occurred. Test evaluation is disabled by default and requires explicit
 
 ## Registered comparison sequence
 
-All adaptive QM9 arms use target `gap` in eV, random-row split seed 42, model
-seeds 41/42/43, FP32, batch size 64, width 64, three blocks, four heads, and
-matched optimizer/schedule settings.
+All adaptive QM9 arms use target `gap` in eV, random-row split seed 42, FP32,
+batch size 64, three blocks, and matched optimizer/schedule settings. Stages
+1--3 use model seeds 41/42/43. Stage 3a and the subsequent EGNN comparison use
+seeds 41--45; attention width 64 is matched by EGNN width 91.
 
 0. Before any interacting M=4/M=8 training arm, run the fixed activation gate:
 
@@ -41,9 +45,23 @@ matched optimizer/schedule settings.
    while leaving content and `gamma*t^2` unchanged. It requires balancing off.
 3. With memory interaction and radial trace off, compare `ggg` with `lgl`.
    `lll` is a mechanistic local-only control, not a performance candidate.
-4. On `lgl`, compare interacting `M=1,4,8`; `M=1` is the exact incumbent
+4. Decompose the route and global mechanism. A seed-42/500-step numerical
+   screen runs `ggg/lgg/ggl/lgl` with learned transport and `lgl` with exact
+   uniform and no global transport. The confirmation runs
+   `lgl learned/uniform/none` at seeds 41--45 and 2,000 steps. This distinguishes
+   learned query/key selectivity from global moment pooling and from local/FFN
+   effects. Local diagnostics report receiver degree, entropy over log degree,
+   effective support, maximum weight, and cutoff-distance quantiles.
+5. Only after transport is locked, compare the selected attention arm with the
+   private width-91, three-layer static EGNN at the same seeds/update budget.
+   It keeps PyG features, split, train-only target normalization, MSE, AdamW,
+   cyclic batches, and LayerNorm-node-linear-graph-mean readout fixed. Its
+   complete directed edges exclude self edges and use raw squared distance.
+6. On `lgl`, compare interacting `M=1,4,8`; `M=1` is the exact incumbent
    reduction. Memory count with interaction off is not an expressivity arm.
-5. Change only radial trace off/on for the selected routing and memory setting.
+   The current Stage-0 result blocks M=4/M=8, so this step cannot run without a
+   separately preregistered mechanism repair.
+7. Change only radial trace off/on for the selected routing and memory setting.
 
 The non-adaptive Stage-2 size probe is reproducible without a dataset:
 
@@ -59,11 +77,13 @@ Exact row statistics are streamed in query blocks and the differentiable probe
 uses only a fixed number of query rows. The script therefore retains no full
 attention matrix and deliberately does not compute effective rank.
 
-A 500-step run is a numerical screen. Promotion requires paired mean validation
-MAE improvement of at least 0.01 eV, improvement in at least two of three seeds,
-worst-seed regression no larger than 0.02 eV, and median latency and peak-memory
-increases no larger than 20%. A joint-only gain is recorded as an interaction,
-not attributed independently to either mechanism.
+A 500-step run is a numerical screen. The transport confirmation requires
+paired mean validation MAE improvement of at least 0.01 eV, improvement in at
+least three of five seeds, worst-seed regression no larger than 0.02 eV, and
+median latency and peak-memory increases no larger than 20%. Earlier registered
+three-seed decisions retain their original two-of-three rule. A joint-only gain
+is recorded as an interaction, not attributed independently to either
+mechanism.
 
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel

@@ -8,12 +8,55 @@ from equivariant_attention.diagnostics import (
     dense_kernel_attention_summary,
     kernel_component_quantiles,
     kernel_parameter_summary,
+    local_attention_summary,
     matrix_effective_rank,
     memory_assignment_summary,
     memory_center_summary,
     memory_pair_gate_summary,
     pair_gate_summary,
 )
+
+
+def test_local_attention_summary_respects_receiver_normalization_domains() -> None:
+    receiver = torch.tensor([0, 0, 1, 1, 1, 2])
+    sender = torch.tensor([0, 1, 0, 1, 2, 2])
+    weights = torch.tensor(
+        [
+            [0.25, 0.5],
+            [0.75, 0.5],
+            [0.2, 1.0 / 3.0],
+            [0.3, 1.0 / 3.0],
+            [0.5, 1.0 / 3.0],
+            [1.0, 1.0],
+        ],
+        dtype=torch.float64,
+    )
+    squared_distance = torch.tensor(
+        [0.0, 0.25, 0.25, 0.0, 0.81, 0.0], dtype=torch.float64
+    )
+
+    summary = local_attention_summary(
+        receiver,
+        sender,
+        weights,
+        squared_distance,
+        num_nodes=3,
+    )
+
+    assert summary["scope"] == "receiver_by_head"
+    assert summary["num_nodes"] == 3
+    assert summary["head_count"] == 2
+    assert summary["edge_count"] == 6
+    assert summary["degree.min"] == 1
+    assert summary["degree.mean"] == pytest.approx(2.0)
+    assert summary["degree.max"] == 3
+    assert summary["self_edge_fraction"] == pytest.approx(0.5)
+    assert summary["attention.row_mass_max_abs_error"] == pytest.approx(0.0)
+    assert summary["attention.max_weight.mean"] == pytest.approx(49.0 / 72.0)
+    assert 0.0 <= summary["attention.entropy_over_log_degree.mean"] <= 1.0
+    assert summary["distance_over_cutoff.q00"] == pytest.approx(0.0)
+    assert summary["distance_over_cutoff.q100"] == pytest.approx(0.9)
+    json.dumps(summary, allow_nan=False)
 
 
 @pytest.mark.parametrize(

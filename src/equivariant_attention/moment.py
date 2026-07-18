@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite, sqrt
+import warnings
 
 import torch
 import torch.nn.functional as F
@@ -12,6 +13,39 @@ from .irreps import CartesianIrreps
 
 _MEMORY_ROUTER_DIM = 8
 _MEMORY_ROUTER_LOGIT_SCALE = 4.0
+_GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
+
+
+def routing_head_counts(
+    routing: str,
+    *,
+    num_layers: int,
+    num_heads: int,
+) -> tuple[int, ...]:
+    """Resolve the registered all-local/all-global routing presets."""
+    if not isinstance(routing, str):
+        raise TypeError("routing must be a string")
+    for name, value in (("num_layers", num_layers), ("num_heads", num_heads)):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{name} must be an integer")
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+    if routing == "ggg":
+        return (0,) * num_layers
+    if num_layers != 3:
+        raise ValueError(
+            "lgg, ggl, lgl, and lll routing presets require exactly three layers"
+        )
+    routes = {
+        "lgg": (num_heads, 0, 0),
+        "ggl": (0, 0, num_heads),
+        "lgl": (num_heads, 0, num_heads),
+        "lll": (num_heads, num_heads, num_heads),
+    }
+    try:
+        return routes[routing]
+    except KeyError as exc:
+        raise ValueError(f"unknown routing preset: {routing}") from exc
 
 
 @dataclass(frozen=True)
@@ -41,6 +75,7 @@ class EquivariantAttentionConfig:
     use_radial_trace: bool = False
     residual_scale_init: float = 0.1
     eps: float = 1e-12
+    global_transport_mode: str = "learned"
 
 
 class EquivariantAttention(nn.Module):
@@ -52,6 +87,13 @@ class EquivariantAttention(nn.Module):
     def __init__(self, config: EquivariantAttentionConfig) -> None:
         super().__init__()
         _validate_config(config)
+        if config.use_memory_interaction and config.global_memory_count > 1:
+            warnings.warn(
+                "Interacting HEMM remains experimental and Stage-0 blocked; "
+                "do not interpret this arm as an admitted performance candidate.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self.config = config
         self.hidden_irreps = CartesianIrreps.parse(config.hidden_irreps)
         self.output_irreps = CartesianIrreps.parse(config.output_irreps)
@@ -78,6 +120,7 @@ class EquivariantAttention(nn.Module):
                     use_alignment_linear_term=config.use_alignment_linear_term,
                     use_key_balancing=config.use_key_balancing,
                     local_head_count=local_head_counts[layer_index],
+                    global_transport_mode=config.global_transport_mode,
                     local_cutoff=config.local_cutoff,
                     num_rbf=config.num_rbf,
                     learn_local_radial_gate=config.learn_local_radial_gate,
@@ -113,28 +156,9 @@ class EquivariantAttention(nn.Module):
             pos,
             batch,
         )
-        normalized_pos, log_radius, log_graph_scale, log_normalized_square = (
-            _scale_first_geometry(
-                pos,
-                batch,
-                num_graphs=num_graphs,
-                graph_counts=graph_counts,
-            )
-        )
-        global_scalar_input = torch.cat(
-            [
-                log_radius.to(dtype=node_feats.dtype),
-                log_graph_scale[batch].to(dtype=node_feats.dtype),
-                log_normalized_square.to(dtype=node_feats.dtype),
-            ],
-            dim=-1,
-        )
-
         scalars = self.scalar_in(node_feats)
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
-        transient_tensor = normalized_pos.new_zeros(
-            (normalized_pos.shape[0], self.config.num_heads, 5)
-        )
+        transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
         if any(layer.local_head_count for layer in self.layers):
             local_geometry = _local_geometry(
@@ -145,9 +169,33 @@ class EquivariantAttention(nn.Module):
                 num_rbf=self.config.num_rbf,
                 graph_counts=graph_counts,
             )
+        normalized_pos: torch.Tensor | None = None
+        global_scalar_input: torch.Tensor | None = None
         global_geometry_injected = False
         for layer in self.layers:
-            if layer.global_head_count and not global_geometry_injected:
+            if layer.has_active_global_transport and normalized_pos is None:
+                (
+                    normalized_pos,
+                    log_radius,
+                    log_graph_scale,
+                    log_normalized_square,
+                ) = _scale_first_geometry(
+                    pos,
+                    batch,
+                    num_graphs=num_graphs,
+                    graph_counts=graph_counts,
+                )
+                global_scalar_input = torch.cat(
+                    [
+                        log_radius.to(dtype=node_feats.dtype),
+                        log_graph_scale[batch].to(dtype=node_feats.dtype),
+                        log_normalized_square.to(dtype=node_feats.dtype),
+                    ],
+                    dim=-1,
+                )
+            if layer.has_active_global_transport and not global_geometry_injected:
+                if normalized_pos is None or global_scalar_input is None:
+                    raise RuntimeError("active global transport requires global geometry")
                 scalars = scalars + self.global_scalar_in(global_scalar_input)
                 vector_gate = torch.tanh(self.vector_in(scalars)).unsqueeze(-1)
                 geometry_vector = vector_gate.to(
@@ -243,6 +291,7 @@ class _EquivariantMomentLayer(nn.Module):
         use_alignment_linear_term: bool,
         use_key_balancing: bool,
         local_head_count: int,
+        global_transport_mode: str,
         local_cutoff: float,
         num_rbf: int,
         learn_local_radial_gate: bool,
@@ -269,6 +318,10 @@ class _EquivariantMomentLayer(nn.Module):
         self.use_key_balancing = use_key_balancing
         self.local_head_count = local_head_count
         self.global_head_count = num_heads - local_head_count
+        self.global_transport_mode = global_transport_mode
+        self.has_active_global_transport = (
+            self.global_head_count > 0 and global_transport_mode != "none"
+        )
         self.local_cutoff = local_cutoff
         self.num_rbf = num_rbf
         self.global_memory_count = global_memory_count
@@ -346,13 +399,18 @@ class _EquivariantMomentLayer(nn.Module):
         self,
         scalars: torch.Tensor,
         vectors: torch.Tensor,
-        global_pos: torch.Tensor,
+        global_pos: torch.Tensor | None,
         raw_pos: torch.Tensor,
         batch: torch.Tensor,
         num_graphs: int,
         graph_counts: torch.Tensor,
         local_geometry: tuple[torch.Tensor, ...] | None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.local_head_count == 0 and self.global_transport_mode == "none":
+            tensor = raw_pos.new_zeros((scalars.shape[0], self.num_heads, 5))
+            scalars, vectors = self._apply_ffn(scalars, vectors)
+            return scalars, vectors, tensor
+
         s_norm = self.norm(scalars)
         bounded_vectors = _bounded_irrep(vectors, self.eps)
         n_nodes = scalars.shape[0]
@@ -383,7 +441,7 @@ class _EquivariantMomentLayer(nn.Module):
             * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1),
             self.eps,
         )
-        moment_dtype = _moment_dtype(q0, k0, q1, k1, global_pos, raw_pos)
+        moment_dtype = _moment_dtype(q0, k0, q1, k1, raw_pos)
         alignment_scale = _bounded_kernel_scale(
             self.raw_linear_kernel,
             self.linear_kernel_max,
@@ -448,47 +506,61 @@ class _EquivariantMomentLayer(nn.Module):
             )
         if self.global_head_count:
             global_heads = slice(self.local_head_count, self.num_heads)
-            memory_router_latent = None
-            if self.use_memory_interaction and self.global_memory_count > 1:
-                memory_router_latent = torch.tanh(
-                    self.memory_router_out(
-                        F.silu(self.memory_router_in(k0[:, global_heads]))
+            if self.global_transport_mode == "none":
+                message_groups.append(
+                    _zero_moment_messages(
+                        n_nodes,
+                        self.global_head_count,
+                        self.head_dim,
+                        dtype=moment_dtype,
+                        device=scalars.device,
                     )
                 )
-                router_norm = _stable_vector_norm(memory_router_latent)
-                memory_router_latent = memory_router_latent / router_norm.clamp_min(
-                    torch.finfo(memory_router_latent.dtype).tiny
+            else:
+                if global_pos is None:
+                    raise RuntimeError("active global transport requires global_pos")
+                memory_router_latent = None
+                if self.use_memory_interaction and self.global_memory_count > 1:
+                    memory_router_latent = torch.tanh(
+                        self.memory_router_out(
+                            F.silu(self.memory_router_in(k0[:, global_heads]))
+                        )
+                    )
+                    router_norm = _stable_vector_norm(memory_router_latent)
+                    memory_router_latent = memory_router_latent / router_norm.clamp_min(
+                        torch.finfo(memory_router_latent.dtype).tiny
+                    )
+                message_groups.append(
+                    _global_moment_messages(
+                        q0[:, global_heads],
+                        k0[:, global_heads],
+                        q1[:, global_heads],
+                        k1[:, global_heads],
+                        kernel_scale[global_heads],
+                        scalar_value[:, global_heads],
+                        vector_value[:, global_heads],
+                        relative_gate[:, global_heads],
+                        tensor_gate[:, global_heads],
+                        radial_trace_gate[:, global_heads],
+                        global_pos,
+                        batch,
+                        num_graphs=num_graphs,
+                        graph_counts=graph_counts,
+                        balanced=self.use_key_balancing,
+                        alignment_scale=alignment_scale[global_heads],
+                        alignment_dot_scale=alignment_dot_scale[global_heads],
+                        kernel_floor=self.kernel_floor,
+                        kernel_floor_mode=self.kernel_floor_mode,
+                        memory_count=self.global_memory_count,
+                        memory_temperature=self.memory_assignment_temperature,
+                        memory_assignment_scale=self.memory_assignment_scale,
+                        memory_interaction_cutoff=self.memory_interaction_cutoff,
+                        memory_router_latent=memory_router_latent,
+                        use_memory_interaction=self.use_memory_interaction,
+                        use_radial_trace=self.use_radial_trace,
+                        global_transport_mode=self.global_transport_mode,
+                    )
                 )
-            message_groups.append(
-                _global_moment_messages(
-                    q0[:, global_heads],
-                    k0[:, global_heads],
-                    q1[:, global_heads],
-                    k1[:, global_heads],
-                    kernel_scale[global_heads],
-                    scalar_value[:, global_heads],
-                    vector_value[:, global_heads],
-                    relative_gate[:, global_heads],
-                    tensor_gate[:, global_heads],
-                    radial_trace_gate[:, global_heads],
-                    global_pos,
-                    batch,
-                    num_graphs=num_graphs,
-                    graph_counts=graph_counts,
-                    balanced=self.use_key_balancing,
-                    alignment_scale=alignment_scale[global_heads],
-                    alignment_dot_scale=alignment_dot_scale[global_heads],
-                    kernel_floor=self.kernel_floor,
-                    kernel_floor_mode=self.kernel_floor_mode,
-                    memory_count=self.global_memory_count,
-                    memory_temperature=self.memory_assignment_temperature,
-                    memory_assignment_scale=self.memory_assignment_scale,
-                    memory_interaction_cutoff=self.memory_interaction_cutoff,
-                    memory_router_latent=memory_router_latent,
-                    use_memory_interaction=self.use_memory_interaction,
-                    use_radial_trace=self.use_radial_trace,
-                )
-            )
 
         scalar_message, vector_base, relative, tensor, radial_trace = (
             torch.cat(values, dim=1) for values in zip(*message_groups, strict=True)
@@ -528,6 +600,14 @@ class _EquivariantMomentLayer(nn.Module):
         scalars = scalars + self.scalar_residual_scale * scalar_delta
         bounded_delta = _bounded_irrep(vector_delta, self.eps).to(dtype=vectors.dtype)
         vectors = vectors + self.vector_residual_scale * bounded_delta
+        scalars, vectors = self._apply_ffn(scalars, vectors)
+        return scalars, vectors, tensor
+
+    def _apply_ffn(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         ffn_scalars = self.ffn_norm(scalars)
         ffn_vectors = _bounded_irrep(vectors, self.eps)
         ffn_invariants = torch.cat(
@@ -542,7 +622,7 @@ class _EquivariantMomentLayer(nn.Module):
         vectors = vectors + self.ffn_vector_residual_scale * _bounded_irrep(
             vector_ffn, self.eps
         )
-        return scalars, vectors, tensor
+        return scalars, vectors
 
 
 class _ChannelMix(nn.Module):
@@ -588,7 +668,12 @@ def _global_moment_messages(
     memory_router_latent: torch.Tensor | None = None,
     use_memory_interaction: bool,
     use_radial_trace: bool,
+    global_transport_mode: str = "learned",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if global_transport_mode not in {"learned", "uniform"}:
+        raise ValueError(
+            "_global_moment_messages supports only learned or uniform transport"
+        )
     moment_dtype = _moment_dtype(
         query_scalar,
         key_scalar,
@@ -624,7 +709,16 @@ def _global_moment_messages(
             ]
         )
     value = torch.cat(value_parts, dim=-1)
-    if use_memory_interaction and memory_count > 1:
+    if global_transport_mode == "uniform":
+        if use_memory_interaction:
+            raise ValueError("uniform global transport cannot use memory interaction")
+        transported = _uniform_global_attention(
+            value,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+        )
+    elif use_memory_interaction and memory_count > 1:
         assignment, coupling, _ = _memory_assignments_and_coupling(
             key_scalar,
             pos,
@@ -697,6 +791,34 @@ def _global_moment_messages(
     else:
         radial_trace = transported.new_zeros(transported.shape[:2])
     return scalar_message, vector_base, relative, tensor, radial_trace
+
+
+def _uniform_global_attention(
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+) -> torch.Tensor:
+    """Broadcast the exact graph-wise mean without materializing pair weights."""
+    return _scatter_mean(value, batch, num_graphs, graph_counts)[batch]
+
+
+def _zero_moment_messages(
+    num_nodes: int,
+    num_heads: int,
+    head_dim: int,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return (
+        torch.zeros(num_nodes, num_heads, head_dim, dtype=dtype, device=device),
+        torch.zeros(num_nodes, num_heads, 3, dtype=dtype, device=device),
+        torch.zeros(num_nodes, num_heads, 3, dtype=dtype, device=device),
+        torch.zeros(num_nodes, num_heads, 5, dtype=dtype, device=device),
+        torch.zeros(num_nodes, num_heads, dtype=dtype, device=device),
+    )
 
 
 def _local_moment_messages(
@@ -2129,6 +2251,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
+    if not isinstance(config.global_transport_mode, str):
+        raise TypeError("global_transport_mode must be a string")
+    if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
+        choices = ", ".join(sorted(_GLOBAL_TRANSPORT_MODES))
+        raise ValueError(f"global_transport_mode must be one of: {choices}")
     if config.local_head_counts is None:
         local_head_counts = (0,) * config.num_layers
     else:
@@ -2145,6 +2272,10 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                 )
         local_head_counts = config.local_head_counts
     if config.use_memory_interaction:
+        if config.global_transport_mode != "learned":
+            raise ValueError(
+                "memory interaction requires learned global transport"
+            )
         registered_lgl = (
             config.num_heads,
             0,

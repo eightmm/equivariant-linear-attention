@@ -13,6 +13,7 @@ from equivariant_attention import (
     EquivariantAttentionConfig,
     prepare_for_inference,
 )
+from equivariant_attention.moment import routing_head_counts
 
 
 BENCHMARK_COLUMNS = (
@@ -25,6 +26,7 @@ BENCHMARK_COLUMNS = (
     "implementation",
     "routing",
     "local_head_counts",
+    "global_transport_mode",
     "local_cutoff",
     "num_rbf",
     "memory_count",
@@ -85,7 +87,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--compile-mode", default="reduce-overhead")
-    parser.add_argument("--routing", choices=["ggg", "lgl", "lll"], default="ggg")
+    parser.add_argument(
+        "--routing", choices=["ggg", "lgg", "ggl", "lgl", "lll"], default="ggg"
+    )
+    parser.add_argument(
+        "--global-transport-mode",
+        choices=["learned", "uniform", "none"],
+        default="learned",
+    )
     parser.add_argument("--local-cutoff", type=float, default=2.5)
     parser.add_argument("--num-rbf", type=int, default=16)
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
@@ -104,7 +113,10 @@ def benchmark_config(args: argparse.Namespace) -> EquivariantAttentionConfig:
         output_irreps="1x0e + 1x1o + 1x2e",
         num_layers=3,
         num_heads=4,
-        local_head_counts=_routing_head_counts(args.routing),
+        local_head_counts=routing_head_counts(
+            args.routing, num_layers=3, num_heads=4
+        ),
+        global_transport_mode=args.global_transport_mode,
         local_cutoff=args.local_cutoff,
         num_rbf=args.num_rbf,
         global_memory_count=args.memory_count,
@@ -139,6 +151,7 @@ def benchmark_row(
         "factorized_moment",
         args.routing,
         "|".join(str(value) for value in local_head_counts),
+        config.global_transport_mode,
         config.local_cutoff,
         config.num_rbf,
         config.global_memory_count,
@@ -151,16 +164,6 @@ def benchmark_row(
         args.compile and not backward,
         args.compile_mode,
     )
-
-
-def _routing_head_counts(routing: str) -> tuple[int, int, int]:
-    if routing == "ggg":
-        return (0, 0, 0)
-    if routing == "lgl":
-        return (4, 0, 4)
-    if routing == "lll":
-        return (4, 4, 4)
-    raise ValueError(f"unknown routing preset: {routing}")
 
 
 def resolve_device(name: str) -> torch.device:

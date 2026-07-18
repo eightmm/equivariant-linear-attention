@@ -137,10 +137,29 @@ def load_qm9_samples(
         target = data.y[:, target_index].float().reshape(1)
         samples.append(
             GraphSample(
-                node_feats=node_feats, pos=pos, target=target, sample_id=f"qm9-{i}"
+                node_feats=node_feats,
+                pos=pos,
+                target=target,
+                sample_id=_qm9_sample_id(data, row_index=i),
             )
         )
     return samples
+
+
+def _qm9_sample_id(data: object, *, row_index: int) -> str:
+    raw_index = getattr(data, "idx", None)
+    if raw_index is None:
+        raw_index_text = "unknown"
+    else:
+        value = torch.as_tensor(raw_index)
+        if value.numel() != 1:
+            raise ValueError("QM9 data.idx must contain exactly one raw index")
+        raw_index_text = str(int(value.item()))
+    name = getattr(data, "name", None)
+    name_text = "unknown" if name is None or not str(name).strip() else str(name)
+    return (
+        f"qm9-row-{row_index}-raw-index-{raw_index_text}-name-{name_text}"
+    )
 
 
 def _make_synthetic_sample(

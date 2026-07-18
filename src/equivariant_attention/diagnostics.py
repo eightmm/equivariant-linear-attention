@@ -113,6 +113,137 @@ def kernel_parameter_summary(
     return summary
 
 
+def local_attention_summary(
+    receiver: torch.Tensor,
+    sender: torch.Tensor,
+    weights: torch.Tensor,
+    squared_distance: torch.Tensor,
+    *,
+    num_nodes: int,
+) -> dict[str, float | int | str]:
+    """Summarize sparse local attention within receiver/head domains.
+
+    ``squared_distance`` is the model's squared cutoff-normalized distance,
+    so its square root is the physical distance divided by the cutoff.
+    """
+    if isinstance(num_nodes, bool) or not isinstance(num_nodes, int):
+        raise TypeError("num_nodes must be an integer")
+    if num_nodes <= 0:
+        raise ValueError("num_nodes must be positive")
+    if not all(isinstance(index, torch.Tensor) for index in (receiver, sender)):
+        raise TypeError("receiver and sender must be tensors")
+    if receiver.ndim != 1 or sender.shape != receiver.shape:
+        raise ValueError("receiver and sender must be one-dimensional with equal shape")
+    if weights.ndim != 2 or weights.shape[0] != receiver.numel():
+        raise ValueError("weights must have shape (edges, heads)")
+    if squared_distance.shape != receiver.shape:
+        raise ValueError("squared_distance must have shape (edges,)")
+    if receiver.numel() == 0 or weights.shape[1] == 0:
+        raise ValueError("local diagnostics require at least one edge and head")
+    integer_dtypes = {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+    if receiver.dtype not in integer_dtypes or sender.dtype not in integer_dtypes:
+        raise TypeError("receiver and sender must use integer dtypes")
+    receiver = receiver.detach().to(dtype=torch.long)
+    sender = sender.detach().to(device=receiver.device, dtype=torch.long)
+    if bool((receiver < 0).any().item()) or bool((sender < 0).any().item()):
+        raise ValueError("edge indices must be nonnegative")
+    if int(receiver.max().item()) >= num_nodes or int(sender.max().item()) >= num_nodes:
+        raise ValueError("edge indices must be smaller than num_nodes")
+
+    probabilities = weights.detach().to(device=receiver.device, dtype=torch.float64)
+    distance_square = squared_distance.detach().to(
+        device=receiver.device, dtype=torch.float64
+    )
+    if not bool(torch.isfinite(probabilities).all().item()) or bool(
+        (probabilities < 0.0).any().item()
+    ):
+        raise ValueError("weights must be finite and nonnegative")
+    if not bool(torch.isfinite(distance_square).all().item()) or bool(
+        (distance_square < 0.0).any().item()
+    ):
+        raise ValueError("squared_distance must be finite and nonnegative")
+
+    head_count = probabilities.shape[1]
+    row_mass = probabilities.new_zeros((num_nodes, head_count)).index_add(
+        0, receiver, probabilities
+    )
+    if bool((row_mass <= 0.0).any().item()):
+        raise ValueError("every receiver/head domain must have positive mass")
+    row_mass_error = (row_mass - 1.0).abs().max()
+    probabilities = probabilities / row_mass[receiver]
+    degree = torch.bincount(receiver, minlength=num_nodes)
+    if bool((degree <= 0).any().item()):
+        raise ValueError("every receiver must have at least one local edge")
+
+    log_probability = torch.where(
+        probabilities > 0.0,
+        probabilities.log(),
+        torch.zeros_like(probabilities),
+    )
+    entropy = probabilities.new_zeros((num_nodes, head_count)).index_add(
+        0, receiver, -(probabilities * log_probability)
+    )
+    degree_log = degree.to(dtype=torch.float64).log().unsqueeze(-1)
+    normalized_entropy = torch.where(
+        degree_log > 0.0,
+        entropy / degree_log,
+        torch.ones_like(entropy),
+    )
+    maximum = probabilities.new_zeros((num_nodes, head_count))
+    maximum = maximum.scatter_reduce(
+        0,
+        receiver.unsqueeze(-1).expand_as(probabilities),
+        probabilities,
+        reduce="amax",
+        include_self=True,
+    )
+    effective_support = entropy.exp()
+    distance_over_cutoff = distance_square.sqrt()
+    distance_quantiles = torch.quantile(
+        distance_over_cutoff,
+        distance_over_cutoff.new_tensor([0.0, 0.25, 0.5, 0.75, 0.95, 1.0]),
+    )
+    degree_float = degree.to(dtype=torch.float64)
+    return {
+        "scope": "receiver_by_head",
+        "num_nodes": num_nodes,
+        "head_count": int(head_count),
+        "edge_count": int(receiver.numel()),
+        "degree.min": int(degree.min().item()),
+        "degree.mean": float(degree_float.mean().item()),
+        "degree.median": float(degree_float.median().item()),
+        "degree.max": int(degree.max().item()),
+        "self_edge_fraction": float((receiver == sender).double().mean().item()),
+        "attention.row_mass_max_abs_error": float(row_mass_error.item()),
+        "attention.entropy_over_log_degree.min": float(
+            normalized_entropy.min().item()
+        ),
+        "attention.entropy_over_log_degree.mean": float(
+            normalized_entropy.mean().item()
+        ),
+        "attention.entropy_over_log_degree.max": float(
+            normalized_entropy.max().item()
+        ),
+        "attention.max_weight.mean": float(maximum.mean().item()),
+        "attention.max_weight.max": float(maximum.max().item()),
+        "attention.effective_support.min": float(effective_support.min().item()),
+        "attention.effective_support.mean": float(effective_support.mean().item()),
+        "attention.effective_support.max": float(effective_support.max().item()),
+        "distance_over_cutoff.q00": float(distance_quantiles[0].item()),
+        "distance_over_cutoff.q25": float(distance_quantiles[1].item()),
+        "distance_over_cutoff.q50": float(distance_quantiles[2].item()),
+        "distance_over_cutoff.q75": float(distance_quantiles[3].item()),
+        "distance_over_cutoff.q95": float(distance_quantiles[4].item()),
+        "distance_over_cutoff.q100": float(distance_quantiles[5].item()),
+    }
+
+
 def dense_kernel_attention_summary(
     query_scalar: torch.Tensor,
     key_scalar: torch.Tensor,
@@ -736,6 +867,7 @@ __all__ = [
     "dense_kernel_attention_summary",
     "kernel_component_quantiles",
     "kernel_parameter_summary",
+    "local_attention_summary",
     "matrix_effective_rank",
     "memory_assignment_summary",
     "memory_center_summary",

@@ -18,6 +18,7 @@
 | `use_alignment_linear_term` | true | false removes only `beta * (q dot k)` and retains the `beta` constant |
 | `use_key_balancing` | true | exactly one key-balancing cycle when true |
 | `local_head_counts` | `None` | `None` means all-global; otherwise a length-`num_layers` tuple with each entry in `[0, num_heads]` |
+| `global_transport_mode` | `learned` | `learned`, exact graph-mean `uniform`, or attention-residual `none` |
 | `local_cutoff` | 2.5 | positive raw-coordinate local cutoff |
 | `num_rbf` | 16 | positive number of local Gaussian RBFs |
 | `learn_local_radial_gate` | false | frozen radial gate for registered routing studies |
@@ -33,18 +34,23 @@
 The ratio-2 equivariant FFN remains fixed. All settings configure the same
 `EquivariantAttention` class. `local_head_counts=None`, one memory, memory
 interaction off, and radial trace off are the public defaults. The training
-presets map `ggg` to `(0,0,0)`, `lgl` to `(H,0,H)`, and `lll` to `(H,H,H)` for
-three layers.
+presets map `ggg` to `(0,0,0)`, `lgg` to `(H,0,0)`, `ggl` to `(0,0,H)`,
+`lgl` to `(H,0,H)`, and `lll` to `(H,H,H)` for three layers. `uniform`
+broadcasts the exact graph mean of the same moment sufficient statistics.
+`none` bypasses the attention updater in all-global blocks and keeps only the
+pointwise FFN; it does not execute global geometry preprocessing.
 
 `inverse_graph_size` keeps the compatibility-oriented option name but scales
 the full shifted positive global baseline `(c + beta + delta*beta*t)` by
 `1/N_g`; content and `gamma*t^2` stay unscaled. It is rejected with key
 balancing and is never used as a proxy for local receiver degree. Enabling
-memory interaction requires the registered `lgl` route; merely raising the
+memory interaction requires learned transport and the registered `lgl` route;
+merely raising the
 memory count with interaction off is algebraically the incumbent. The M=4/8
 CLI values are implemented diagnostic arms, not promoted configurations: the
 frozen Stage-0 pair-gate probe currently blocks broader interacting-memory
-experiments. The internal M-shared invariant router is present with the same
+experiments and constructing one emits a Stage-0-blocked warning. The internal
+M-shared invariant router is present with the same
 parameter schema for every memory count, but no residual-coupling value is a
 public configuration because none of the registered candidates passed the
 unchanged full Stage-0 thresholds.
@@ -61,6 +67,14 @@ The CLI exposes dataset/split/model seeds, width, depth, heads, AdamW learning
 rate and weight decay, gradient clipping, device, bf16 autocast, target
 normalization, alignment/balancing/floor controls, routing, local cutoff/RBF,
 memory, radial-trace, and test-evaluation policy. The explicit public flags are
-`--routing ggg/lgl/lll`, `--memory-count 1/4/8`, `--memory-interaction`,
-`--radial-trace`, and opt-in `--evaluate-test`. `metrics.run_config` records
-every run-defining argument.
+`--routing ggg/lgg/ggl/lgl/lll`,
+`--global-transport-mode learned/uniform/none`, `--memory-count 1/4/8`,
+`--memory-interaction`, `--radial-trace`, and opt-in `--evaluate-test`.
+`--benchmark-model internal_static_egnn_baseline` selects only the private
+same-harness comparison baseline; it does not add a public model API. Its
+model-specific default is width 91 (the factorized default remains 64), and
+nondefault factorized-only controls are rejected instead of silently ignored.
+`metrics.run_config` records every run-defining argument and marks the EGNN arm
+`official_reproduction=false`. It also records whether global transport and
+global geometry actually executed; local-only routes report
+`not_applicable_no_global_heads` regardless of the configured transport label.

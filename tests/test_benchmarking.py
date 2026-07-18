@@ -1,5 +1,7 @@
 from pathlib import Path
+import json
 import runpy
+import subprocess
 
 import pytest
 import torch
@@ -7,6 +9,7 @@ import torch
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.benchmarking import (
     SyntheticMoleculeDataset,
+    _qm9_sample_id,
     collate_graphs,
     split_dataset,
 )
@@ -16,6 +19,21 @@ from equivariant_attention.training import (
     fit_target_normalizer,
     train_regression_step,
 )
+
+
+def test_qm9_sample_id_records_processed_row_raw_index_and_name() -> None:
+    data = type(
+        "Data",
+        (),
+        {"idx": torch.tensor([3111]), "name": "gdb_3112"},
+    )()
+
+    assert _qm9_sample_id(data, row_index=3055) == (
+        "qm9-row-3055-raw-index-3111-name-gdb_3112"
+    )
+    assert _qm9_sample_id(object(), row_index=7) == (
+        "qm9-row-7-raw-index-unknown-name-unknown"
+    )
 
 
 def test_synthetic_dataset_collates_graph_batch() -> None:
@@ -92,6 +110,33 @@ def test_builder_uses_the_single_promoted_architecture() -> None:
     assert model.layers[0].ffn_out.in_features == 64
 
 
+def test_builder_preserves_legacy_positional_arguments() -> None:
+    model = build_regression_model(
+        4,
+        8,
+        1,
+        2,
+        0.05,
+        True,
+        False,
+        "fixed",
+        (0,),
+        3.5,
+        7,
+        False,
+        1,
+        False,
+        1.0,
+        2.5,
+        2.5,
+        False,
+    )
+
+    assert model.config.local_cutoff == 3.5
+    assert model.config.num_rbf == 7
+    assert model.config.global_transport_mode == "learned"
+
+
 def test_config_and_training_cli_share_defaults() -> None:
     config = EquivariantAttentionConfig(node_dim=5)
     script = Path(__file__).resolve().parents[1] / "scripts" / "train_compare.py"
@@ -101,6 +146,8 @@ def test_config_and_training_cli_share_defaults() -> None:
     assert config.num_heads == args.num_heads == 4
     assert config.linear_kernel_init == args.linear_kernel_init
     assert config.use_key_balancing == (not args.no_key_balancing)
+    assert config.global_transport_mode == args.global_transport_mode == "learned"
+    assert args.benchmark_model == "factorized_moment"
     assert not hasattr(args, "model")
     assert not hasattr(args, "moment_sinkhorn_iterations")
 
@@ -113,6 +160,7 @@ def test_benchmark_cli_represents_real_batches() -> None:
     assert args.graphs == [1, 8, 32]
     assert args.nodes_per_graph == [16, 32]
     assert args.routing == "ggg"
+    assert args.global_transport_mode == "learned"
     assert args.memory_count == 1
     assert not args.memory_interaction
     assert not args.radial_trace
@@ -139,6 +187,26 @@ def test_benchmark_cli_builds_registered_lgl_memory_config() -> None:
     assert config.global_memory_count == 4
     assert config.use_memory_interaction
     assert config.use_radial_trace
+
+
+@pytest.mark.parametrize(
+    ("routing", "expected"),
+    [("lgg", (4, 0, 0)), ("ggl", (0, 0, 4))],
+)
+def test_benchmark_cli_uses_core_route_decomposition(
+    routing: str,
+    expected: tuple[int, ...],
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "bench_attention.py"
+    symbols = runpy.run_path(script)
+    args = symbols["parse_args"](
+        ["--routing", routing, "--global-transport-mode", "uniform"]
+    )
+
+    config = symbols["benchmark_config"](args)
+
+    assert config.local_head_counts == expected
+    assert config.global_transport_mode == "uniform"
 
 
 def test_benchmark_invalid_interaction_route_uses_model_config_validation() -> None:
@@ -198,6 +266,7 @@ def test_benchmark_rows_record_the_full_attention_configuration() -> None:
         "implementation": "factorized_moment",
         "routing": "lgl",
         "local_head_counts": "4|0|4",
+        "global_transport_mode": "learned",
         "local_cutoff": 3.0,
         "num_rbf": 12,
         "memory_count": 8,
@@ -232,6 +301,20 @@ def test_cpu_ci_runs_the_project_fast_gate() -> None:
     assert "scripts/check.sh fast" in content
     assert "astral-sh/setup-uv@v8.3.2" in content
     assert "astral-sh/setup-uv@v8\n" not in content
+
+
+def test_bounded_control_screen_has_an_executable_ledger_command() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runner = root / "scripts" / "run_bounded_control_screen.sh"
+
+    assert runner.is_file()
+    subprocess.run(["bash", "-n", str(runner)], check=True)
+    record = json.loads((root / "docs" / "EXPERIMENTS.jsonl").read_text().splitlines()[-1])
+    assert record["cmd"] == [
+        "bash",
+        "scripts/run_bounded_control_screen.sh",
+        "artifacts/egnn-matched-baseline-development-20260718",
+    ]
 
 
 @pytest.mark.parametrize(

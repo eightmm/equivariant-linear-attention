@@ -15,6 +15,13 @@
   the unchanged Stage-0 thresholds, the independent `ggg`/`lgl` comparison,
   and synchronized CUDA/QM9 measurement. The exact frozen plan is
   `artifacts/hemm-coupling-repair-performance-20260717/scope.md`.
+- Current scope: the user's 2026-07-18 instruction to develop the review at
+  `https://chatgpt.com/share/6a5b0cd2-25a4-83e8-a54a-d4c43df5fa09`
+  admits exact learned/uniform/none global-transport controls, `lgg`/`ggl`
+  route decomposition, lazy global geometry, local-head diagnostics, an
+  explicit HEMM Stage-0 warning, and a private same-harness static EGNN
+  baseline. The frozen scope and experiment boundary are in
+  `artifacts/egnn-matched-baseline-development-20260718/`.
 
 ## Project
 
@@ -68,6 +75,8 @@
   updater, and FFN. `local_head_counts` changes only head connectivity.
 - Registered routing presets at four heads are:
   - `ggg = (0, 0, 0)`: global-only incumbent.
+  - `lgg = (4, 0, 0)`: local encoder followed by two global stages.
+  - `ggl = (0, 0, 4)`: two global stages followed by local refinement.
   - `lgl = (4, 0, 4)`: local encoder, global context, local refinement.
   - `lll = (4, 4, 4)`: mechanistic local-only control.
   Mixed local/global head counts remain legal but are not a promoted default
@@ -75,9 +84,16 @@
 - Until the preregistered validation comparison passes, the public default
   remains `ggg`. Implementing a capability is not evidence for promoting it.
 - Initial scalar embedding uses invariant `node_feats` only and initial vector
-  state is zero. Graph centroid, RMS scale, and normalized radius may enter
-  only when the first global head executes, so `lll` cannot leak graph-global
-  geometry through preprocessing.
+  state is zero. Graph centroid, RMS scale, and normalized radius are computed
+  once, immediately before the first active learned or uniform global
+  transport. `lll` and global-transport `none` do not execute or receive this
+  preprocessing.
+- Global transport has three state-schema-identical controls. `learned` is the
+  incumbent factorized kernel. `uniform` broadcasts exact graph means of the
+  same value and relative-moment sufficient statistics, giving
+  `A_ij=1/N_g` in O(N). `none` removes global message and attention-updater
+  residuals; an all-global block retains only its pointwise equivariant FFN.
+  Memory interaction is legal only with learned global transport.
 - Global heads use centered/RMS-normalized coordinates and the existing exact
   graph-wise factorized moments. At fixed width, heads, and depth they do not
   materialize an `N x N` attention tensor.
@@ -141,7 +157,8 @@
   without balancing.
 - Multi-memory transport is initially enabled only for the middle global stage
   of `lgl`. `M=4` and `M=8` are registered experimental arms; they are not
-  defaults. Fixed `M` costs `O(NM + M^2)` at fixed head width.
+  defaults. Constructing an interacting `M>1` arm emits an explicit Stage-0
+  blocked warning. Fixed `M` costs `O(NM + M^2)` at fixed head width.
 - Memory-slot permutation must leave node outputs unchanged when assignments
   and `C` are permuted consistently. Node permutation, batch isolation, O(3),
   translation, and coordinate-gradient contracts also apply.
@@ -250,9 +267,11 @@
 - Dataset/target: QM9 `gap` in eV; random-row split seed 42 with
   train/validation/test sizes 110k/10k/10k. This is not scaffold or
   cold-molecule generalization evidence.
-- Adaptive runs use model seeds 41, 42, and 43, FP32, batch size 64, hidden
-  width 64, three blocks, four heads, and otherwise identical optimizer and
-  schedule settings. Common initialization hashes, total parameters,
+- Stage 1--3 adaptive confirmations use model seeds 41, 42, and 43. Stage 3a
+  and the subsequent EGNN comparison extend the registered confirmation set to
+  seeds 41--45 as specified below. All use FP32, batch size 64, three blocks,
+  and otherwise identical optimizer and schedule settings; attention width 64
+  is matched by EGNN width 91. Common initialization hashes, total parameters,
   nonzero-gradient parameters, synchronized latency, and peak CUDA memory are
   recorded.
 - Test metrics are opt-in through `--evaluate-test` and remain disabled during
@@ -270,17 +289,30 @@
 - Stage 3 fixes the selected kernel normalization and compares `ggg` against
   `lgl`, with radial trace and memory interaction off. `lll` is a seed-42
   mechanistic control, not a performance candidate.
+- Stage 3a first screens `ggg/lgg/ggl/lgl` learned transport plus `lgl`
+  uniform/none at seed 42 and 500 steps. It then compares `lgl`
+  learned/uniform/none at seeds 41--45 and 2,000 steps. A learned-kernel or
+  global-transport claim requires mean paired validation improvement at least
+  0.010 eV, at least three of five improving seeds, worst regression no more
+  than 0.020 eV, and median latency/peak-memory increases no more than 20%.
+- After the transport mechanism is locked, a private width-91,
+  static-coordinate, three-layer EGNN baseline may be trained in the same
+  harness. It uses the identical PyG features, split, target-only train-fitted
+  normalization, MSE/AdamW/cyclic update budget, and mean readout. It is labeled
+  `internal_static_egnn_baseline`, not an official EGNN reproduction or public
+  model family.
 - Stage 4 compares `lgl` with interacting `M=1,4,8` under the selected
   preceding settings and radial trace off.
   The multi-memory claim is falsified for this benchmark if it fails the
   registered collision test or the validation promotion rule.
 - Stage 5 changes only radial trace off/on for the selected routing and memory
   setting. Learned local radial gates are a later isolated ablation.
-- A mechanism is promoted only when paired mean validation MAE improves by at
-  least 0.01 eV, at least two of three seeds improve, the worst seed regresses
-  by at most 0.02 eV, and median latency and peak-memory increases are each at
-  most 20%. A joint-only gain is recorded as an interaction, not as evidence
-  for either mechanism alone.
+- Unless a stage explicitly registers a five-seed rule, a mechanism is promoted
+  only when paired mean validation MAE improves by at least 0.01 eV, at least
+  two of three seeds improve, the worst seed regresses by at most 0.02 eV, and
+  median latency and peak-memory increases are each at most 20%. Stage 3a uses
+  its explicit three-of-five rule. A joint-only gain is recorded as an
+  interaction, not as evidence for either mechanism alone.
 - Diagnostics include bounded kernel scales, mass and denominator quantiles,
   condition proxies, attention entropy normalized by log node count, column
   marginal CV, singular-spectrum effective rank, gradient and residual norms,
@@ -308,10 +340,11 @@
 
 ## Deferred Compute Gate
 
-- The user's 2026-07-17 performance request supplies the one-time approval for
-  `uv sync --locked --extra qm9`, existing local QM9 data, one local GPU, and at
-  most 30 GPU-minutes under the run scope. Any final 10k-step/test study remains
-  a later, separate gate after architecture lock.
+- The 2026-07-17 one-time GPU approval was consumed by the recorded HEMM/LGL
+  study. The 2026-07-18 transport/EGNN screen requires a fresh approval packet
+  before any GPU command. The proposed bound is one local GPU, existing locked
+  environment/data, test evaluation off, and at most 25 GPU-minutes. Any final
+  10k-step/test study remains a later, separate gate after architecture lock.
 
 ## Commands
 

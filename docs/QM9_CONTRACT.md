@@ -29,6 +29,10 @@ generalization result.
 The earlier packaged run records binary index-list hashes in
 `artifacts/20260713-moment-linear-qm9-2k/manifest.json`. New runs also emit
 canonical text index hashes directly in their metrics JSON.
+Each loaded entity carries
+`qm9-row-{row}-raw-index-{data.idx}-name-{data.name}`. This distinguishes the
+processed PyG row, zero-based raw-record index, and one-based molecule name so
+external joins cannot silently treat `data.idx` as the GDB9 name.
 
 Target normalization is fit on training targets only. Architecture selection
 uses validation only. Test evaluation is disabled by default and occurs only
@@ -38,6 +42,12 @@ Registered adaptive comparisons use three-layer/four-head `ggg`, `lgl`, or
 mechanistic-control `lll` routing; memory counts 1, 4, or 8; and isolated
 alignment, balancing, pair-floor, memory-interaction, and radial-trace changes.
 These are capabilities under study, not promoted performance defaults.
+
+The 2026-07-18 mechanism study additionally registers `lgg`, `ggl`, and
+learned/uniform/none global transport. Its private static-coordinate EGNN arm
+uses the exact same PyG features, row split, training-only target transform,
+optimizer/update budget, and graph-mean readout. It is a local layer baseline,
+not the official-paper data/training recipe.
 
 Interacting M=4/M=8 runs additionally require the frozen Stage-0 mechanism
 gate to pass at widths 16/64 and seeds 401--403 before any QM9 labels are used.

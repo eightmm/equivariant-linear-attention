@@ -30,6 +30,7 @@ def build_regression_model(
     memory_assignment_scale: float = 2.5,
     memory_interaction_cutoff: float = 2.5,
     use_radial_trace: bool = False,
+    global_transport_mode: str = "learned",
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -43,6 +44,7 @@ def build_regression_model(
             use_key_balancing=use_key_balancing,
             kernel_floor_mode=kernel_floor_mode,
             local_head_counts=local_head_counts,
+            global_transport_mode=global_transport_mode,
             local_cutoff=local_cutoff,
             num_rbf=num_rbf,
             learn_local_radial_gate=learn_local_radial_gate,

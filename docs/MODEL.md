@@ -67,11 +67,18 @@ rejected with balancing.
 ## Routing and geometry
 
 `local_head_counts=None` is the public all-global default. For the registered
-three-block CLI presets, `ggg=(0,0,0)`, `lgl=(H,0,H)`, and `lll=(H,H,H)`. An
-initial scalar embedding uses `node_feats` only and the initial vector state is
-zero. Centroid/RMS-normalized global geometry enters immediately before the
-first block that has a global head, preventing global preprocessing from
-leaking into `lll`.
+three-block CLI presets, `ggg=(0,0,0)`, `lgg=(H,0,0)`, `ggl=(0,0,H)`,
+`lgl=(H,0,H)`, and `lll=(H,H,H)`. An initial scalar embedding uses
+`node_feats` only and the initial vector state is zero.
+
+`global_transport_mode="learned"` is the public default. `"uniform"` replaces
+only the global attention weights with exact `1/N_g` graph means of the same
+value/moment sufficient statistics. `"none"` removes global messages; in an
+all-global block it bypasses the attention updater residual and retains only
+the pointwise equivariant FFN. All modes allocate the same parameter schema.
+Centroid/RMS-normalized global geometry is computed once immediately before the
+first learned or uniform global block, preventing preprocessing from leaking
+into `lll` or a no-global-transport control.
 
 Global heads use structured graph summaries and do not construct an `N x N`
 attention tensor. Local heads construct directed same-graph raw-coordinate

@@ -11,6 +11,9 @@ from typing import Sequence
 import torch
 import torch.nn.functional as F
 
+from equivariant_attention._egnn_baseline import _StaticEGNNBaseline
+from equivariant_attention.moment import routing_head_counts as _routing_head_counts
+
 from equivariant_attention.benchmarking import (
     GraphSample,
     SyntheticMoleculeDataset,
@@ -19,9 +22,11 @@ from equivariant_attention.benchmarking import (
     split_dataset,
 )
 from equivariant_attention.diagnostics import (
+    attention_weight_summary,
     dense_kernel_attention_summary,
     kernel_component_quantiles,
     kernel_parameter_summary,
+    local_attention_summary,
     memory_assignment_summary,
     memory_center_summary,
     memory_pair_gate_summary,
@@ -74,31 +79,7 @@ def main() -> None:
         torch.cuda.synchronize(device)
     run_started = time.perf_counter()
     torch.manual_seed(model_seed)
-    local_head_counts = _routing_head_counts(
-        args.routing,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-    )
-    model = build_regression_model(
-        node_dim=node_dim,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-        linear_kernel_init=args.linear_kernel_init,
-        use_alignment_linear_term=not args.no_alignment_linear_term,
-        use_key_balancing=not args.no_key_balancing,
-        kernel_floor_mode=args.kernel_floor_mode,
-        local_head_counts=local_head_counts,
-        local_cutoff=args.local_cutoff,
-        num_rbf=args.num_rbf,
-        learn_local_radial_gate=args.learn_local_radial_gate,
-        global_memory_count=args.memory_count,
-        use_memory_interaction=args.memory_interaction,
-        memory_assignment_temperature=args.memory_assignment_temperature,
-        memory_assignment_scale=args.memory_assignment_scale,
-        memory_interaction_cutoff=args.memory_interaction_cutoff,
-        use_radial_trace=args.radial_trace,
-    ).to(device=device)
+    model = _build_benchmark_model(args, node_dim=node_dim).to(device=device)
     initial_state_hashes = _model_state_hashes(model)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -130,7 +111,7 @@ def main() -> None:
     elapsed_seconds = time.perf_counter() - run_started
     metrics = {
         "dataset": args.dataset,
-        "model": "factorized_moment",
+        "model": args.benchmark_model,
         "steps": args.steps,
         "train_loss": final_loss,
         "val_mae": val_metrics["mae"],
@@ -172,37 +153,51 @@ def main() -> None:
     if args.dataset == "qm9":
         metrics["target"] = _qm9_target_metadata(args.qm9_target_index)
         metrics["data_identity"] = data_identity
-    metrics["ffn_residual_scales"] = {
-        "scalar": [
-            float(layer.ffn_scalar_residual_scale.detach().cpu())
-            for layer in model.layers
-        ],
-        "vector": [
-            float(layer.ffn_vector_residual_scale.detach().cpu())
-            for layer in model.layers
-        ],
-    }
-    metrics["attention_residual_scales"] = {
-        "scalar": [
-            float(layer.scalar_residual_scale.detach().cpu()) for layer in model.layers
-        ],
-        "vector": [
-            float(layer.vector_residual_scale.detach().cpu()) for layer in model.layers
-        ],
-    }
-    beta = torch.cat(
-        [
-            layer.linear_kernel_max * torch.sigmoid(layer.raw_linear_kernel.detach())
-            for layer in model.layers
-        ]
-    )
-    gamma = torch.cat(
-        [
-            layer.vector_kernel_max * torch.sigmoid(layer.raw_vector_kernel.detach())
-            for layer in model.layers
-        ]
-    )
-    metrics["kernel_parameters"] = kernel_parameter_summary(beta, gamma)
+    if args.benchmark_model == "factorized_moment":
+        metrics["ffn_residual_scales"] = {
+            "scalar": [
+                float(layer.ffn_scalar_residual_scale.detach().cpu())
+                for layer in model.layers
+            ],
+            "vector": [
+                float(layer.ffn_vector_residual_scale.detach().cpu())
+                for layer in model.layers
+            ],
+        }
+        metrics["attention_residual_scales"] = {
+            "scalar": [
+                float(layer.scalar_residual_scale.detach().cpu())
+                for layer in model.layers
+            ],
+            "vector": [
+                float(layer.vector_residual_scale.detach().cpu())
+                for layer in model.layers
+            ],
+        }
+        beta = torch.cat(
+            [
+                layer.linear_kernel_max
+                * torch.sigmoid(layer.raw_linear_kernel.detach())
+                for layer in model.layers
+            ]
+        )
+        gamma = torch.cat(
+            [
+                layer.vector_kernel_max
+                * torch.sigmoid(layer.raw_vector_kernel.detach())
+                for layer in model.layers
+            ]
+        )
+        metrics["kernel_parameters"] = kernel_parameter_summary(beta, gamma)
+    else:
+        metrics["baseline_details"] = {
+            "name": "internal_static_egnn_baseline",
+            "official_reproduction": False,
+            "coordinate_updates": False,
+            "edge_topology": "same_graph_directed_complete_without_self",
+            "distance_feature": "raw_squared_distance",
+            "readout": "layernorm_node_linear_graph_mean",
+        }
     metrics["gradient_norms"] = _gradient_norms(model)
     gradient_parameters = _gradient_parameter_diagnostics(model)
     gradient_parameters["measurement_point"] = (
@@ -220,17 +215,25 @@ def main() -> None:
         normalizer=normalizer,
         amp_dtype=amp_dtype,
     )
-    metrics["bounded_diagnostics"] = (
-        _bounded_model_diagnostics(
-            model,
-            dataset,
-            val_idx,
-            max_nodes=args.diagnostic_max_nodes,
-            include_effective_rank=args.diagnostic_effective_rank,
+    if args.benchmark_model == "internal_static_egnn_baseline":
+        metrics["bounded_diagnostics"] = {
+            "schema_version": 1,
+            "enabled": bool(args.bounded_diagnostics),
+            "status": "not_applicable_internal_static_egnn_baseline",
+            "reason": "factorized attention diagnostics do not apply to EGNN messages",
+        }
+    else:
+        metrics["bounded_diagnostics"] = (
+            _bounded_model_diagnostics(
+                model,
+                dataset,
+                val_idx,
+                max_nodes=args.diagnostic_max_nodes,
+                include_effective_rank=args.diagnostic_effective_rank,
+            )
+            if args.bounded_diagnostics
+            else _disabled_bounded_diagnostics(args)
         )
-        if args.bounded_diagnostics
-        else _disabled_bounded_diagnostics(args)
-    )
     if args.evaluate_test:
         test_batches = list(_iter_batches(dataset, test_idx, args.batch_size))
         test_metrics = evaluate_regression(
@@ -249,7 +252,12 @@ def main() -> None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train the factorized-moment equivariant attention model."
+        description="Train one registered model in the matched graph-regression harness."
+    )
+    parser.add_argument(
+        "--benchmark-model",
+        choices=["factorized_moment", "internal_static_egnn_baseline"],
+        default="factorized_moment",
     )
     parser.add_argument("--dataset", choices=["synthetic", "qm9"], default="synthetic")
     parser.add_argument("--data-root", type=Path, default=Path("data/qm9"))
@@ -259,7 +267,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--val-size", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--steps", type=int, default=10)
-    parser.add_argument("--hidden-dim", type=int, default=64)
+    parser.add_argument("--hidden-dim", type=int, default=None)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--linear-kernel-init", type=float, default=0.05)
@@ -276,7 +284,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=["fixed", "inverse_graph_size"],
         default="fixed",
     )
-    parser.add_argument("--routing", choices=["ggg", "lgl", "lll"], default="ggg")
+    parser.add_argument(
+        "--routing", choices=["ggg", "lgg", "ggl", "lgl", "lll"], default="ggg"
+    )
+    parser.add_argument(
+        "--global-transport-mode",
+        choices=["learned", "uniform", "none"],
+        default="learned",
+    )
     parser.add_argument("--local-cutoff", type=float, default=2.5)
     parser.add_argument("--num-rbf", type=int, default=16)
     parser.add_argument("--learn-local-radial-gate", action="store_true")
@@ -308,7 +323,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.set_defaults(evaluate_test=False)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.hidden_dim is None:
+        args.hidden_dim = (
+            91
+            if args.benchmark_model == "internal_static_egnn_baseline"
+            else 64
+        )
+    return args
 
 
 def load_dataset(args: argparse.Namespace) -> Sequence[GraphSample]:
@@ -318,6 +340,77 @@ def load_dataset(args: argparse.Namespace) -> Sequence[GraphSample]:
         )
     return load_qm9_samples(
         args.data_root, target_index=args.qm9_target_index, limit=args.num_samples
+    )
+
+
+def _build_benchmark_model(
+    args: argparse.Namespace,
+    *,
+    node_dim: int,
+) -> torch.nn.Module:
+    if args.benchmark_model == "internal_static_egnn_baseline":
+        incompatible = []
+        defaults = {
+            "routing": "ggg",
+            "global_transport_mode": "learned",
+            "num_heads": 4,
+            "linear_kernel_init": 0.05,
+            "kernel_floor_mode": "fixed",
+            "local_cutoff": 2.5,
+            "num_rbf": 16,
+            "memory_count": 1,
+            "memory_interaction": False,
+            "memory_assignment_temperature": 1.0,
+            "memory_assignment_scale": 2.5,
+            "memory_interaction_cutoff": 2.5,
+            "radial_trace": False,
+            "learn_local_radial_gate": False,
+            "no_alignment_linear_term": False,
+            "no_key_balancing": False,
+            "diagnostic_max_nodes": 128,
+            "diagnostic_effective_rank": False,
+        }
+        for name, expected in defaults.items():
+            if getattr(args, name) != expected:
+                incompatible.append(name)
+        if incompatible:
+            names = ", ".join(sorted(incompatible))
+            raise ValueError(
+                "factorized-attention controls cannot be set for the internal "
+                f"EGNN baseline: {names}"
+            )
+        return _StaticEGNNBaseline(
+            node_dim=node_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+        )
+    if args.benchmark_model != "factorized_moment":
+        raise ValueError(f"unknown benchmark model: {args.benchmark_model}")
+    local_head_counts = _routing_head_counts(
+        args.routing,
+        num_layers=args.num_layers,
+        num_heads=args.num_heads,
+    )
+    return build_regression_model(
+        node_dim=node_dim,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        num_heads=args.num_heads,
+        linear_kernel_init=args.linear_kernel_init,
+        use_alignment_linear_term=not args.no_alignment_linear_term,
+        use_key_balancing=not args.no_key_balancing,
+        kernel_floor_mode=args.kernel_floor_mode,
+        local_head_counts=local_head_counts,
+        global_transport_mode=args.global_transport_mode,
+        local_cutoff=args.local_cutoff,
+        num_rbf=args.num_rbf,
+        learn_local_radial_gate=args.learn_local_radial_gate,
+        global_memory_count=args.memory_count,
+        use_memory_interaction=args.memory_interaction,
+        memory_assignment_temperature=args.memory_assignment_temperature,
+        memory_assignment_scale=args.memory_assignment_scale,
+        memory_interaction_cutoff=args.memory_interaction_cutoff,
+        use_radial_trace=args.radial_trace,
     )
 
 
@@ -336,23 +429,6 @@ def _resolve_amp_dtype(name: str) -> torch.dtype | None:
     raise ValueError(f"unknown amp dtype: {name}")
 
 
-def _routing_head_counts(
-    routing: str,
-    *,
-    num_layers: int,
-    num_heads: int,
-) -> tuple[int, ...]:
-    if routing == "ggg":
-        return (0,) * num_layers
-    if num_layers != 3:
-        raise ValueError("lgl and lll routing presets require exactly three layers")
-    if routing == "lgl":
-        return (num_heads, 0, num_heads)
-    if routing == "lll":
-        return (num_heads, num_heads, num_heads)
-    raise ValueError(f"unknown routing preset: {routing}")
-
-
 def _gradient_norms(model: torch.nn.Module) -> dict[str, float]:
     def norm(parameters: Sequence[torch.nn.Parameter]) -> float:
         square_sum = sum(
@@ -363,13 +439,21 @@ def _gradient_norms(model: torch.nn.Module) -> dict[str, float]:
         return sqrt(square_sum)
 
     all_parameters = list(model.parameters())
-    beta_parameters = [layer.raw_linear_kernel for layer in model.layers]
-    gamma_parameters = [layer.raw_vector_kernel for layer in model.layers]
-    return {
-        "all": float(norm(all_parameters)),
-        "beta_raw": float(norm(beta_parameters)),
-        "gamma_raw": float(norm(gamma_parameters)),
-    }
+    beta_parameters = [
+        layer.raw_linear_kernel
+        for layer in model.layers
+        if hasattr(layer, "raw_linear_kernel")
+    ]
+    gamma_parameters = [
+        layer.raw_vector_kernel
+        for layer in model.layers
+        if hasattr(layer, "raw_vector_kernel")
+    ]
+    summary = {"all": float(norm(all_parameters))}
+    if beta_parameters:
+        summary["beta_raw"] = float(norm(beta_parameters))
+        summary["gamma_raw"] = float(norm(gamma_parameters))
+    return summary
 
 
 def _gradient_parameter_diagnostics(model: torch.nn.Module) -> dict[str, int | str]:
@@ -547,30 +631,63 @@ def _bounded_model_diagnostics(
             },
         }
 
+    dataset_index = eligible[0]
+    sample_id = dataset[dataset_index].sample_id
+    graph_batch = collate_graphs([dataset[dataset_index]])
+    parameter = next(model.parameters())
+    graph_batch = graph_batch.to(device=parameter.device, dtype=parameter.dtype)
     global_layers = [
         (index, layer)
         for index, layer in enumerate(model.layers)
         if layer.global_head_count > 0
     ]
-    if not global_layers:
+    global_transport_mode = model.config.global_transport_mode
+    if not global_layers or global_transport_mode == "none":
+        started = time.perf_counter()
+        local_attention = _bounded_local_attention_diagnostics(
+            model,
+            graph_batch,
+            dataset_index=dataset_index,
+        )
+        diagnostic_seconds = time.perf_counter() - started
+        global_status = (
+            "skipped_no_global_attention_head"
+            if not global_layers
+            else "disabled_no_global_transport"
+        )
         return {
             **common,
-            "status": "skipped_no_global_attention_head",
+            "status": "ok",
+            "elapsed_seconds": float(diagnostic_seconds),
+            "batch": {
+                "split": "validation",
+                "dataset_index": int(dataset_index),
+                "sample_id": sample_id,
+                "node_count": int(graph_batch.node_feats.shape[0]),
+            },
             "instrumentation": {
-                "connected": [],
+                "global_transport_mode": global_transport_mode,
+                "connected": ["selected_trained_local_attention_weights"]
+                if local_attention["status"] == "ok"
+                else [],
                 "unconnected": [
                     "global_kernel_components",
                     "global_attention_weights",
                     "memory_assignments_and_coupling",
                 ],
             },
+            "kernel_attention": {
+                "status": global_status,
+                "transport_mode": global_transport_mode,
+            },
+            "local_attention": local_attention,
+            "memory": {
+                "status": "not_applicable",
+                "transport_connected": False,
+            },
         }
 
-    dataset_index = eligible[0]
     layer_index, layer = global_layers[0]
-    graph_batch = collate_graphs([dataset[dataset_index]])
-    parameter = next(model.parameters())
-    graph_batch = graph_batch.to(device=parameter.device, dtype=parameter.dtype)
     captured: dict[str, torch.Tensor | int] = {}
 
     def capture_layer_input(
@@ -735,9 +852,38 @@ def _bounded_model_diagnostics(
             include_effective_rank=include_effective_rank,
             max_nodes=max_nodes,
         )
+        if global_transport_mode == "uniform":
+            uniform_weights = torch.ones(
+                node_count,
+                node_count,
+                dtype=torch.float64,
+                device=scalars.device,
+            )
+            kernel_attention = {
+                "status": "exact_uniform_transport",
+                "transport_mode": "uniform",
+                **{
+                    f"attention.{name}": value
+                    for name, value in attention_weight_summary(
+                        uniform_weights,
+                        include_effective_rank=include_effective_rank,
+                        effective_rank_max_size=max_nodes,
+                    ).items()
+                },
+            }
+            memory = {
+                "status": "not_applicable_uniform_transport",
+                "transport_connected": False,
+            }
+            assignment_source = "not_applicable_uniform_transport"
 
     if parameter.device.type == "cuda":
         torch.cuda.synchronize(parameter.device)
+    local_attention = _bounded_local_attention_diagnostics(
+        model,
+        graph_batch,
+        dataset_index=dataset_index,
+    )
     diagnostic_seconds = time.perf_counter() - started
     return {
         **common,
@@ -746,30 +892,192 @@ def _bounded_model_diagnostics(
         "batch": {
             "split": "validation",
             "dataset_index": int(dataset_index),
+            "sample_id": sample_id,
             "node_count": int(node_count),
         },
         "instrumentation": {
+            "global_transport_mode": global_transport_mode,
             "activation_source": "exact_recompute_from_captured_layer_input",
             "assignment_source": assignment_source,
             "layer_index": int(layer_index),
             "head_index": int(head_index),
-            "connected": [
-                "selected_runtime_layer_input",
-                "selected_trained_query_key_projections",
-                "selected_trained_beta_gamma",
-                "configured_floor_alignment_and_balancing",
-                "selected_global_attention_matrix",
-            ],
+            "connected": (
+                [
+                    "selected_runtime_layer_input",
+                    "exact_uniform_global_attention_matrix",
+                ]
+                if global_transport_mode == "uniform"
+                else [
+                    "selected_runtime_layer_input",
+                    "selected_trained_query_key_projections",
+                    "selected_trained_beta_gamma",
+                    "configured_floor_alignment_and_balancing",
+                    "selected_global_attention_matrix",
+                ]
+            )
+            + (
+                ["selected_trained_local_attention_weights"]
+                if local_attention["status"] == "ok"
+                else []
+            ),
             "unconnected": [
                 "all_other_layers_and_heads",
-                "local_attention_weights",
                 "value_transport_and_residual_updates",
                 "full_validation_distribution",
                 "amp_execution_path",
+                *(
+                    []
+                    if local_attention["status"] == "ok"
+                    else ["local_attention_weights"]
+                ),
             ],
         },
         "kernel_attention": kernel_attention,
+        "local_attention": local_attention,
         "memory": memory,
+    }
+
+
+def _bounded_local_attention_diagnostics(
+    model: torch.nn.Module,
+    graph_batch: object,
+    *,
+    dataset_index: int,
+) -> dict[str, object]:
+    """Recompute one trained local layer on the already bounded graph."""
+    from equivariant_attention.moment import (
+        _bounded_irrep,
+        _bounded_kernel_scale,
+        _local_attention_weights,
+        _normalize_positive_features,
+        _unit_ball,
+    )
+
+    local_layers = [
+        (index, layer)
+        for index, layer in enumerate(model.layers)
+        if layer.local_head_count > 0
+    ]
+    if not local_layers:
+        return {
+            "status": "skipped_no_local_attention_head",
+            "transport_connected": False,
+        }
+    layer_index, layer = local_layers[0]
+    parameter = next(model.parameters())
+    captured: dict[str, object] = {}
+
+    def capture_layer_input(
+        _module: torch.nn.Module,
+        inputs: tuple[object, ...],
+    ) -> None:
+        captured["scalars"] = inputs[0].detach()
+        captured["vectors"] = inputs[1].detach()
+        captured["raw_pos"] = inputs[3].detach()
+        captured["batch"] = inputs[4].detach()
+        captured["num_graphs"] = int(inputs[5])
+        captured["local_geometry"] = tuple(
+            value.detach() for value in inputs[7]
+        )
+
+    training_states = [(module, module.training) for module in model.modules()]
+    handle = layer.register_forward_pre_hook(capture_layer_input)
+    try:
+        model.eval()
+        with torch.no_grad():
+            model(graph_batch.node_feats, graph_batch.pos, batch=graph_batch.batch)
+    finally:
+        handle.remove()
+        for module, training in training_states:
+            module.training = training
+    if not captured:
+        raise RuntimeError("bounded local diagnostic layer hook did not execute")
+
+    with torch.no_grad():
+        scalars = captured["scalars"]
+        vectors = captured["vectors"]
+        raw_pos = captured["raw_pos"]
+        batch = captured["batch"]
+        num_graphs = int(captured["num_graphs"])
+        local_geometry = captured["local_geometry"]
+        node_count = scalars.shape[0]
+        normalized_scalars = layer.norm(scalars)
+        bounded_vectors = _bounded_irrep(vectors, layer.eps)
+        query_scalar = _normalize_positive_features(
+            F.elu(
+                layer.query_scalar(normalized_scalars).reshape(
+                    node_count, layer.num_heads, layer.head_dim
+                )
+            )
+            + 1.0,
+            layer.eps,
+        )
+        key_scalar = _normalize_positive_features(
+            F.elu(
+                layer.key_scalar(normalized_scalars).reshape(
+                    node_count, layer.num_heads, layer.head_dim
+                )
+            )
+            + 1.0,
+            layer.eps,
+        )
+        query_vector = _unit_ball(
+            layer.query_vector(bounded_vectors)
+            * torch.tanh(layer.query_vector_gate(normalized_scalars)).unsqueeze(-1),
+            layer.eps,
+        )
+        key_vector = _unit_ball(
+            layer.key_vector(bounded_vectors)
+            * torch.tanh(layer.key_vector_gate(normalized_scalars)).unsqueeze(-1),
+            layer.eps,
+        )
+        alignment_scale = _bounded_kernel_scale(
+            layer.raw_linear_kernel, layer.linear_kernel_max
+        )
+        alignment_dot_scale = (
+            alignment_scale
+            if layer.use_alignment_linear_term
+            else torch.zeros_like(alignment_scale)
+        )
+        kernel_scale = _bounded_kernel_scale(
+            layer.raw_vector_kernel, layer.vector_kernel_max
+        )
+        local = slice(0, layer.local_head_count)
+        receiver, sender, weights, _, squared_distance = _local_attention_weights(
+            query_scalar[:, local],
+            key_scalar[:, local],
+            query_vector[:, local],
+            key_vector[:, local],
+            kernel_scale[local],
+            raw_pos,
+            batch,
+            num_graphs=num_graphs,
+            balanced=layer.use_key_balancing,
+            alignment_scale=alignment_scale[local],
+            alignment_dot_scale=alignment_dot_scale[local],
+            kernel_floor=layer.kernel_floor,
+            cutoff=layer.local_cutoff,
+            num_rbf=layer.num_rbf,
+            radial_weight=layer.local_radial_weight[local],
+            radial_bias=layer.local_radial_bias[local],
+            local_geometry=local_geometry,
+        )
+        summary = local_attention_summary(
+            receiver,
+            sender,
+            weights,
+            squared_distance,
+            num_nodes=node_count,
+        )
+    return {
+        "status": "ok",
+        "transport_connected": True,
+        "activation_source": "exact_recompute_from_captured_layer_input",
+        "dataset_index": int(dataset_index),
+        "layer_index": int(layer_index),
+        "head_indices": list(range(layer.local_head_count)),
+        "summary": summary,
+        "model_device": str(parameter.device),
     }
 
 
@@ -817,7 +1125,80 @@ def _run_config(
     split_seed: int,
     model_seed: int,
 ) -> dict[str, object]:
+    if args.benchmark_model == "internal_static_egnn_baseline":
+        return {
+            "dataset": args.dataset,
+            "data_root": str(args.data_root),
+            "qm9_target_index": args.qm9_target_index,
+            "num_samples": args.num_samples,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "batch_size": args.batch_size,
+            "steps": args.steps,
+            "model": "internal_static_egnn_baseline",
+            "comparison_role": "internal_same_harness_baseline",
+            "official_reproduction": False,
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "num_heads": "not_applicable",
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "grad_clip": args.grad_clip,
+            "split_seed": split_seed,
+            "model_seed": model_seed,
+            "dataset_seed": args.seed,
+            "device": args.device,
+            "amp_dtype": args.amp_dtype,
+            "target_normalized": not args.no_target_normalize,
+            "test_evaluated": args.evaluate_test,
+            "coordinate_updates": False,
+            "edge_topology": "same_graph_directed_complete_without_self",
+            "distance_feature": "raw_squared_distance",
+            "edge_gate": "learned_sigmoid",
+            "aggregation": "sum",
+            "node_update": "residual_two_layer_silu_mlp",
+            "readout": "layernorm_node_linear_graph_mean",
+            "output_initialization": "zero",
+            "global_transport_mode": "not_applicable",
+            "global_transport_executed": False,
+            "global_geometry_executed": False,
+            "global_attention_formula": "not_applicable",
+            "routing": "not_applicable",
+            "local_head_counts": [],
+            "bounded_diagnostics": args.bounded_diagnostics,
+            "diagnostic_max_nodes": args.diagnostic_max_nodes,
+            "diagnostic_effective_rank": args.diagnostic_effective_rank,
+        }
     inverse_positive_baseline = args.kernel_floor_mode == "inverse_graph_size"
+    local_head_counts = _routing_head_counts(
+        args.routing,
+        num_layers=args.num_layers,
+        num_heads=args.num_heads,
+    )
+    has_global_heads = any(count < args.num_heads for count in local_head_counts)
+    global_formula = (
+        {
+            "learned": "factorized_learned_kernel",
+            "uniform": "exact_graph_mean",
+            "none": "no_global_transport",
+        }[args.global_transport_mode]
+        if has_global_heads
+        else "not_applicable_no_global_heads"
+    )
+    global_key_balancing = (
+        ("disabled" if args.no_key_balancing else "one_cycle")
+        if has_global_heads and args.global_transport_mode == "learned"
+        else "not_applicable"
+    )
+    global_transport_executed = (
+        has_global_heads and args.global_transport_mode != "none"
+    )
+    if args.memory_interaction and args.memory_count > 1:
+        hemm_status = "stage0_blocked_experimental"
+    elif args.memory_interaction:
+        hemm_status = "exact_single_memory_bypass"
+    else:
+        hemm_status = "disabled"
     return {
         "dataset": args.dataset,
         "data_root": str(args.data_root),
@@ -827,7 +1208,9 @@ def _run_config(
         "val_size": args.val_size,
         "batch_size": args.batch_size,
         "steps": args.steps,
-        "model": "factorized_moment",
+        "model": args.benchmark_model,
+        "comparison_role": "equivariant_attention_candidate",
+        "official_reproduction": False,
         "hidden_dim": args.hidden_dim,
         "num_layers": args.num_layers,
         "num_heads": args.num_heads,
@@ -863,18 +1246,18 @@ def _run_config(
         ),
         "graph_size_unscaled_terms": ["content", "alignment_quadratic"],
         "routing": args.routing,
-        "local_head_counts": list(
-            _routing_head_counts(
-                args.routing,
-                num_layers=args.num_layers,
-                num_heads=args.num_heads,
-            )
-        ),
+        "global_transport_mode": args.global_transport_mode,
+        "global_transport_executed": global_transport_executed,
+        "global_geometry_executed": global_transport_executed,
+        "global_attention_formula": global_formula,
+        "global_key_balancing": global_key_balancing,
+        "local_head_counts": list(local_head_counts),
         "local_cutoff": args.local_cutoff,
         "num_rbf": args.num_rbf,
         "learn_local_radial_gate": args.learn_local_radial_gate,
         "memory_count": args.memory_count,
         "memory_interaction": args.memory_interaction,
+        "hemm_admission_status": hemm_status,
         "memory_assignment_temperature": args.memory_assignment_temperature,
         "memory_assignment_scale": args.memory_assignment_scale,
         "memory_interaction_cutoff": args.memory_interaction_cutoff,

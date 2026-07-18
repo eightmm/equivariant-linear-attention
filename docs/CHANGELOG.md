@@ -10,6 +10,26 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.11 -> v0.12 (2026-07-18) — add state-schema-identical learned,
+  exact-uniform, and no-global-transport controls; centralize
+  `ggg/lgg/ggl/lgl/lll` route resolution; and lazily initialize global
+  geometry. impact: makes learned query/key selectivity falsifiable against
+  exact moment pooling, prevents geometry leakage into no-global controls, and
+  avoids needless scale-first work on local-only routes.
+- [eval] v0.5 -> v0.6 (2026-07-18) — add bounded sparse-local degree, entropy,
+  effective-support, max-weight, and cutoff-distance diagnostics; record actual
+  global transport semantics; and warn that interacting HEMM is Stage-0
+  blocked. impact: connects the size-dependent LGL observation to executable
+  local/global diagnostics without changing HEMM math or defaults.
+- [training] v0.3 -> v0.4 (2026-07-18) — add a private static-coordinate EGNN
+  same-harness baseline with complete directed non-self edges, squared-distance
+  messages, and parameter-matched width 91. impact: enables a local layer
+  comparison while keeping `EquivariantAttention` the only public model and
+  explicitly rejecting an official-paper reproduction claim.
+- [data] v0.1 -> v0.2 (2026-07-18) — record processed QM9 row, zero-based raw
+  `data.idx`, and `data.name` separately in sample IDs. impact: improves
+  entity-level provenance without mislabeling the raw index as a GDB9 name or
+  changing dataset order, labels, or split hashes.
 - [eval] v0.4 -> v0.5 (2026-07-17) — run the registered clean-source M=1
   `ggg`/`lgl` CUDA and three-seed QM9 gap comparison with test evaluation off.
   impact: `lgl` passes with 0.052774 eV mean validation-MAE improvement, 3/3

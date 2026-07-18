@@ -27,8 +27,10 @@ uv run python scripts/bench_attention.py \
   --nodes-per-graph 16 32
 ```
 
-`--routing` accepts `ggg`, `lgl`, and `lll`; `--memory-count` accepts the
-registered `1`, `4`, and `8` values. Interacting multi-memory transport is
+`--routing` accepts `ggg`, `lgg`, `ggl`, `lgl`, and `lll`;
+`--global-transport-mode` accepts `learned`, `uniform`, and `none`; and
+`--memory-count` accepts the registered `1`, `4`, and `8` values. Interacting
+multi-memory transport is
 registered only for the middle global stage of `lgl`, so combinations such as
 `lll --memory-interaction` are rejected by the model configuration validator.
 The local and memory geometry controls are exposed as `--local-cutoff`,
@@ -54,6 +56,41 @@ Do not compare numbers from removed implementations with this benchmark: their
 semantics and batch shapes differ. Route, local cutoff/RBF, interacting
 `M=4/8`, radial trace, and fixed-versus-graph-size-scaled positive-baseline
 accuracy comparisons belong in matched training/instrumented runs.
+
+## Bounded transport/baseline CPU screen (2026-07-18)
+
+A deterministic 64-row synthetic, 20-step CPU screen exercised learned
+`ggg/lgg/ggl/lgl`, exact-uniform LGL, disabled-global LGL, and the private
+static EGNN runner on identical split/model seeds. All seven arms completed
+with finite gradients and validation metrics, emitted matching split hashes,
+and kept `test_evaluated=false`. The factorized controls retained the same
+12,480 trainable parameters and state-schema hash.
+
+On the inspected seven-node graph, the learned middle LGL head was already
+nearly uniform (entropy/log-N 0.999998; effective support 6.999973), while the
+analytic control reported exactly 1.0 and 7.0 to floating-point tolerance.
+Local diagnostics normalized each receiver/head row to within 1e-7 and reported
+degree 4--7 and mean entropy/log-degree 0.92095. These numbers validate the
+diagnostic and control semantics; the tiny synthetic screen is not an accuracy
+or throughput comparison.
+
+The complete nine-arm reproduction, including the sequential wider pair, is:
+
+```bash
+bash scripts/run_bounded_control_screen.sh \
+  artifacts/egnn-matched-baseline-development-20260718
+```
+
+The recorded run completed in 15.80 seconds of outer wall time on CPU, measured
+by GNU `time` around the exact tracked command. Its one-shot arm times are not
+promoted throughput measurements.
+
+A sequential same-split width screen also completed for LGL H=64 and static
+EGNN H=91. For the synthetic eight-channel input it reported 152,889 and
+151,792 trainable parameters. On the registered 11-channel QM9 input the counts
+are LGL 153,285 total / 153,081 trainable and EGNN 152,065 total/trainable, a
+0.664% trainable-count gap. No QM9 or GPU run was made because the fresh
+25-GPU-minute approval gate remains closed.
 
 ## Registered M=1 routing result (2026-07-17)
 
