@@ -2,6 +2,8 @@
 
 ## Status
 
+- State: confirmed 2026-07-19 evidence-first strengthening extension; all
+  earlier confirmed contracts remain active.
 - State: confirmed for local code, bounded QM9 dependency setup, and at most
   30 GPU-minutes by the user's 2026-07-17 instruction to implement the latest
   review and measure performance properly
@@ -22,6 +24,17 @@
   explicit HEMM Stage-0 warning, and a private same-harness static EGNN
   baseline. The frozen scope and experiment boundary are in
   `artifacts/egnn-matched-baseline-development-20260718/`.
+- Current scope extension: the user's 2026-07-19 selection and post-update
+  confirmation of option A admit a
+  backward-compatible optional precomputed local `edge_index`, diagnostics for
+  every active local stage over a deterministic bounded validation sample, and
+  the already registered validation-only QM9 transport/route/internal-EGNN
+  study on one local GPU with a cumulative ceiling of 25 GPU-minutes. No new
+  dependency, edge feature, size-conditioned routing, HEMM redesign, final
+  test evaluation, or 10,000-step claim is admitted. An evidence-conditioned
+  default or simplification may be documented only when its frozen promotion
+  rule passes. The exact frozen scope is
+  `artifacts/evidence-first-strengthening-20260719/scope.md`.
 
 ## Project
 
@@ -111,12 +124,14 @@
   them is a later, separate ablation.
 - The core-only fallback vectorizes the same-graph Cartesian candidates across
   the batch and uses O(E) retained transport storage, but its candidate search
-  remains `O(sum_g N_g^2)` for bounded QM9 graphs. The retained edge indices,
-  normalized displacement, cutoff distance, and RBF basis are built once per
-  forward and reused across local stages, reducing repeated geometry work from
-  `L*N^2` to `N^2 + L*E` without changing outputs or gradients. End-to-end O(E)
-  or production sparse-neighbor performance is not claimed without an explicit
-  edge API or radius backend.
+  remains `O(sum_g N_g^2)` for bounded QM9 graphs. A keyword-only precomputed
+  `edge_index` bypasses that discovery and uses O(E) candidate/retained storage;
+  supplied candidates still pass through the same strict cutoff. The retained
+  edge indices, normalized displacement, cutoff distance, and RBF basis are
+  built once per forward and reused across local stages. Thus fallback work is
+  `N^2 + L*E`; after validation, supplied-edge geometry/transport is `L*E` at
+  fixed width. A production radius-neighbor backend or end-to-end
+  neighbor-construction claim is not included.
 
 ## Multi-Memory Global Transport
 
@@ -295,6 +310,13 @@
   global-transport claim requires mean paired validation improvement at least
   0.010 eV, at least three of five improving seeds, worst regression no more
   than 0.020 eV, and median latency/peak-memory increases no more than 20%.
+- The completed 2026-07-19 Stage-3a confirmation found learned/uniform/none
+  mean validation MAEs of 0.515688/0.534776/0.691821 eV. Accuracy criteria
+  passed for learned versus uniform and for both global arms versus none, but
+  learned exceeded the memory ceiling versus uniform and learned/uniform
+  exceeded at least one latency/memory ceiling versus none. The joint
+  promotion gate therefore failed, no transport mode was locked, defaults did
+  not change, and the conditional EGNN comparison did not run.
 - After the transport mechanism is locked, a private width-91,
   static-coordinate, three-layer EGNN baseline may be trained in the same
   harness. It uses the identical PyG features, split, target-only train-fitted
@@ -340,11 +362,14 @@
 
 ## Deferred Compute Gate
 
-- The 2026-07-17 one-time GPU approval was consumed by the recorded HEMM/LGL
-  study. The 2026-07-18 transport/EGNN screen requires a fresh approval packet
-  before any GPU command. The proposed bound is one local GPU, existing locked
-  environment/data, test evaluation off, and at most 25 GPU-minutes. Any final
-  10k-step/test study remains a later, separate gate after architecture lock.
+- The confirmed 2026-07-19 option-A packet was consumed by the registered
+  validation-only transport study: 21 runs completed in 819.2 GPU-wall seconds
+  with test evaluation disabled. The efficiency gate failed, so the conditional
+  EGNN arms did not run despite remaining time.
+- Any EGNN continuation, final 10,000-step run, or test evaluation requires a
+  new frozen hypothesis and compute approval after the transport-efficiency
+  failure is addressed. The existing result does not authorize using the
+  remaining nominal budget for a different experiment.
 
 ## Commands
 

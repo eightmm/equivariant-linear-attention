@@ -4,7 +4,7 @@
 
 ```python
 model = EquivariantAttention(EquivariantAttentionConfig(...))
-out = model(node_feats, pos, batch=None)
+out = model(node_feats, pos, batch=None, edge_index=None)
 ```
 
 There is one public attention implementation, `EquivariantAttention`. Local,
@@ -19,9 +19,15 @@ settings rather than separate model classes. `model.attention_kind` is
 | `node_feats` | `(N, node_dim)` | finite O(3)-invariant scalar (`0e`) channels |
 | `pos` | `(N, 3)` | finite float32+ coordinates on the same device |
 | `batch` | `(N,)` | optional integer IDs `0..G-1` |
+| `edge_index` | `(2, E)` | optional keyword-only integer local candidates: receiver row then sender row |
 
 At least one node is required. Graph IDs must be nonnegative, contiguous, and
 start at zero; empty graphs are not encoded. A missing batch means one graph.
+Supplied edges are legal only when at least one layer has local heads. They must
+be on the input device, nonnegative and in range, unique as directed pairs,
+same-graph, and contain `i <- i` for every node. Candidates outside the strict
+local cutoff are discarded. Supplying edges bypasses complete-pair discovery;
+omitting them preserves the existing fallback.
 
 ## Outputs
 
@@ -83,11 +89,14 @@ into `lll` or a no-global-transport control.
 Global heads use structured graph summaries and do not construct an `N x N`
 attention tensor. Local heads construct directed same-graph raw-coordinate
 edges with self edges, a default 2.5-Angstrom cutoff, 16 Gaussian RBFs, and a
-positive cosine gate of squared scaled distance. The core fallback stores
-`O(E)` transport and reuses one geometry/RBF construction across all local
-stages. It vectorizes all same-graph Cartesian candidates across the batch, but
-still searches `O(sum_g N_g^2)` pairs. Thus the repeated work is
-`N^2 + L*E`, while no production end-to-end `O(E)` claim is made.
+positive cosine gate of squared scaled distance. The core fallback stores O(E)
+transport and reuses one geometry/RBF construction across all local stages. It
+vectorizes all same-graph Cartesian candidates across the batch, but still
+searches `O(sum_g N_g^2)` pairs. Precomputed `edge_index` bypasses that search
+and uses O(E) candidate/retained storage, while the caller remains responsible
+for neighbor construction. Thus fallback work is `N^2 + L*E` and supplied-edge
+geometry/transport after validation is `L*E` at fixed width; no production
+radius-backend claim is made.
 
 Global preprocessing is scale-first: coordinates are scaled by each graph's
 maximum absolute coordinate before centroid and RMS reductions, and physical

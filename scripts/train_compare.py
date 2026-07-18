@@ -230,6 +230,7 @@ def main() -> None:
                 val_idx,
                 max_nodes=args.diagnostic_max_nodes,
                 include_effective_rank=args.diagnostic_effective_rank,
+                local_sample_count=args.diagnostic_sample_count,
             )
             if args.bounded_diagnostics
             else _disabled_bounded_diagnostics(args)
@@ -313,6 +314,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-target-normalize", action="store_true")
     parser.add_argument("--bounded-diagnostics", action="store_true")
     parser.add_argument("--diagnostic-max-nodes", type=_positive_int, default=128)
+    parser.add_argument("--diagnostic-sample-count", type=_positive_int, default=32)
     parser.add_argument("--diagnostic-effective-rank", action="store_true")
     test_group = parser.add_mutually_exclusive_group()
     test_group.add_argument("--evaluate-test", action="store_true")
@@ -368,6 +370,7 @@ def _build_benchmark_model(
             "no_alignment_linear_term": False,
             "no_key_balancing": False,
             "diagnostic_max_nodes": 128,
+            "diagnostic_sample_count": 32,
             "diagnostic_effective_rank": False,
         }
         for name, expected in defaults.items():
@@ -571,6 +574,7 @@ def _disabled_bounded_diagnostics(args: argparse.Namespace) -> dict[str, object]
             "enabled": bool(args.diagnostic_effective_rank),
             "max_matrix_size": int(args.diagnostic_max_nodes),
         },
+        "local_validation_sample_count": int(args.diagnostic_sample_count),
         "instrumentation": {
             "connected": [],
             "unconnected": [
@@ -589,6 +593,7 @@ def _bounded_model_diagnostics(
     *,
     max_nodes: int,
     include_effective_rank: bool,
+    local_sample_count: int = 32,
 ) -> dict[str, object]:
     """Instrument one bounded validation graph and one global attention head."""
 
@@ -602,11 +607,12 @@ def _bounded_model_diagnostics(
 
     if isinstance(max_nodes, bool) or not isinstance(max_nodes, int) or max_nodes <= 0:
         raise ValueError("max_nodes must be a positive integer")
-    eligible = [
-        index
-        for index in validation_indices
-        if int(dataset[index].node_feats.shape[0]) <= max_nodes
-    ]
+    selected_local_indices = _select_bounded_validation_indices(
+        dataset,
+        validation_indices,
+        max_nodes=max_nodes,
+        sample_count=local_sample_count,
+    )
     common: dict[str, object] = {
         "schema_version": 1,
         "enabled": True,
@@ -617,7 +623,7 @@ def _bounded_model_diagnostics(
         "excluded_from_elapsed_seconds": True,
         "excluded_from_peak_cuda_memory_bytes": True,
     }
-    if not eligible:
+    if not selected_local_indices:
         return {
             **common,
             "status": "skipped_no_eligible_validation_graph",
@@ -631,7 +637,7 @@ def _bounded_model_diagnostics(
             },
         }
 
-    dataset_index = eligible[0]
+    dataset_index = selected_local_indices[0]
     sample_id = dataset[dataset_index].sample_id
     graph_batch = collate_graphs([dataset[dataset_index]])
     parameter = next(model.parameters())
@@ -649,6 +655,14 @@ def _bounded_model_diagnostics(
             graph_batch,
             dataset_index=dataset_index,
         )
+        if local_attention["status"] == "ok":
+            local_attention["validation_distribution"] = (
+                _bounded_local_validation_diagnostics(
+                    model,
+                    dataset,
+                    selected_local_indices,
+                )
+            )
         diagnostic_seconds = time.perf_counter() - started
         global_status = (
             "skipped_no_global_attention_head"
@@ -667,7 +681,10 @@ def _bounded_model_diagnostics(
             },
             "instrumentation": {
                 "global_transport_mode": global_transport_mode,
-                "connected": ["selected_trained_local_attention_weights"]
+                "connected": [
+                    "selected_trained_local_attention_weights",
+                    "all_local_layers_and_heads_on_bounded_validation_sample",
+                ]
                 if local_attention["status"] == "ok"
                 else [],
                 "unconnected": [
@@ -884,6 +901,14 @@ def _bounded_model_diagnostics(
         graph_batch,
         dataset_index=dataset_index,
     )
+    if local_attention["status"] == "ok":
+        local_attention["validation_distribution"] = (
+            _bounded_local_validation_diagnostics(
+                model,
+                dataset,
+                selected_local_indices,
+            )
+        )
     diagnostic_seconds = time.perf_counter() - started
     return {
         **common,
@@ -916,14 +941,16 @@ def _bounded_model_diagnostics(
                 ]
             )
             + (
-                ["selected_trained_local_attention_weights"]
+                [
+                    "selected_trained_local_attention_weights",
+                    "all_local_layers_and_heads_on_bounded_validation_sample",
+                ]
                 if local_attention["status"] == "ok"
                 else []
             ),
             "unconnected": [
-                "all_other_layers_and_heads",
                 "value_transport_and_residual_updates",
-                "full_validation_distribution",
+                "validation_graphs_outside_bounded_sample",
                 "amp_execution_path",
                 *(
                     []
@@ -944,15 +971,7 @@ def _bounded_local_attention_diagnostics(
     *,
     dataset_index: int,
 ) -> dict[str, object]:
-    """Recompute one trained local layer on the already bounded graph."""
-    from equivariant_attention.moment import (
-        _bounded_irrep,
-        _bounded_kernel_scale,
-        _local_attention_weights,
-        _normalize_positive_features,
-        _unit_ball,
-    )
-
+    """Recompute every trained local layer on one already bounded graph."""
     local_layers = [
         (index, layer)
         for index, layer in enumerate(model.layers)
@@ -963,122 +982,287 @@ def _bounded_local_attention_diagnostics(
             "status": "skipped_no_local_attention_head",
             "transport_connected": False,
         }
-    layer_index, layer = local_layers[0]
     parameter = next(model.parameters())
-    captured: dict[str, object] = {}
+    captured: dict[int, dict[str, object]] = {}
 
     def capture_layer_input(
-        _module: torch.nn.Module,
+        layer_index: int,
         inputs: tuple[object, ...],
     ) -> None:
-        captured["scalars"] = inputs[0].detach()
-        captured["vectors"] = inputs[1].detach()
-        captured["raw_pos"] = inputs[3].detach()
-        captured["batch"] = inputs[4].detach()
-        captured["num_graphs"] = int(inputs[5])
-        captured["local_geometry"] = tuple(
-            value.detach() for value in inputs[7]
-        )
+        captured[layer_index] = {
+            "scalars": inputs[0].detach(),
+            "vectors": inputs[1].detach(),
+            "raw_pos": inputs[3].detach(),
+            "batch": inputs[4].detach(),
+            "num_graphs": int(inputs[5]),
+            "local_geometry": tuple(value.detach() for value in inputs[7]),
+        }
 
     training_states = [(module, module.training) for module in model.modules()]
-    handle = layer.register_forward_pre_hook(capture_layer_input)
+    handles = [
+        layer.register_forward_pre_hook(
+            lambda _module, inputs, index=layer_index: capture_layer_input(
+                index, inputs
+            )
+        )
+        for layer_index, layer in local_layers
+    ]
     try:
         model.eval()
         with torch.no_grad():
             model(graph_batch.node_feats, graph_batch.pos, batch=graph_batch.batch)
     finally:
-        handle.remove()
+        for handle in handles:
+            handle.remove()
         for module, training in training_states:
             module.training = training
-    if not captured:
+    if len(captured) != len(local_layers):
         raise RuntimeError("bounded local diagnostic layer hook did not execute")
 
     with torch.no_grad():
-        scalars = captured["scalars"]
-        vectors = captured["vectors"]
-        raw_pos = captured["raw_pos"]
-        batch = captured["batch"]
-        num_graphs = int(captured["num_graphs"])
-        local_geometry = captured["local_geometry"]
-        node_count = scalars.shape[0]
-        normalized_scalars = layer.norm(scalars)
-        bounded_vectors = _bounded_irrep(vectors, layer.eps)
-        query_scalar = _normalize_positive_features(
-            F.elu(
-                layer.query_scalar(normalized_scalars).reshape(
-                    node_count, layer.num_heads, layer.head_dim
-                )
+        layer_results = [
+            _local_layer_attention_diagnostics(
+                layer,
+                captured[layer_index],
+                layer_index=layer_index,
             )
-            + 1.0,
-            layer.eps,
-        )
-        key_scalar = _normalize_positive_features(
-            F.elu(
-                layer.key_scalar(normalized_scalars).reshape(
-                    node_count, layer.num_heads, layer.head_dim
-                )
-            )
-            + 1.0,
-            layer.eps,
-        )
-        query_vector = _unit_ball(
-            layer.query_vector(bounded_vectors)
-            * torch.tanh(layer.query_vector_gate(normalized_scalars)).unsqueeze(-1),
-            layer.eps,
-        )
-        key_vector = _unit_ball(
-            layer.key_vector(bounded_vectors)
-            * torch.tanh(layer.key_vector_gate(normalized_scalars)).unsqueeze(-1),
-            layer.eps,
-        )
-        alignment_scale = _bounded_kernel_scale(
-            layer.raw_linear_kernel, layer.linear_kernel_max
-        )
-        alignment_dot_scale = (
-            alignment_scale
-            if layer.use_alignment_linear_term
-            else torch.zeros_like(alignment_scale)
-        )
-        kernel_scale = _bounded_kernel_scale(
-            layer.raw_vector_kernel, layer.vector_kernel_max
-        )
-        local = slice(0, layer.local_head_count)
-        receiver, sender, weights, _, squared_distance = _local_attention_weights(
-            query_scalar[:, local],
-            key_scalar[:, local],
-            query_vector[:, local],
-            key_vector[:, local],
-            kernel_scale[local],
-            raw_pos,
-            batch,
-            num_graphs=num_graphs,
-            balanced=layer.use_key_balancing,
-            alignment_scale=alignment_scale[local],
-            alignment_dot_scale=alignment_dot_scale[local],
-            kernel_floor=layer.kernel_floor,
-            cutoff=layer.local_cutoff,
-            num_rbf=layer.num_rbf,
-            radial_weight=layer.local_radial_weight[local],
-            radial_bias=layer.local_radial_bias[local],
-            local_geometry=local_geometry,
-        )
-        summary = local_attention_summary(
-            receiver,
-            sender,
-            weights,
-            squared_distance,
-            num_nodes=node_count,
-        )
+            for layer_index, layer in local_layers
+        ]
+    first = layer_results[0]
     return {
         "status": "ok",
         "transport_connected": True,
         "activation_source": "exact_recompute_from_captured_layer_input",
         "dataset_index": int(dataset_index),
+        "layer_index": first["layer_index"],
+        "head_indices": first["head_indices"],
+        "summary": first["summary"],
+        "layers": layer_results,
+        "model_device": str(parameter.device),
+    }
+
+
+def _local_layer_attention_diagnostics(
+    layer: torch.nn.Module,
+    captured: dict[str, object],
+    *,
+    layer_index: int,
+) -> dict[str, object]:
+    from equivariant_attention.moment import (
+        _bounded_irrep,
+        _bounded_kernel_scale,
+        _local_attention_weights,
+        _normalize_positive_features,
+        _unit_ball,
+    )
+
+    scalars = captured["scalars"]
+    vectors = captured["vectors"]
+    raw_pos = captured["raw_pos"]
+    batch = captured["batch"]
+    num_graphs = int(captured["num_graphs"])
+    local_geometry = captured["local_geometry"]
+    node_count = scalars.shape[0]
+    normalized_scalars = layer.norm(scalars)
+    bounded_vectors = _bounded_irrep(vectors, layer.eps)
+    query_scalar = _normalize_positive_features(
+        F.elu(
+            layer.query_scalar(normalized_scalars).reshape(
+                node_count, layer.num_heads, layer.head_dim
+            )
+        )
+        + 1.0,
+        layer.eps,
+    )
+    key_scalar = _normalize_positive_features(
+        F.elu(
+            layer.key_scalar(normalized_scalars).reshape(
+                node_count, layer.num_heads, layer.head_dim
+            )
+        )
+        + 1.0,
+        layer.eps,
+    )
+    query_vector = _unit_ball(
+        layer.query_vector(bounded_vectors)
+        * torch.tanh(layer.query_vector_gate(normalized_scalars)).unsqueeze(-1),
+        layer.eps,
+    )
+    key_vector = _unit_ball(
+        layer.key_vector(bounded_vectors)
+        * torch.tanh(layer.key_vector_gate(normalized_scalars)).unsqueeze(-1),
+        layer.eps,
+    )
+    alignment_scale = _bounded_kernel_scale(
+        layer.raw_linear_kernel, layer.linear_kernel_max
+    )
+    alignment_dot_scale = (
+        alignment_scale
+        if layer.use_alignment_linear_term
+        else torch.zeros_like(alignment_scale)
+    )
+    kernel_scale = _bounded_kernel_scale(
+        layer.raw_vector_kernel, layer.vector_kernel_max
+    )
+    local = slice(0, layer.local_head_count)
+    receiver, sender, weights, _, squared_distance = _local_attention_weights(
+        query_scalar[:, local],
+        key_scalar[:, local],
+        query_vector[:, local],
+        key_vector[:, local],
+        kernel_scale[local],
+        raw_pos,
+        batch,
+        num_graphs=num_graphs,
+        balanced=layer.use_key_balancing,
+        alignment_scale=alignment_scale[local],
+        alignment_dot_scale=alignment_dot_scale[local],
+        kernel_floor=layer.kernel_floor,
+        cutoff=layer.local_cutoff,
+        num_rbf=layer.num_rbf,
+        radial_weight=layer.local_radial_weight[local],
+        radial_bias=layer.local_radial_bias[local],
+        local_geometry=local_geometry,
+    )
+    summary = local_attention_summary(
+        receiver,
+        sender,
+        weights,
+        squared_distance,
+        num_nodes=node_count,
+    )
+    heads = [
+        {
+            "head_index": head_index,
+            "summary": local_attention_summary(
+                receiver,
+                sender,
+                weights[:, head_index : head_index + 1],
+                squared_distance,
+                num_nodes=node_count,
+            ),
+        }
+        for head_index in range(layer.local_head_count)
+    ]
+    return {
         "layer_index": int(layer_index),
         "head_indices": list(range(layer.local_head_count)),
         "summary": summary,
-        "model_device": str(parameter.device),
+        "heads": heads,
     }
+
+
+def _select_bounded_validation_indices(
+    dataset: Sequence[GraphSample],
+    validation_indices: Sequence[int],
+    *,
+    max_nodes: int,
+    sample_count: int,
+) -> list[int]:
+    for name, value in (("max_nodes", max_nodes), ("sample_count", sample_count)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    eligible = sorted(
+        (
+            index
+            for index in validation_indices
+            if int(dataset[index].node_feats.shape[0]) <= max_nodes
+        ),
+        key=lambda index: (int(dataset[index].node_feats.shape[0]), index),
+    )
+    if len(eligible) <= sample_count:
+        return eligible
+    if sample_count == 1:
+        return [eligible[0]]
+    positions = [
+        position * (len(eligible) - 1) // (sample_count - 1)
+        for position in range(sample_count)
+    ]
+    return [eligible[position] for position in positions]
+
+
+def _bounded_local_validation_diagnostics(
+    model: torch.nn.Module,
+    dataset: Sequence[GraphSample],
+    dataset_indices: Sequence[int],
+) -> dict[str, object]:
+    parameter = next(model.parameters())
+    observations: dict[int, list[dict[str, object]]] = {}
+    node_counts: list[int] = []
+    for dataset_index in dataset_indices:
+        graph_batch = collate_graphs([dataset[dataset_index]]).to(
+            device=parameter.device,
+            dtype=parameter.dtype,
+        )
+        node_counts.append(int(graph_batch.node_feats.shape[0]))
+        result = _bounded_local_attention_diagnostics(
+            model,
+            graph_batch,
+            dataset_index=dataset_index,
+        )
+        if result["status"] != "ok":
+            raise RuntimeError("selected model unexpectedly has no local diagnostics")
+        for layer in result["layers"]:
+            observations.setdefault(layer["layer_index"], []).append(layer)
+
+    layers = []
+    for layer_index in sorted(observations):
+        layer_observations = observations[layer_index]
+        head_indices = layer_observations[0]["head_indices"]
+        layers.append(
+            {
+                "layer_index": int(layer_index),
+                "sample_count": len(layer_observations),
+                "aggregate": _aggregate_local_summaries(
+                    [observation["summary"] for observation in layer_observations]
+                ),
+                "heads": [
+                    {
+                        "head_index": int(head_index),
+                        "aggregate": _aggregate_local_summaries(
+                            [
+                                observation["heads"][head_index]["summary"]
+                                for observation in layer_observations
+                            ]
+                        ),
+                    }
+                    for head_index in head_indices
+                ],
+            }
+        )
+    return {
+        "scope": "deterministic_bounded_validation_sample",
+        "selection": {
+            "dataset_indices": [int(index) for index in dataset_indices],
+            "sample_count": len(dataset_indices),
+            "node_count.min": min(node_counts),
+            "node_count.max": max(node_counts),
+        },
+        "layers": layers,
+    }
+
+
+def _aggregate_local_summaries(
+    summaries: Sequence[dict[str, object]],
+) -> dict[str, float]:
+    if not summaries:
+        raise ValueError("at least one local summary is required")
+    numeric_keys = sorted(
+        key
+        for key in summaries[0]
+        if all(
+            isinstance(summary.get(key), (int, float))
+            and not isinstance(summary.get(key), bool)
+            for summary in summaries
+        )
+    )
+    aggregate: dict[str, float] = {}
+    for key in numeric_keys:
+        values = [float(summary[key]) for summary in summaries]
+        aggregate[f"{key}.sample_min"] = min(values)
+        aggregate[f"{key}.sample_mean"] = sum(values) / len(values)
+        aggregate[f"{key}.sample_max"] = max(values)
+    return aggregate
 
 
 def _positive_int(value: str) -> int:
@@ -1167,6 +1351,7 @@ def _run_config(
             "local_head_counts": [],
             "bounded_diagnostics": args.bounded_diagnostics,
             "diagnostic_max_nodes": args.diagnostic_max_nodes,
+            "diagnostic_sample_count": args.diagnostic_sample_count,
             "diagnostic_effective_rank": args.diagnostic_effective_rank,
         }
     inverse_positive_baseline = args.kernel_floor_mode == "inverse_graph_size"
@@ -1264,6 +1449,7 @@ def _run_config(
         "radial_trace": args.radial_trace,
         "bounded_diagnostics": args.bounded_diagnostics,
         "diagnostic_max_nodes": args.diagnostic_max_nodes,
+        "diagnostic_sample_count": args.diagnostic_sample_count,
         "diagnostic_effective_rank": args.diagnostic_effective_rank,
         "ffn_hidden_ratio": 2.0,
     }

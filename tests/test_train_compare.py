@@ -608,6 +608,86 @@ def test_bounded_diagnostics_connects_one_trained_local_head() -> None:
     json.dumps(diagnostics, allow_nan=False)
 
 
+def test_bounded_diagnostics_cover_all_local_layers_and_validation_sample() -> None:
+    symbols = _script_symbols()
+    dataset = symbols["SyntheticMoleculeDataset"](
+        num_samples=10,
+        node_dim=4,
+        min_nodes=3,
+        max_nodes=8,
+        seed=103,
+    )
+    validation_indices = [8, 1, 6, 2, 9, 4, 0]
+    model = symbols["build_regression_model"](
+        node_dim=4,
+        hidden_dim=8,
+        num_layers=3,
+        num_heads=2,
+        local_head_counts=(2, 0, 2),
+    )
+    model.train()
+    before_training = [module.training for module in model.modules()]
+    before_state = symbols["_model_state_hashes"](model)
+    before_rng = torch.random.get_rng_state().clone()
+
+    selected = symbols["_select_bounded_validation_indices"](
+        dataset,
+        validation_indices,
+        max_nodes=8,
+        sample_count=3,
+    )
+    ordered = sorted(
+        validation_indices,
+        key=lambda index: (dataset[index].node_feats.shape[0], index),
+    )
+    expected_positions = [0, (len(ordered) - 1) // 2, len(ordered) - 1]
+    assert selected == [ordered[position] for position in expected_positions]
+
+    diagnostics = symbols["_bounded_model_diagnostics"](
+        model,
+        dataset,
+        validation_indices,
+        max_nodes=8,
+        include_effective_rank=False,
+        local_sample_count=3,
+    )
+
+    local = diagnostics["local_attention"]
+    assert local["status"] == "ok"
+    assert [layer["layer_index"] for layer in local["layers"]] == [0, 2]
+    assert all(len(layer["heads"]) == 2 for layer in local["layers"])
+    distribution = local["validation_distribution"]
+    assert distribution["selection"]["dataset_indices"] == selected
+    assert distribution["selection"]["sample_count"] == 3
+    assert distribution["selection"]["node_count.min"] >= 3
+    assert distribution["selection"]["node_count.max"] <= 8
+    assert [layer["layer_index"] for layer in distribution["layers"]] == [0, 2]
+    for layer in distribution["layers"]:
+        assert layer["sample_count"] == 3
+        assert len(layer["heads"]) == 2
+        assert layer["aggregate"]["attention.row_mass_max_abs_error.sample_max"] < 1e-6
+    assert (
+        "all_local_layers_and_heads_on_bounded_validation_sample"
+        in diagnostics["instrumentation"]["connected"]
+    )
+    assert [module.training for module in model.modules()] == before_training
+    assert symbols["_model_state_hashes"](model) == before_state
+    assert torch.equal(torch.random.get_rng_state(), before_rng)
+    json.dumps(diagnostics, allow_nan=False)
+
+
+def test_diagnostic_sample_count_is_validated_and_recorded() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](["--diagnostic-sample-count", "7"])
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+
+    assert args.diagnostic_sample_count == 7
+    assert config["diagnostic_sample_count"] == 7
+
+    with pytest.raises(SystemExit):
+        symbols["parse_args"](["--diagnostic-sample-count", "0"])
+
+
 @pytest.mark.parametrize("mode", ["uniform", "none"])
 def test_bounded_diagnostics_reports_the_executed_transport_control(mode: str) -> None:
     symbols = _script_symbols()

@@ -49,6 +49,14 @@ uses the exact same PyG features, row split, training-only target transform,
 optimizer/update budget, and graph-mean readout. It is a local layer baseline,
 not the official-paper data/training recipe.
 
+The approved 2026-07-19 validation-only execution completed the six-arm screen
+and five-seed learned/uniform/none confirmation without test-label access.
+Both global modes improved validation MAE over `none`, but at least one frozen
+20% latency/memory ceiling failed for every candidate. Transport was therefore
+not locked, defaults did not change, and the conditional EGNN arm remained
+unexecuted. The immutable ledger row records 819 seconds and
+`transport_locked=false`.
+
 Interacting M=4/M=8 runs additionally require the frozen Stage-0 mechanism
 gate to pass at widths 16/64 and seeds 401--403 before any QM9 labels are used.
 The 2026-07-17 full matrix rejected every registered residual-coupling

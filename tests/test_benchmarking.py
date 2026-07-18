@@ -309,12 +309,17 @@ def test_bounded_control_screen_has_an_executable_ledger_command() -> None:
 
     assert runner.is_file()
     subprocess.run(["bash", "-n", str(runner)], check=True)
-    record = json.loads((root / "docs" / "EXPERIMENTS.jsonl").read_text().splitlines()[-1])
-    assert record["cmd"] == [
+    expected_command = [
         "bash",
         "scripts/run_bounded_control_screen.sh",
         "artifacts/egnn-matched-baseline-development-20260718",
     ]
+    records = [
+        json.loads(line)
+        for line in (root / "docs" / "EXPERIMENTS.jsonl").read_text().splitlines()
+    ]
+
+    assert any(record["cmd"] == expected_command for record in records)
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,16 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.12 -> v0.13 (2026-07-19) — add a keyword-only validated local
+  `edge_index` candidate path while preserving the complete-pair fallback.
+  impact: callers can bypass quadratic discovery with O(E) candidate/retained
+  storage without adding a dependency or changing cutoff/message equations.
+- [eval] v0.6 -> v0.7 (2026-07-19) — extend local diagnostics to every active
+  layer/head over a deterministic bounded validation sample and register a
+  budget-enforced five-seed transport runner. impact: 21 validation-only QM9
+  arms completed in 819.2 GPU-wall seconds; accuracy criteria passed but the
+  frozen resource gate failed, so no transport/default promotion or EGNN run
+  was admitted.
 - [model] v0.11 -> v0.12 (2026-07-18) — add state-schema-identical learned,
   exact-uniform, and no-global-transport controls; centralize
   `ggg/lgg/ggl/lgl/lll` route resolution; and lazily initialize global

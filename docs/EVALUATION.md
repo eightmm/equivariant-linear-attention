@@ -51,7 +51,9 @@ seeds 41--45; attention width 64 is matched by EGNN width 91.
    `lgl learned/uniform/none` at seeds 41--45 and 2,000 steps. This distinguishes
    learned query/key selectivity from global moment pooling and from local/FFN
    effects. Local diagnostics report receiver degree, entropy over log degree,
-   effective support, maximum weight, and cutoff-distance quantiles.
+   effective support, maximum weight, and cutoff-distance quantiles for every
+   active local layer/head over at most 32 deterministically selected
+   validation graphs.
 5. Only after transport is locked, compare the selected attention arm with the
    private width-91, three-layer static EGNN at the same seeds/update budget.
    It keeps PyG features, split, train-only target normalization, MSE, AdamW,
@@ -84,6 +86,26 @@ median latency and peak-memory increases no larger than 20%. Earlier registered
 three-seed decisions retain their original two-of-three rule. A joint-only gain
 is recorded as an interaction, not attributed independently to either
 mechanism.
+
+## Registered Stage-3a outcome (2026-07-19)
+
+The validation-only runner completed all 6 seed-42/500-step screen arms and all
+15 `lgl learned/uniform/none` seed-41--45/2,000-step confirmation arms in 819.2
+GPU-wall seconds. Data/source/split/state-schema and matched initialization
+hashes passed, all values were finite, and `test_evaluated=false` for every
+run.
+
+Mean validation MAE was 0.515688 eV for learned, 0.534776 eV for uniform, and
+0.691821 eV for none. Learned beat uniform by 0.019088 eV on average in four of
+five seeds, but its median peak-memory ratio was 1.359, above the 1.20 ceiling.
+Learned and uniform each beat none on all five seeds by 0.176133 and 0.157044
+eV on average, respectively, but learned exceeded both resource ceilings
+(elapsed 1.512, memory 1.414) and uniform exceeded the elapsed ceiling (1.288).
+
+The complete promotion rule therefore failed. This is evidence of validation
+accuracy benefit at this update budget, but not an admitted accuracy/efficiency
+mechanism lock. The public `ggg learned` default remains unchanged and the
+conditional private-EGNN comparison was not run.
 
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel

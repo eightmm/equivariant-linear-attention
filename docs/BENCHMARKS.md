@@ -89,8 +89,58 @@ A sequential same-split width screen also completed for LGL H=64 and static
 EGNN H=91. For the synthetic eight-channel input it reported 152,889 and
 151,792 trainable parameters. On the registered 11-channel QM9 input the counts
 are LGL 153,285 total / 153,081 trainable and EGNN 152,065 total/trainable, a
-0.664% trainable-count gap. No QM9 or GPU run was made because the fresh
-25-GPU-minute approval gate remains closed.
+0.664% trainable-count gap. At that 2026-07-18 stage no QM9 or GPU run was made
+because the fresh 25-GPU-minute approval gate was still closed; the later
+approved result is recorded below.
+
+## Registered transport mechanism result (2026-07-19)
+
+The approved validation-only study used local PyG QM9 `gap`, the frozen
+110k/10k/10k random-row split, FP32, batch size 64, 2,000 updates, LGL width 64,
+and model seeds 41--45. Source, data, split, state-schema, and matched-seed
+initialization hashes agreed; all values were finite and every arm recorded
+`test_evaluated=false`.
+
+| seed | learned MAE | uniform MAE | none MAE |
+|---:|---:|---:|---:|
+| 41 | 0.535650 | 0.548641 | 0.681638 |
+| 42 | 0.551381 | 0.550999 | 0.706867 |
+| 43 | 0.519668 | 0.542929 | 0.680377 |
+| 44 | 0.514849 | 0.556477 | 0.706019 |
+| 45 | 0.456891 | 0.474836 | 0.684202 |
+| mean | 0.515688 | 0.534776 | 0.691821 |
+
+The frozen rule required every accuracy and efficiency condition. Ratios below
+are candidate divided by baseline; positive MAE improvement favors the
+candidate.
+
+| candidate vs baseline | mean MAE improvement | improving seeds | worst improvement | elapsed ratio | memory ratio | result |
+|---|---:|---:|---:|---:|---:|---|
+| learned vs uniform | 0.019088 | 4/5 | -0.000383 | 1.175 | 1.359 | fail memory |
+| learned vs none | 0.176133 | 5/5 | 0.145989 | 1.512 | 1.414 | fail elapsed/memory |
+| uniform vs none | 0.157044 | 5/5 | 0.132998 | 1.288 | 1.040 | fail elapsed |
+
+Thus the runs provide matched validation-accuracy evidence for global
+transport and learned selectivity at this update budget, but fail the registered
+accuracy/efficiency promotion rule. No transport mode was locked, `ggg learned`
+remains the public default, and the conditional width-91 private-EGNN arms were
+not run. This is not an EGNN, test-set, cold-molecule, or final-training claim.
+
+The six preceding 500-step screen arms were numerical checks only. Their
+expanded LGL diagnostic sampled 32 validation graphs spanning 4--29 nodes and
+covered both local layers and all four heads. Maximum receiver row-mass error
+was below `2.1e-7`; aggregate mean entropy/log-degree was 0.8034 in layer 0 and
+0.7946 in layer 2. Diagnostics were excluded from elapsed and peak-memory
+metrics.
+
+The budget-enforced runner completed 21 GPU arms in 819.2 wall seconds under a
+1,500-second ceiling. The exact command and scalar outcome are recorded in
+`docs/EXPERIMENTS.jsonl`; reproduce or inspect the immutable plan with:
+
+```bash
+uv run --locked python scripts/run_registered_transport_study.py \
+  artifacts/transport-study-reproduction --dry-run
+```
 
 ## Registered M=1 routing result (2026-07-17)
 

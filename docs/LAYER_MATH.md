@@ -197,6 +197,10 @@ ablation.
 ## Local heads
 
 Local heads use raw-coordinate directed edges `i <- j` within the same graph.
+The optional public `edge_index` uses receiver row 0 and sender row 1. It is a
+candidate list rather than a replacement kernel: the implementation validates
+same-graph unique indices and complete self coverage, then applies the same
+strict cutoff below. Without it, the core constructs all same-graph candidates.
 With cutoff `R_c`, define
 
 ```text
@@ -343,9 +347,12 @@ layers. The core fallback builds all same-graph Cartesian candidate pairs with
 one stable batch sort and one vectorized expansion before applying the cutoff;
 its candidate work is still `O(sum_g N_g^2)`. This changes repeated geometry
 work from `L*N^2` to `N^2 + L*E` and removes the per-graph Python/GPU launch
-loop, but it does not turn discovery into a production sparse backend. The
-public wrapper derives graph metadata once and reuses it. Validation can still
-create compile graph breaks; full-graph compilation and production
+loop. When precomputed `edge_index` is supplied, complete-pair discovery is
+bypassed and candidate plus retained transport storage is O(E); fixed-width
+local-layer geometry/transport after validation is `L*E`. Neighbor construction
+remains the caller's cost, so this is not a production radius-backend claim.
+The public wrapper derives graph metadata once and reuses it. Validation can
+still create compile graph breaks; full-graph compilation and production
 sparse-neighbor performance remain separate targets.
 
 ## Executable representation boundaries

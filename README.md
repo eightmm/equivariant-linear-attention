@@ -60,6 +60,23 @@ print(out["graph_vectors"].shape)  # (2, 1, 3)
 print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 ```
 
+For a route with local heads, callers may supply precomputed directed candidate
+edges without adding a neighbor-library dependency:
+
+```python
+# edge_index[0] is receiver i, edge_index[1] is sender j for i <- j.
+# Candidates must be same-graph, unique, and include every self edge.
+local_model = EquivariantAttention(
+    EquivariantAttentionConfig(node_dim=16, local_head_counts=(4, 0, 4))
+)
+edge_index = torch.tensor([[0, 0, 1, 1], [0, 1, 0, 1]])
+out = local_model(node_feats[:2], pos[:2], edge_index=edge_index)
+```
+
+The supplied path bypasses quadratic pair discovery, applies the same strict
+distance cutoff, and uses O(E) candidate/retained storage. Omitting it preserves
+the vectorized complete-candidate fallback exactly.
+
 ## Mathematical contract
 
 - O(3) equivariant, including reflections; translation invariant and
@@ -78,7 +95,8 @@ print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 - Global heads use exact graph-wise structured factorization without an
   `N x N` attention tensor. Local heads use directed raw-coordinate edges with
   a 2.5-Angstrom cosine cutoff of squared scaled distance and 16 Gaussian RBFs
-  by default.
+  by default. Keyword-only `edge_index` accepts validated receiver/sender
+  candidates for local routes and bypasses the fallback's quadratic discovery.
 - Multi-memory interaction is off by default with `M=1`. The `M=1` path reduces
   exactly to incumbent global attention; `M=4/8` interaction arms are
   experimental and registered only for the middle global block of `lgl`. The
@@ -116,15 +134,19 @@ Any route containing a global head is not a size-consistent interatomic
 potential. The intended role is a bounded-size property probe or a global
 context block within the same local/global architecture.
 
-The latest registered validation-only comparison found M=1 `lgl` better than
+The earlier registered validation-only comparison found M=1 `lgl` better than
 matched M=1 `ggg` on all three seeds (mean gap-MAE improvement 0.052774 eV),
 while also passing the CUDA latency/memory ceiling. This does not change the
 public default or admit the Stage-0-blocked M=4/M=8 interaction arms. See
 [the benchmark record](docs/BENCHMARKS.md#registered-m1-routing-result-2026-07-17).
-The gain is concentrated in larger validation molecules and one inspected
-learned global head is nearly uniform, so the next registered comparison is
-`lgl learned` versus exact `uniform` versus `none`; no default changes before
-that five-seed mechanism check.
+The subsequent five-seed mechanism check completed with mean validation MAE
+0.515688/0.534776/0.691821 eV for learned/uniform/none. Learned beat uniform by
+0.019088 eV on average and both global arms beat none on all five seeds, but
+the frozen efficiency gate failed: learned used 1.359x the peak memory of
+uniform, while learned/uniform took 1.512x/1.288x the elapsed time of none
+(learned also used 1.414x its peak memory). Therefore no transport mode was
+locked, no default changed, and the conditional private-EGNN comparison was
+not run. See [the benchmark record](docs/BENCHMARKS.md#registered-transport-mechanism-result-2026-07-19).
 
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
@@ -134,6 +156,8 @@ uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
   --benchmark-model internal_static_egnn_baseline --hidden-dim 91
 ./scripts/run_bounded_control_screen.sh \
   artifacts/egnn-matched-baseline-development-20260718
+uv run --locked python scripts/run_registered_transport_study.py \
+  artifacts/transport-study-reproduction --dry-run
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```

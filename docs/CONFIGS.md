@@ -70,6 +70,9 @@ memory, radial-trace, and test-evaluation policy. The explicit public flags are
 `--routing ggg/lgg/ggl/lgl/lll`,
 `--global-transport-mode learned/uniform/none`, `--memory-count 1/4/8`,
 `--memory-interaction`, `--radial-trace`, and opt-in `--evaluate-test`.
+`--bounded-diagnostics` recomputes every active local layer/head outside timed
+training; `--diagnostic-sample-count` defaults to 32 deterministic validation
+graphs selected after sorting by `(node_count, dataset_index)`.
 `--benchmark-model internal_static_egnn_baseline` selects only the private
 same-harness comparison baseline; it does not add a public model API. Its
 model-specific default is width 91 (the factorized default remains 64), and
@@ -78,3 +81,10 @@ nondefault factorized-only controls are rejected instead of silently ignored.
 `official_reproduction=false`. It also records whether global transport and
 global geometry actually executed; local-only routes report
 `not_applicable_no_global_heads` regardless of the configured transport label.
+
+`scripts/run_registered_transport_study.py` freezes the 2026-07-19 six-arm
+screen, fifteen-arm five-seed transport confirmation, conditional five-arm
+private EGNN comparison, exact QM9 data/split hashes, test-disabled policy, and
+1,500-second GPU ceiling. A scientific threshold failure exits successfully
+but records `transport_locked=false`; infrastructure, provenance, nonfinite, or
+budget failures stop the runner.

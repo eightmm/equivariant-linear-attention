@@ -150,6 +150,8 @@ class EquivariantAttention(nn.Module):
         node_feats: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor | None = None,
+        *,
+        edge_index: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
@@ -160,7 +162,10 @@ class EquivariantAttention(nn.Module):
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
         transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
-        if any(layer.local_head_count for layer in self.layers):
+        has_local_heads = any(layer.local_head_count for layer in self.layers)
+        if edge_index is not None and not has_local_heads:
+            raise ValueError("edge_index requires at least one layer with local heads")
+        if has_local_heads:
             local_geometry = _local_geometry(
                 pos,
                 batch,
@@ -168,6 +173,7 @@ class EquivariantAttention(nn.Module):
                 cutoff=self.config.local_cutoff,
                 num_rbf=self.config.num_rbf,
                 graph_counts=graph_counts,
+                edge_index=edge_index,
             )
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
@@ -1003,10 +1009,19 @@ def _local_geometry(
     cutoff: float,
     num_rbf: int,
     graph_counts: torch.Tensor | None = None,
+    edge_index: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    if graph_counts is None:
-        graph_counts = torch.bincount(batch, minlength=num_graphs)
-    receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
+    if edge_index is None:
+        if graph_counts is None:
+            graph_counts = torch.bincount(batch, minlength=num_graphs)
+        receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
+    else:
+        receiver, sender = _validated_local_edge_index(
+            edge_index,
+            batch,
+            num_nodes=pos.shape[0],
+            device=pos.device,
+        )
     cutoff_tensor = pos.new_full((), float(cutoff))
     candidate_distance = _stable_vector_norm(pos[sender] - pos[receiver]).squeeze(-1)
     inside = candidate_distance < cutoff_tensor
@@ -1026,6 +1041,52 @@ def _local_geometry(
         -0.5 * ((squared_distance.unsqueeze(-1) - rbf_centers) / rbf_width).square()
     )
     return receiver, sender, displacement, squared_distance, rbf
+
+
+def _validated_local_edge_index(
+    edge_index: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_nodes: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not isinstance(edge_index, torch.Tensor):
+        raise TypeError("edge_index must be a tensor")
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+        raise ValueError("edge_index must have shape (2, E)")
+    if edge_index.device != device:
+        raise ValueError("edge_index and model inputs must use the same device")
+    integer_dtypes = {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+    if edge_index.dtype not in integer_dtypes:
+        raise TypeError("edge_index must use an integer dtype")
+
+    receiver, sender = edge_index.to(dtype=torch.long).unbind(dim=0)
+    if receiver.numel() == 0:
+        raise ValueError("edge_index must contain a self edge for every node")
+    if bool((receiver < 0).any().item()) or bool((sender < 0).any().item()):
+        raise ValueError("edge_index values must be nonnegative")
+    if bool((receiver >= num_nodes).any().item()) or bool(
+        (sender >= num_nodes).any().item()
+    ):
+        raise ValueError("edge_index values are out of range")
+    if bool((batch[receiver] != batch[sender]).any().item()):
+        raise ValueError("edge_index endpoints must belong to the same graph")
+
+    pair_codes = receiver * num_nodes + sender
+    if torch.unique(pair_codes).numel() != pair_codes.numel():
+        raise ValueError("edge_index must not contain duplicate directed edges")
+    self_nodes = receiver[receiver == sender]
+    has_self = torch.zeros(num_nodes, dtype=torch.bool, device=device)
+    has_self[self_nodes] = True
+    if not bool(has_self.all().item()):
+        raise ValueError("edge_index must contain a self edge for every node")
+    return receiver, sender
 
 
 def _batched_complete_graph_edges(
