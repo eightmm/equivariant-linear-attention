@@ -10,6 +10,7 @@ from equivariant_attention import (
     autocast_dtype,
     prepare_for_inference,
 )
+from equivariant_attention._egnn_baseline import _DynamicEGNNBaseline
 
 
 def _comparison_tolerance(dtype: torch.dtype, *, automatic: bool) -> float:
@@ -42,6 +43,7 @@ def main() -> int:
             output_irreps="2x0e + 1x1o + 1x2e",
             num_layers=2,
             num_heads=4,
+            coordinate_updates=True,
         )
     ).to(device=device, dtype=dtype)
     node_feats = torch.randn(7, 5, device=device, dtype=dtype)
@@ -49,11 +51,32 @@ def main() -> int:
     batch = torch.tensor([0, 0, 0, 1, 1, 1, 1], device=device)
 
     outputs = model(node_feats, pos, batch=batch)
+    if "node_positions" not in outputs:
+        print("ml_smoke: dynamic attention omitted node_positions", file=sys.stderr)
+        return 1
     loss = sum(value.float().square().mean() for value in outputs.values())
     loss.backward()
     for name, parameter in model.named_parameters():
         if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
             print(f"ml_smoke: non-finite gradient in {name}", file=sys.stderr)
+            return 1
+
+    egnn = _DynamicEGNNBaseline(
+        node_dim=5,
+        hidden_dim=8,
+        num_layers=2,
+    ).to(device=device, dtype=dtype)
+    egnn_outputs = egnn(node_feats.detach(), pos.detach(), batch=batch)
+    egnn_loss = sum(value.float().square().mean() for value in egnn_outputs.values())
+    egnn_loss.backward()
+    if "node_positions" not in egnn_outputs or not all(
+        torch.isfinite(value).all() for value in egnn_outputs.values()
+    ):
+        print("ml_smoke: dynamic EGNN output contract failed", file=sys.stderr)
+        return 1
+    for name, parameter in egnn.named_parameters():
+        if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
+            print(f"ml_smoke: non-finite EGNN gradient in {name}", file=sys.stderr)
             return 1
 
     model.eval()

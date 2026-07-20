@@ -76,6 +76,7 @@ class EquivariantAttentionConfig:
     residual_scale_init: float = 0.1
     eps: float = 1e-12
     global_transport_mode: str = "learned"
+    coordinate_updates: bool = False
 
 
 class EquivariantAttention(nn.Module):
@@ -136,6 +137,18 @@ class EquivariantAttention(nn.Module):
                 for layer_index in range(config.num_layers)
             ]
         )
+        self.coordinate_updaters = nn.ModuleList(
+            [
+                _CoordinateUpdater(
+                    scalars=self.hidden_irreps.scalars,
+                    vectors=self.hidden_irreps.vectors,
+                    eps=config.eps,
+                )
+                for _ in range(config.num_layers - 1)
+            ]
+            if config.coordinate_updates
+            else []
+        )
         self.scalar_out_norm = nn.LayerNorm(self.hidden_irreps.scalars)
         self.scalar_out = nn.Linear(
             self.hidden_irreps.scalars, self.output_irreps.scalars
@@ -165,7 +178,7 @@ class EquivariantAttention(nn.Module):
         has_local_heads = any(layer.local_head_count for layer in self.layers)
         if edge_index is not None and not has_local_heads:
             raise ValueError("edge_index requires at least one layer with local heads")
-        if has_local_heads:
+        if has_local_heads and not self.config.coordinate_updates:
             local_geometry = _local_geometry(
                 pos,
                 batch,
@@ -178,8 +191,26 @@ class EquivariantAttention(nn.Module):
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
         global_geometry_injected = False
-        for layer in self.layers:
-            if layer.has_active_global_transport and normalized_pos is None:
+        for layer_index, layer in enumerate(self.layers):
+            if self.config.coordinate_updates:
+                local_geometry = (
+                    _local_geometry(
+                        pos,
+                        batch,
+                        num_graphs=num_graphs,
+                        cutoff=self.config.local_cutoff,
+                        num_rbf=self.config.num_rbf,
+                        graph_counts=graph_counts,
+                        edge_index=edge_index,
+                    )
+                    if layer.local_head_count
+                    else None
+                )
+                normalized_pos = None
+                global_scalar_input = None
+            if layer.has_active_global_transport and (
+                self.config.coordinate_updates or normalized_pos is None
+            ):
                 (
                     normalized_pos,
                     log_radius,
@@ -219,11 +250,20 @@ class EquivariantAttention(nn.Module):
                 graph_counts,
                 local_geometry,
             )
+            if layer_index < len(self.coordinate_updaters):
+                pos = pos + self.coordinate_updaters[layer_index](
+                    scalars,
+                    vectors,
+                    pos,
+                    batch,
+                    num_graphs,
+                    graph_counts,
+                )
 
         node_scalars = self.scalar_out(self.scalar_out_norm(scalars))
         node_vectors = self.vector_out(vectors)
         node_tensors = _st_features_to_matrix(self.tensor_out(transient_tensor))
-        return {
+        output = {
             "node_scalars": node_scalars,
             "node_vectors": node_vectors,
             "node_tensors": node_tensors,
@@ -237,6 +277,9 @@ class EquivariantAttention(nn.Module):
                 node_tensors, batch, num_graphs, graph_counts
             ),
         }
+        if self.config.coordinate_updates:
+            output["node_positions"] = pos
+        return output
 
     def _check_inputs(
         self,
@@ -629,6 +672,40 @@ class _EquivariantMomentLayer(nn.Module):
             vector_ffn, self.eps
         )
         return scalars, vectors
+
+
+class _CoordinateUpdater(nn.Module):
+    def __init__(self, scalars: int, vectors: int, eps: float) -> None:
+        super().__init__()
+        self.eps = eps
+        self.scalar_norm = nn.LayerNorm(scalars)
+        self.scalar_gate = nn.Linear(scalars, 1)
+        self.vector_mix = _ChannelMix(vectors, 1)
+        nn.init.zeros_(self.scalar_gate.weight)
+        nn.init.constant_(self.scalar_gate.bias, 0.1)
+
+    def forward(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor,
+        num_graphs: int,
+        graph_counts: torch.Tensor,
+    ) -> torch.Tensor:
+        normalized_scalars = _stable_layer_norm(self.scalar_norm, scalars)
+        gate = torch.tanh(
+            self.scalar_gate(normalized_scalars.to(dtype=scalars.dtype))
+        ).to(dtype=pos.dtype)
+        direction = self.vector_mix(_bounded_irrep(vectors, self.eps)).squeeze(1)
+        raw_displacement = direction.to(dtype=pos.dtype) * gate
+        return _bounded_centered_displacement(
+            raw_displacement,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+            maximum=0.25,
+        )
 
 
 class _ChannelMix(nn.Module):
@@ -2141,6 +2218,27 @@ def _segment_amax(
     return out.scatter_reduce(0, index, value, reduce="amax", include_self=True)
 
 
+def _bounded_centered_displacement(
+    displacement: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+    maximum: float,
+) -> torch.Tensor:
+    centered = displacement - _scatter_mean(
+        displacement,
+        batch,
+        num_graphs,
+        graph_counts,
+    )[batch]
+    norm = _stable_vector_norm(centered)
+    graph_maximum = _segment_amax(norm, batch, num_graphs)
+    limit = centered.new_full((), maximum)
+    graph_scale = limit / graph_maximum.clamp_min(limit)
+    return centered * graph_scale[batch]
+
+
 def _scale_first_geometry(
     pos: torch.Tensor,
     batch: torch.Tensor,
@@ -2309,6 +2407,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "learn_local_radial_gate",
         "use_memory_interaction",
         "use_radial_trace",
+        "coordinate_updates",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
@@ -2317,6 +2416,8 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
         choices = ", ".join(sorted(_GLOBAL_TRANSPORT_MODES))
         raise ValueError(f"global_transport_mode must be one of: {choices}")
+    if config.coordinate_updates and config.num_layers < 2:
+        raise ValueError("coordinate_updates requires at least two layers")
     if config.local_head_counts is None:
         local_head_counts = (0,) * config.num_layers
     else:

@@ -47,6 +47,8 @@ model = EquivariantAttention(
         global_memory_count=1,
         use_memory_interaction=False,
         use_radial_trace=False,
+        # Optional latent-coordinate refinement; disabled by default.
+        coordinate_updates=False,
     )
 )
 
@@ -59,6 +61,13 @@ print(out["graph_scalars"].shape)  # (2, 1)
 print(out["graph_vectors"].shape)  # (2, 1, 3)
 print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 ```
+
+Setting `coordinate_updates=True` adds bounded, graph-centroid-preserving
+updates between successive blocks and returns `out["node_positions"]`. Each
+step is at most 0.25 Angstrom, and every later local/global geometry calculation
+uses the updated positions. The default remains off, preserving the existing
+six output keys and checkpoint schema. These are latent task coordinates, not
+optimized molecular geometries or force predictions.
 
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:
@@ -148,23 +157,51 @@ uniform, while learned/uniform took 1.512x/1.288x the elapsed time of none
 locked, no default changed, and the conditional private-EGNN comparison was
 not run. See [the benchmark record](docs/BENCHMARKS.md#registered-transport-mechanism-result-2026-07-19).
 
+The independently approved dynamic-coordinate packet then completed all six
+500-step screen arms and twenty 2,000-step confirmation arms. The screen
+selected `ggg` and admitted dynamic EGNN, but neither family passed the frozen
+five-seed promotion rule. Attention static/dynamic mean validation MAE was
+0.582946/0.585535 eV; EGNN static/dynamic was 0.408932/0.410428 eV. All dynamic
+runs had active coordinate gradients and respected the centroid and 0.25
+Angstrom per-layer bounds, but the accuracy gates failed and dynamic EGNN also
+used 1.456x median elapsed time. Coordinate updates therefore remain opt-in and
+the public default stays off. See [the coordinate-study record](docs/BENCHMARKS.md#registered-dynamic-coordinateegnn-result-2026-07-19).
+
+The current accuracy reference is therefore the parameter-matched private
+static EGNN, not the coordinate-enabled attention arm. At 2,000 updates its
+five-seed validation MAE was 0.408932 eV, versus 0.582946 eV for static GGG and
+0.515688 eV for the stronger historical static LGL result. The gap analysis
+points first to missing learned pairwise distance-conditioned local content,
+normalized aggregation that hides neighborhood mass, and complete-graph versus
+cutoff topology—not to coordinate motion. These are hypotheses for the next
+registered study, not established causes or implemented defaults. See
+[the competitiveness analysis](docs/BENCHMARKS.md#competitiveness-assessment-against-the-private-egnn)
+and [the proposed falsifying study](docs/EVALUATION.md#proposed-egnn-parity-study-not-yet-authorized).
+
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
   --routing lgl --global-transport-mode uniform --bounded-diagnostics
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
   --benchmark-model internal_static_egnn_baseline --hidden-dim 91
+uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
+  --routing lgl --coordinate-updates
+uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
+  --benchmark-model internal_dynamic_egnn_baseline --hidden-dim 91
 ./scripts/run_bounded_control_screen.sh \
   artifacts/egnn-matched-baseline-development-20260718
 uv run --locked python scripts/run_registered_transport_study.py \
   artifacts/transport-study-reproduction --dry-run
+uv run --locked python scripts/run_registered_coordinate_study.py \
+  artifacts/coordinate-study-reproduction --dry-run
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
 
 The training CLI exposes registered `--routing ggg/lgg/ggl/lgl/lll`,
 `--global-transport-mode learned/uniform/none`,
-`--memory-count 1/4/8`, `--memory-interaction`, and `--radial-trace` arms. Use
+`--memory-count 1/4/8`, `--memory-interaction`, `--radial-trace`, and opt-in
+`--coordinate-updates` arms. Use
 `--no-alignment-linear-term`, `--no-key-balancing`, and
 `--kernel-floor-mode fixed/inverse_graph_size` only for matched ablations. Test
 evaluation is disabled by default and requires explicit `--evaluate-test`.
@@ -172,11 +209,14 @@ Despite the compatibility name, `inverse_graph_size` scales the complete
 shifted positive baseline `(c + beta + delta*beta*t)` by `1/N_g` and leaves the
 content and `gamma*t^2` terms unchanged.
 
-`--benchmark-model internal_static_egnn_baseline` is a private comparison path,
-not a second public architecture. It uses static coordinates, fully connected
-same-graph directed non-self edges, squared-distance scalar messages, and the
-same local split/normalization/optimizer/readout harness. It is explicitly not
-an official-paper EGNN reproduction. Its model-specific default width is 91;
+`--benchmark-model internal_static_egnn_baseline` and
+`internal_dynamic_egnn_baseline` are private comparison paths, not second public
+architectures. Both use fully connected same-graph directed non-self edges,
+squared-distance scalar messages, and the same local
+split/normalization/optimizer/readout harness. The dynamic control additionally
+uses invariant edge scalars to weight relative coordinate vectors, followed by
+the same 0.25-Angstrom bound and graph-centroid correction. Neither is an
+official-paper code reproduction. Their model-specific default width is 91;
 factorized-only nondefault flags are rejected rather than ignored.
 
 Except for the registered M=1 `lgl` probe above, these switches are implemented

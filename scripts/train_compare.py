@@ -11,7 +11,10 @@ from typing import Sequence
 import torch
 import torch.nn.functional as F
 
-from equivariant_attention._egnn_baseline import _StaticEGNNBaseline
+from equivariant_attention._egnn_baseline import (
+    _DynamicEGNNBaseline,
+    _StaticEGNNBaseline,
+)
 from equivariant_attention.moment import routing_head_counts as _routing_head_counts
 
 from equivariant_attention.benchmarking import (
@@ -48,6 +51,11 @@ QM9_DATA_HASHES = {
 }
 
 NODE_COUNT_STRATUM_UPPER_BOUNDS = (16, 32, 64, 128, 512, 2048)
+_EGNN_BENCHMARK_MODEL_CHOICES = (
+    "internal_static_egnn_baseline",
+    "internal_dynamic_egnn_baseline",
+)
+_EGNN_BENCHMARK_MODELS = frozenset(_EGNN_BENCHMARK_MODEL_CHOICES)
 
 
 def main() -> None:
@@ -81,6 +89,7 @@ def main() -> None:
     torch.manual_seed(model_seed)
     model = _build_benchmark_model(args, node_dim=node_dim).to(device=device)
     initial_state_hashes = _model_state_hashes(model)
+    paired_base_initial_state_hashes = _paired_base_state_hashes(model)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -141,6 +150,12 @@ def main() -> None:
             if parameter.requires_grad
         ),
         **initial_state_hashes,
+        "paired_base_initial_state_sha256": paired_base_initial_state_hashes[
+            "initial_state_sha256"
+        ],
+        "paired_base_state_schema_sha256": paired_base_initial_state_hashes[
+            "state_schema_sha256"
+        ],
         "final_state_sha256": _model_state_hashes(model)["initial_state_sha256"],
         "initialization_hash_version": "canonical_state_dict_v1",
         "source_sha256": _source_hash(),
@@ -150,6 +165,12 @@ def main() -> None:
             model_seed=model_seed,
         ),
     }
+    metrics["coordinate_diagnostics"] = _coordinate_update_diagnostics(
+        model,
+        dataset,
+        val_idx,
+        sample_count=min(32, len(val_idx)),
+    )
     if args.dataset == "qm9":
         metrics["target"] = _qm9_target_metadata(args.qm9_target_index)
         metrics["data_identity"] = data_identity
@@ -190,10 +211,13 @@ def main() -> None:
         )
         metrics["kernel_parameters"] = kernel_parameter_summary(beta, gamma)
     else:
+        coordinate_updates = (
+            args.benchmark_model == "internal_dynamic_egnn_baseline"
+        )
         metrics["baseline_details"] = {
-            "name": "internal_static_egnn_baseline",
+            "name": args.benchmark_model,
             "official_reproduction": False,
-            "coordinate_updates": False,
+            "coordinate_updates": coordinate_updates,
             "edge_topology": "same_graph_directed_complete_without_self",
             "distance_feature": "raw_squared_distance",
             "readout": "layernorm_node_linear_graph_mean",
@@ -207,6 +231,9 @@ def main() -> None:
     metrics["nonzero_gradient_parameter_count"] = gradient_parameters[
         "nonzero_gradient_parameter_count"
     ]
+    metrics["coordinate_gradient_parameters"] = (
+        _coordinate_gradient_parameter_diagnostics(model)
+    )
     metrics["node_count_strata"] = _node_count_strata_metrics(
         model,
         dataset,
@@ -215,11 +242,11 @@ def main() -> None:
         normalizer=normalizer,
         amp_dtype=amp_dtype,
     )
-    if args.benchmark_model == "internal_static_egnn_baseline":
+    if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
         metrics["bounded_diagnostics"] = {
             "schema_version": 1,
             "enabled": bool(args.bounded_diagnostics),
-            "status": "not_applicable_internal_static_egnn_baseline",
+            "status": f"not_applicable_{args.benchmark_model}",
             "reason": "factorized attention diagnostics do not apply to EGNN messages",
         }
     else:
@@ -257,7 +284,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--benchmark-model",
-        choices=["factorized_moment", "internal_static_egnn_baseline"],
+        choices=["factorized_moment", *_EGNN_BENCHMARK_MODEL_CHOICES],
         default="factorized_moment",
     )
     parser.add_argument("--dataset", choices=["synthetic", "qm9"], default="synthetic")
@@ -302,6 +329,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--memory-assignment-scale", type=float, default=2.5)
     parser.add_argument("--memory-interaction-cutoff", type=float, default=2.5)
     parser.add_argument("--radial-trace", action="store_true")
+    parser.add_argument("--coordinate-updates", action="store_true")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--grad-clip", type=float, default=1.0)
@@ -329,7 +357,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.hidden_dim is None:
         args.hidden_dim = (
             91
-            if args.benchmark_model == "internal_static_egnn_baseline"
+            if args.benchmark_model in _EGNN_BENCHMARK_MODELS
             else 64
         )
     return args
@@ -350,7 +378,7 @@ def _build_benchmark_model(
     *,
     node_dim: int,
 ) -> torch.nn.Module:
-    if args.benchmark_model == "internal_static_egnn_baseline":
+    if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
         incompatible = []
         defaults = {
             "routing": "ggg",
@@ -372,6 +400,7 @@ def _build_benchmark_model(
             "diagnostic_max_nodes": 128,
             "diagnostic_sample_count": 32,
             "diagnostic_effective_rank": False,
+            "coordinate_updates": False,
         }
         for name, expected in defaults.items():
             if getattr(args, name) != expected:
@@ -382,7 +411,12 @@ def _build_benchmark_model(
                 "factorized-attention controls cannot be set for the internal "
                 f"EGNN baseline: {names}"
             )
-        return _StaticEGNNBaseline(
+        baseline = (
+            _DynamicEGNNBaseline
+            if args.benchmark_model == "internal_dynamic_egnn_baseline"
+            else _StaticEGNNBaseline
+        )
+        return baseline(
             node_dim=node_dim,
             hidden_dim=args.hidden_dim,
             num_layers=args.num_layers,
@@ -414,6 +448,7 @@ def _build_benchmark_model(
         memory_assignment_scale=args.memory_assignment_scale,
         memory_interaction_cutoff=args.memory_interaction_cutoff,
         use_radial_trace=args.radial_trace,
+        coordinate_updates=args.coordinate_updates,
     )
 
 
@@ -483,10 +518,161 @@ def _gradient_parameter_diagnostics(model: torch.nn.Module) -> dict[str, int | s
     }
 
 
+def _coordinate_gradient_parameter_diagnostics(
+    model: torch.nn.Module,
+) -> dict[str, int | str]:
+    coordinate_parameters = [
+        parameter
+        for name, parameter in model.named_parameters()
+        if "coordinate_updaters" in name
+    ]
+    with_gradient_count = 0
+    nonzero_count = 0
+    nonfinite_count = 0
+    for parameter in coordinate_parameters:
+        if parameter.grad is None:
+            continue
+        gradient = parameter.grad.detach()
+        finite = torch.isfinite(gradient)
+        with_gradient_count += gradient.numel()
+        nonzero_count += int(torch.count_nonzero((gradient != 0) & finite).item())
+        nonfinite_count += int(torch.count_nonzero(~finite).item())
+    return {
+        "count_unit": "scalar_parameter_elements",
+        "parameter_count": sum(parameter.numel() for parameter in coordinate_parameters),
+        "parameters_with_gradient_count": with_gradient_count,
+        "nonzero_gradient_parameter_count": nonzero_count,
+        "nonfinite_gradient_parameter_count": nonfinite_count,
+    }
+
+
+def _coordinate_update_diagnostics(
+    model: torch.nn.Module,
+    dataset: Sequence[GraphSample],
+    validation_indices: Sequence[int],
+    *,
+    sample_count: int,
+) -> dict[str, object]:
+    if sample_count <= 0 or not validation_indices:
+        raise ValueError("coordinate diagnostics require validation samples")
+    selected_indices = list(validation_indices[:sample_count])
+    graph_batch = collate_graphs([dataset[index] for index in selected_indices])
+    parameter = next(model.parameters())
+    graph_batch = graph_batch.to(device=parameter.device, dtype=parameter.dtype)
+    captured_steps: list[torch.Tensor] = []
+    handles = [
+        updater.register_forward_hook(
+            lambda _module, _inputs, output: captured_steps.append(output.detach())
+        )
+        for updater in getattr(model, "coordinate_updaters", ())
+    ]
+    training_states = [(module, module.training) for module in model.modules()]
+    try:
+        model.eval()
+        with torch.no_grad():
+            output = model(
+                graph_batch.node_feats,
+                graph_batch.pos,
+                batch=graph_batch.batch,
+            )
+    finally:
+        for handle in handles:
+            handle.remove()
+        for module, training in training_states:
+            module.training = training
+
+    enabled = "node_positions" in output
+    updated = output.get("node_positions", graph_batch.pos)
+    displacement = updated - graph_batch.pos
+    displacement_norm = torch.linalg.vector_norm(displacement.float(), dim=-1)
+    graph_counts = torch.bincount(graph_batch.batch)
+    input_centers = _batched_coordinate_means(
+        graph_batch.pos,
+        graph_batch.batch,
+        graph_counts,
+    )
+    output_centers = _batched_coordinate_means(
+        updated,
+        graph_batch.batch,
+        graph_counts,
+    )
+    centroid_drift = torch.linalg.vector_norm(
+        (output_centers - input_centers).float(), dim=-1
+    )
+    layer_summaries = []
+    for layer_index, step in enumerate(captured_steps):
+        step_norm = torch.linalg.vector_norm(step.float(), dim=-1)
+        step_centers = _batched_coordinate_means(
+            step,
+            graph_batch.batch,
+            graph_counts,
+        )
+        layer_summaries.append(
+            {
+                "layer_index": layer_index,
+                "step_rms_angstrom": float(step_norm.square().mean().sqrt().cpu()),
+                "step_max_angstrom": float(step_norm.max().cpu()),
+                "centroid_drift_max_angstrom": float(
+                    torch.linalg.vector_norm(step_centers.float(), dim=-1).max().cpu()
+                ),
+            }
+        )
+    displacement_max = float(displacement_norm.max().cpu())
+    layer_active = any(layer["step_max_angstrom"] > 0.0 for layer in layer_summaries)
+    return {
+        "schema_version": 1,
+        "enabled": enabled,
+        "active": enabled and layer_active,
+        "sample_count": len(selected_indices),
+        "node_count": int(graph_batch.pos.shape[0]),
+        "selection": "validation_split_order_prefix",
+        "registered_step_max_angstrom": 0.25,
+        "displacement_rms_angstrom": float(
+            displacement_norm.square().mean().sqrt().cpu()
+        ),
+        "displacement_max_angstrom": displacement_max,
+        "centroid_drift_max_angstrom": float(centroid_drift.max().cpu()),
+        "layers": layer_summaries,
+        "excluded_from_elapsed_seconds": True,
+        "excluded_from_peak_cuda_memory_bytes": True,
+    }
+
+
+def _batched_coordinate_means(
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    graph_counts: torch.Tensor,
+) -> torch.Tensor:
+    num_graphs = int(graph_counts.numel())
+    summed = value.new_zeros((num_graphs, value.shape[-1])).index_add(0, batch, value)
+    return summed / graph_counts.to(dtype=value.dtype).unsqueeze(-1)
+
+
 def _model_state_hashes(model: torch.nn.Module) -> dict[str, str]:
+    return _state_hashes(model)
+
+
+def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
+    return _state_hashes(
+        model,
+        excluded_prefixes=(
+            "coordinate_updaters.",
+            "vector_out.",
+            "tensor_out.",
+        ),
+    )
+
+
+def _state_hashes(
+    model: torch.nn.Module,
+    *,
+    excluded_prefixes: tuple[str, ...] = (),
+) -> dict[str, str]:
     state_digest = hashlib.sha256()
     schema_digest = hashlib.sha256()
     for name, tensor in model.state_dict().items():
+        if name.startswith(excluded_prefixes):
+            continue
         metadata = json.dumps(
             [name, str(tensor.dtype), list(tensor.shape)],
             ensure_ascii=True,
@@ -1284,6 +1470,8 @@ def _source_hash() -> str:
         path
         for path in [
             root / "scripts" / "train_compare.py",
+            root / "scripts" / "run_registered_coordinate_study.py",
+            root / "artifacts" / "dynamic-coordinate-egnn-20260719" / "scope.md",
             root / "PROJECT.md",
             root / "docs" / "LAYER_MATH.md",
             root / "docs" / "QM9_CONTRACT.md",
@@ -1309,7 +1497,10 @@ def _run_config(
     split_seed: int,
     model_seed: int,
 ) -> dict[str, object]:
-    if args.benchmark_model == "internal_static_egnn_baseline":
+    if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
+        coordinate_updates = (
+            args.benchmark_model == "internal_dynamic_egnn_baseline"
+        )
         return {
             "dataset": args.dataset,
             "data_root": str(args.data_root),
@@ -1319,7 +1510,7 @@ def _run_config(
             "val_size": args.val_size,
             "batch_size": args.batch_size,
             "steps": args.steps,
-            "model": "internal_static_egnn_baseline",
+            "model": args.benchmark_model,
             "comparison_role": "internal_same_harness_baseline",
             "official_reproduction": False,
             "hidden_dim": args.hidden_dim,
@@ -1335,7 +1526,19 @@ def _run_config(
             "amp_dtype": args.amp_dtype,
             "target_normalized": not args.no_target_normalize,
             "test_evaluated": args.evaluate_test,
-            "coordinate_updates": False,
+            "coordinate_updates": coordinate_updates,
+            "coordinate_update_count": (
+                args.num_layers - 1 if coordinate_updates else 0
+            ),
+            "coordinate_update_max_step_angstrom": (
+                0.25 if coordinate_updates else "not_applicable"
+            ),
+            "coordinate_update_formula": (
+                "centered_bounded_relative_vectors_times_invariant_edge_scalars"
+                if coordinate_updates
+                else "not_applicable"
+            ),
+            "geometry_recomputed_per_layer": coordinate_updates,
             "edge_topology": "same_graph_directed_complete_without_self",
             "distance_feature": "raw_squared_distance",
             "edge_gate": "learned_sigmoid",
@@ -1409,6 +1612,19 @@ def _run_config(
         "amp_dtype": args.amp_dtype,
         "target_normalized": not args.no_target_normalize,
         "test_evaluated": args.evaluate_test,
+        "coordinate_updates": args.coordinate_updates,
+        "coordinate_update_count": (
+            args.num_layers - 1 if args.coordinate_updates else 0
+        ),
+        "coordinate_update_max_step_angstrom": (
+            0.25 if args.coordinate_updates else "not_applicable"
+        ),
+        "coordinate_update_formula": (
+            "centered_bounded_invariant_gated_polar_vector_state"
+            if args.coordinate_updates
+            else "not_applicable"
+        ),
+        "geometry_recomputed_per_layer": args.coordinate_updates,
         "attention": "factorized_moment",
         "kernel_version": 3,
         "balance_cycles": 0 if args.no_key_balancing else 1,

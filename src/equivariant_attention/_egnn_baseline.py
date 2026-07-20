@@ -5,6 +5,7 @@ from torch import nn
 
 from .moment import (
     _batched_complete_graph_edges,
+    _bounded_centered_displacement,
     _graph_metadata,
     _scatter_mean,
 )
@@ -37,6 +38,38 @@ class _StaticEGNNLayer(nn.Module):
         receiver: torch.Tensor,
         sender: torch.Tensor,
     ) -> torch.Tensor:
+        edge, aggregate = self._edge_and_aggregate(
+            value,
+            pos,
+            receiver,
+            sender,
+        )
+        del edge
+        return value + self.node_mlp(torch.cat([value, aggregate], dim=-1))
+
+    def forward_with_edge(
+        self,
+        value: torch.Tensor,
+        pos: torch.Tensor,
+        receiver: torch.Tensor,
+        sender: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        edge, aggregate = self._edge_and_aggregate(
+            value,
+            pos,
+            receiver,
+            sender,
+        )
+        updated = value + self.node_mlp(torch.cat([value, aggregate], dim=-1))
+        return updated, edge
+
+    def _edge_and_aggregate(
+        self,
+        value: torch.Tensor,
+        pos: torch.Tensor,
+        receiver: torch.Tensor,
+        sender: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         displacement = pos[receiver] - pos[sender]
         squared_distance = displacement.square().sum(dim=-1, keepdim=True)
         edge_input = torch.cat(
@@ -46,7 +79,7 @@ class _StaticEGNNLayer(nn.Module):
         edge = self.edge_mlp(edge_input)
         message = edge * self.edge_gate(edge)
         aggregate = value.new_zeros(value.shape).index_add(0, receiver, message)
-        return value + self.node_mlp(torch.cat([value, aggregate], dim=-1))
+        return edge, aggregate
 
 
 class _StaticEGNNBaseline(nn.Module):
@@ -144,6 +177,100 @@ class _StaticEGNNBaseline(nn.Module):
             batch = batch.to(dtype=torch.long)
         num_graphs, graph_counts = _graph_metadata(batch)
         return node_feats, pos, batch, num_graphs, graph_counts
+
+
+class _EGNNCoordinateUpdater(nn.Module):
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.coordinate_gate = nn.Linear(hidden_dim, 1)
+
+    def forward(
+        self,
+        edge: torch.Tensor,
+        pos: torch.Tensor,
+        receiver: torch.Tensor,
+        sender: torch.Tensor,
+        batch: torch.Tensor,
+        num_graphs: int,
+        graph_counts: torch.Tensor,
+    ) -> torch.Tensor:
+        relative = pos[receiver] - pos[sender]
+        weight = torch.tanh(self.coordinate_gate(edge)).to(dtype=pos.dtype)
+        messages = relative * weight
+        aggregate = pos.new_zeros(pos.shape).index_add(0, receiver, messages)
+        neighbor_count = (graph_counts[batch] - 1).clamp_min(1).to(dtype=pos.dtype)
+        raw_displacement = aggregate / neighbor_count.unsqueeze(-1)
+        return _bounded_centered_displacement(
+            raw_displacement,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+            maximum=0.25,
+        )
+
+
+class _DynamicEGNNBaseline(_StaticEGNNBaseline):
+    """Private bounded-coordinate EGNN control for matched benchmark runs."""
+
+    attention_kind = "internal_dynamic_egnn_baseline"
+
+    def __init__(
+        self,
+        node_dim: int,
+        hidden_dim: int = 91,
+        num_layers: int = 3,
+    ) -> None:
+        if num_layers < 2:
+            raise ValueError("dynamic EGNN requires at least two layers")
+        super().__init__(
+            node_dim=node_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+        )
+        self.coordinate_updaters = nn.ModuleList(
+            [_EGNNCoordinateUpdater(hidden_dim) for _ in range(num_layers - 1)]
+        )
+
+    def forward(
+        self,
+        node_feats: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
+            node_feats,
+            pos,
+            batch,
+        )
+        receiver, sender = _directed_complete_edges_without_self(
+            batch,
+            graph_counts,
+        )
+
+        value = self.embedding(node_feats)
+        for layer_index, layer in enumerate(self.layers):
+            value, edge = layer.forward_with_edge(value, pos, receiver, sender)
+            if layer_index < len(self.coordinate_updaters):
+                pos = pos + self.coordinate_updaters[layer_index](
+                    edge,
+                    pos,
+                    receiver,
+                    sender,
+                    batch,
+                    num_graphs,
+                    graph_counts,
+                )
+        node_scalar = self.scalar_out(self.scalar_out_norm(value))
+        graph_scalar = _scatter_mean(
+            node_scalar,
+            batch,
+            num_graphs,
+            graph_counts,
+        )
+        return {
+            "graph_scalars": graph_scalar,
+            "node_positions": pos,
+        }
 
 
 def _directed_complete_edges_without_self(

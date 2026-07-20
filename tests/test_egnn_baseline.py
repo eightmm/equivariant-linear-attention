@@ -2,6 +2,7 @@ import torch
 
 import equivariant_attention as package
 from equivariant_attention._egnn_baseline import (
+    _DynamicEGNNBaseline,
     _StaticEGNNBaseline,
     _StaticEGNNLayer,
     _directed_complete_edges_without_self as _model_edges,
@@ -234,3 +235,171 @@ def test_qm9_parameter_match_zero_init_minimal_output_and_private_api() -> None:
     assert not hasattr(package, "EGNN")
     assert not hasattr(package, "StaticEGNNBaseline")
     assert not hasattr(package, "build_egnn_baseline")
+
+
+def _dynamic_model() -> _DynamicEGNNBaseline:
+    torch.manual_seed(131)
+    model = _DynamicEGNNBaseline(node_dim=4, hidden_dim=8, num_layers=3).double()
+    with torch.no_grad():
+        model.scalar_out.weight.normal_()
+        model.scalar_out.bias.normal_()
+    return model.eval()
+
+
+def test_dynamic_egnn_positions_are_o3_translation_and_permutation_equivariant() -> None:
+    model = _dynamic_model()
+    torch.manual_seed(137)
+    node_feats = torch.randn(7, 4, dtype=torch.float64)
+    pos = torch.randn(7, 3, dtype=torch.float64)
+    batch = torch.tensor([0, 0, 0, 1, 1, 1, 1])
+    orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    orthogonal[:, 0].neg_()
+    translation = torch.randn(1, 3, dtype=torch.float64)
+    permutation = torch.tensor([2, 0, 1, 6, 4, 3, 5])
+    inverse = torch.argsort(permutation)
+
+    reference = model(node_feats, pos, batch=batch)
+    moved = model(
+        node_feats, pos @ orthogonal.T + translation, batch=batch
+    )
+    permuted = model(
+        node_feats[permutation], pos[permutation], batch=batch[permutation]
+    )
+
+    assert set(reference) == {"graph_scalars", "node_positions"}
+    assert not torch.equal(reference["node_positions"], pos)
+    assert torch.allclose(
+        moved["node_positions"],
+        reference["node_positions"] @ orthogonal.T + translation,
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert torch.allclose(
+        permuted["node_positions"][inverse],
+        reference["node_positions"],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert torch.allclose(
+        moved["graph_scalars"], reference["graph_scalars"], atol=1e-10, rtol=1e-10
+    )
+
+
+def test_dynamic_egnn_steps_are_bounded_centered_and_batch_isolated() -> None:
+    model = _dynamic_model()
+    torch.manual_seed(139)
+    first_feats = torch.randn(4, 4, dtype=torch.float64)
+    first_pos = torch.randn(4, 3, dtype=torch.float64)
+    second_feats = torch.randn(3, 4, dtype=torch.float64)
+    second_pos = torch.randn(3, 3, dtype=torch.float64)
+    batch = torch.tensor([0, 0, 0, 0, 1, 1, 1])
+    steps: list[torch.Tensor] = []
+    handles = [
+        updater.register_forward_hook(
+            lambda _module, _inputs, output: steps.append(output.detach())
+        )
+        for updater in model.coordinate_updaters
+    ]
+    try:
+        together = model(
+            torch.cat([first_feats, second_feats]),
+            torch.cat([first_pos, second_pos]),
+            batch=batch,
+        )
+        alone = model(first_feats, first_pos)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    assert len(steps) >= 2
+    for step in steps[:2]:
+        assert float(torch.linalg.vector_norm(step, dim=-1).max()) <= 0.25 + 1e-12
+        for graph in range(2):
+            assert torch.allclose(
+                step[batch == graph].mean(dim=0),
+                torch.zeros(3, dtype=torch.float64),
+                atol=1e-12,
+                rtol=0.0,
+            )
+    assert torch.allclose(
+        together["node_positions"][:4],
+        alone["node_positions"],
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    for graph in range(2):
+        index = batch == graph
+        original = torch.cat([first_pos, second_pos])[index]
+        assert torch.allclose(
+            together["node_positions"][index].mean(dim=0),
+            original.mean(dim=0),
+            atol=1e-12,
+            rtol=0.0,
+        )
+
+
+def test_dynamic_egnn_singleton_and_coordinate_parameters_have_finite_gradients() -> None:
+    model = _dynamic_model().train()
+    node_feats = torch.randn(1, 4, dtype=torch.float64, requires_grad=True)
+    pos = torch.randn(1, 3, dtype=torch.float64, requires_grad=True)
+
+    output = model(node_feats, pos)
+    loss = output["graph_scalars"].square().sum() + output[
+        "node_positions"
+    ].square().sum()
+    loss.backward()
+
+    assert torch.equal(output["node_positions"], pos)
+    assert pos.grad is not None and torch.isfinite(pos.grad).all()
+    coordinate_parameters = [
+        parameter
+        for name, parameter in model.named_parameters()
+        if "coordinate_updaters" in name
+    ]
+    assert coordinate_parameters
+    assert all(
+        parameter.grad is None or torch.isfinite(parameter.grad).all()
+        for parameter in coordinate_parameters
+    )
+
+
+def test_dynamic_egnn_coordinate_parameters_receive_nonzero_gradients() -> None:
+    model = _dynamic_model().train()
+    node_feats = torch.randn(4, 4, dtype=torch.float64)
+    pos = torch.randn(4, 3, dtype=torch.float64, requires_grad=True)
+
+    output = model(node_feats, pos)
+    output["node_positions"].square().sum().backward()
+
+    gradients = [
+        parameter.grad
+        for name, parameter in model.named_parameters()
+        if "coordinate_updaters" in name
+    ]
+    assert gradients
+    assert all(gradient is not None and torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(torch.count_nonzero(gradient) for gradient in gradients)
+
+
+def test_dynamic_egnn_scalar_coordinate_gradients_are_o3_covariant() -> None:
+    model = _dynamic_model()
+    node_feats = torch.randn(7, 4, dtype=torch.float64)
+    pos = torch.randn(7, 3, dtype=torch.float64, requires_grad=True)
+    batch = torch.tensor([0, 0, 0, 1, 1, 1, 1])
+    transform, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    transform[:, 0].neg_()
+    translation = torch.randn(1, 3, dtype=torch.float64)
+
+    reference = model(node_feats, pos, batch=batch)["graph_scalars"].square().sum()
+    reference_gradient = torch.autograd.grad(reference, pos)[0]
+    moved_pos = (pos.detach() @ transform.T + translation).requires_grad_()
+    moved = model(node_feats, moved_pos, batch=batch)["graph_scalars"].square().sum()
+    moved_gradient = torch.autograd.grad(moved, moved_pos)[0]
+
+    assert torch.allclose(moved, reference, atol=1e-10, rtol=1e-10)
+    assert torch.allclose(
+        moved_gradient,
+        reference_gradient @ transform.T,
+        atol=1e-9,
+        rtol=1e-9,
+    )

@@ -216,6 +216,40 @@ parameters frozen. The bounded degree-2 kernel times this radial gate is
 normalized over each receiver's local senders. Local moments are evaluated
 directly on retained edges, including self edges.
 
+## Optional latent-coordinate update
+
+Let `s_i` be the invariant scalar state and `v_ic` the polar-vector state after
+a nonfinal block. A learned channel mix and invariant scalar gate form
+
+```text
+r_i = tanh(g(LN(s_i))) sum_c w_c v_ic.
+```
+
+For graph `g`, center `r_i` and apply one shared graph scale:
+
+```text
+u_i = r_i - mean_{j in g} r_j,
+a_g = min(1, 0.25 Angstrom / max_{j in g} ||u_j||),
+x_i' = x_i + a_g u_i.
+```
+
+The shared scale retains `sum_i a_g u_i=0`, so the graph centroid is unchanged,
+while every step is bounded by 0.25 Angstrom. An invariant gate times a polar
+vector is O(3)-equivariant; centering and norm-based graph scaling preserve
+O(3), translation, and permutation behavior. Updated global/local geometry is
+recomputed before the next block. There is no final post-readout updater, so
+every coordinate parameter can influence the scalar property loss.
+
+The private dynamic EGNN control uses its invariant edge embedding `m_ij`:
+
+```text
+r_i = mean_{j != i} (x_i - x_j) tanh(phi_x(m_ij)),
+```
+
+then applies the same graph-centering and bound. This follows the EGNN
+relative-vector update pattern but remains a same-harness internal control, not
+an official implementation reproduction.
+
 ## Multi-memory global gate (HEMM)
 
 For `M` slots, bounded invariant logits yield soft assignments

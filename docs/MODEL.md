@@ -41,6 +41,7 @@ The forward result is a tensor-only dictionary:
 | `graph_scalars` | `(G, Cs)` | O(3)-invariant |
 | `graph_vectors` | `(G, Cv, 3)` | polar-vector equivariant |
 | `graph_tensors` | `(G, Ct, 3, 3)` | symmetric-traceless rank-2 equivariant |
+| `node_positions` | `(N, 3)` | point-coordinate equivariant; only with `coordinate_updates=True` |
 
 Representation metadata belongs to the model rather than the output dictionary
 so compiled/tensor consumers do not receive strings.
@@ -48,6 +49,14 @@ so compiled/tensor consumers do not receive strings.
 `node_tensors` and `graph_tensors` read out the last attention block's
 transient symmetric-traceless moment. They are not a persistent tensor hidden
 state computed after the final scalar/vector FFN.
+
+The default `coordinate_updates=False` returns exactly the original six keys
+and allocates no coordinate parameters. With the option enabled, every
+nonfinal block produces an invariant-gated polar displacement, subtracts its
+graph-wise mean, applies one graph-wise scale so every node step is at most
+0.25 Angstrom, and passes the updated positions to the next block. Omitting a
+post-readout update ensures every allocated coordinate parameter can affect the
+scalar training objective. `node_positions` is the resulting latent geometry.
 
 ## Architecture choices
 
@@ -82,9 +91,14 @@ only the global attention weights with exact `1/N_g` graph means of the same
 value/moment sufficient statistics. `"none"` removes global messages; in an
 all-global block it bypasses the attention updater residual and retains only
 the pointwise equivariant FFN. All modes allocate the same parameter schema.
-Centroid/RMS-normalized global geometry is computed once immediately before the
-first learned or uniform global block, preventing preprocessing from leaking
-into `lll` or a no-global-transport control.
+With static coordinates, centroid/RMS-normalized global geometry is computed
+once immediately before the first learned or uniform global block, preventing
+preprocessing from leaking into `lll` or a no-global-transport control. With
+coordinate updates enabled, scale-first global geometry is recomputed before
+each active global block and local cutoff/RBF geometry is recomputed before each
+active local block. A supplied `edge_index` remains fixed candidate topology;
+its candidates are re-filtered against the current positions at every local
+stage.
 
 Global heads use structured graph summaries and do not construct an `N x N`
 attention tensor. Local heads construct directed same-graph raw-coordinate
@@ -155,3 +169,7 @@ model. Finite degree-2 moments/RBFs retain representation collisions, and soft
 memory assignments can collapse. The model is therefore scoped to bounded-size
 property probes or global context within a local/global encoder, not validated
 interatomic potentials or energy-conserving force fields.
+
+Coordinate-enabled positions are latent representations trained only through
+the property objective. They are not validated relaxed structures, forces,
+trajectories, or a conservative potential-energy surface.

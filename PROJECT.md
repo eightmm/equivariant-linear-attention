@@ -35,6 +35,25 @@
   default or simplification may be documented only when its frozen promotion
   rule passes. The exact frozen scope is
   `artifacts/evidence-first-strengthening-20260719/scope.md`.
+- Dynamic-coordinate extension: the user's 2026-07-19 confirmation admits an
+  opt-in, bounded, graph-centroid-preserving coordinate update in the public
+  attention model; a private dynamic-coordinate EGNN control alongside the
+  existing static control; and a validation-only QM9 study on one local GPU
+  with a fresh cumulative ceiling of 25 GPU-minutes. Static defaults and
+  checkpoint/output behavior remain unchanged. The exact frozen scope is
+  `artifacts/dynamic-coordinate-egnn-20260719/scope.md`.
+- The registered dynamic-coordinate packet completed on 2026-07-19: all six
+  screen arms and twenty confirmation arms ran in 944.3 GPU-wall seconds with
+  test evaluation disabled. Neither family passed every frozen promotion
+  condition, so coordinate updates remain opt-in and no default changed.
+- Competitiveness assessment: the current private static EGNN is the accuracy
+  reference at `0.408932 eV` five-seed mean validation MAE. Static GGG trails it
+  by `0.174014 eV`; the stronger historical static LGL result trails it
+  descriptively by `0.106756 eV`. The next proposed hypothesis is that learned
+  receiver/sender/distance-conditioned local edge content plus explicit
+  neighborhood mass closes at least `0.050 eV` of the LGL gap. This proposal is
+  recorded in `docs/EVALUATION.md` but does not authorize a model change or new
+  GPU compute without a separately confirmed scope.
 
 ## Project
 
@@ -132,6 +151,27 @@
   `N^2 + L*E`; after validation, supplied-edge geometry/transport is `L*E` at
   fixed width. A production radius-neighbor backend or end-to-end
   neighbor-construction claim is not included.
+- Coordinate updates are opt-in and disabled by default. When enabled, each
+  nonfinal transport block forms an O(3)-equivariant displacement from its
+  invariant scalar state and polar-vector state, bounds the per-node step by
+  `0.25 Angstrom`, removes the exact graph-wise mean displacement, and updates
+  the working coordinates before the next block. Omitting a dead post-readout
+  updater ensures every coordinate parameter affects the scalar training loss.
+  This preserves graph centroids and
+  translation/O(3)/permutation behavior while preventing unbounded latent
+  geometry drift. The coordinate-enabled state schema is intentionally
+  distinct; the disabled state schema remains byte-for-byte compatible.
+- With coordinate updates enabled, local cutoff/RBF geometry and scale-first
+  global geometry are recomputed from the current positions before every
+  applicable block. A supplied `edge_index` remains a fixed candidate topology
+  but its candidates are cutoff-filtered again at each local stage; omitted
+  edges cannot enter later solely because coordinates move. The complete-graph
+  fallback can admit every same-graph candidate at each stage.
+- A coordinate-enabled forward adds `node_positions` to the tensor-only output
+  dictionary. The disabled default retains exactly the existing six output
+  keys. Updated coordinates are latent task features, not claims of optimized
+  physical geometries, conservative forces, molecular dynamics, or a learned
+  potential-energy surface.
 
 ## Multi-Memory Global Transport
 
@@ -220,6 +260,14 @@
 - The public defaults for key balancing, the linear angular term, radial
   trace, and `lgl` routing may change only through the registered validation
   decision rules below.
+- The existing private `internal_static_egnn_baseline` remains unchanged. A
+  separate private `internal_dynamic_egnn_baseline` follows the EGNN pattern:
+  invariant edge messages depend on node states and squared distance, and an
+  invariant scalar edge projection weights relative-coordinate vectors before
+  a node update. Its aggregate displacement is bounded to `0.25 Angstrom` and
+  graph-mean-centered under the same stability contract as the attention arm.
+  This is an equation-level same-harness control, not an official repository
+  reproduction or a second public architecture.
 
 ## Verification
 
@@ -235,6 +283,13 @@
   coordinate-gradient equivariance, alignment-constant isolation, balancing
   erasure, fixed-versus-inverse-size floor references, extreme finite
   scale-first coordinates, and multi-memory degeneration/permutation.
+- Required coordinate-update cases: raw-boundary float64 O(3), reflection,
+  translation, node permutation, graph centroid preservation, singleton and
+  mixed-batch isolation, finite coincident coordinates, the per-layer `0.25
+  Angstrom` bound, nonzero coordinate-parameter gradients, updated-position
+  coordinate-gradient covariance, and exact disabled-mode output/state
+  compatibility. Dynamic local routes must prove that later stages receive
+  recomputed geometry rather than the initial geometry object.
 - Inference wrappers preserve eval state and public metadata. CPU, CUDA auto,
   bf16/fp16, compile, benchmark, and state-schema claims are tested where the
   corresponding runtime is available.
@@ -323,6 +378,32 @@
   normalization, MSE/AdamW/cyclic update budget, and mean readout. It is labeled
   `internal_static_egnn_baseline`, not an official EGNN reproduction or public
   model family.
+- The dynamic-coordinate study is independent of the failed transport
+  efficiency lock and changes only the coordinate-update switch within each
+  paired family. Its seed-42, 500-step screen contains static/dynamic `ggg`,
+  static/dynamic `lgl`, and static/dynamic private EGNN. An attention route is
+  eligible only if both arms are finite, the dynamic displacement is active,
+  and dynamic validation MAE is no more than `0.020 eV` worse than its static
+  pair; the eligible route with lower dynamic validation MAE advances.
+- Confirmation reruns the selected attention route static/dynamic and private
+  EGNN static/dynamic at seeds 41--45 for 2,000 updates. For either family,
+  coordinate updating is promoted only when mean paired validation MAE improves
+  by at least `0.010 eV`, at least three of five seeds improve, the worst seed
+  regresses by no more than `0.020 eV`, and median elapsed-time and peak-memory
+  ratios are each at most `1.20`. A failed gate leaves the public default off;
+  cross-family EGNN/attention numbers are descriptive because their update
+  parameterizations differ.
+- The completed coordinate confirmation selected `ggg` in the screen. Attention
+  static/dynamic mean validation MAE was `0.582946/0.585535 eV`, a mean paired
+  improvement of `-0.002589 eV`; three seeds improved and both resource and
+  worst-seed gates passed, but the mean-accuracy gate failed. Private EGNN
+  static/dynamic mean validation MAE was `0.408932/0.410428 eV`, a mean paired
+  improvement of `-0.001496 eV`; three seeds improved, but the mean-accuracy,
+  worst-seed (`-0.052560 eV`), and elapsed-ratio (`1.456`) gates failed. Both
+  promotion decisions are therefore false. All ten dynamic confirmation arms
+  had active nonzero coordinate gradients, maximum observed per-layer step
+  `0.25000003 Angstrom`, and maximum graph-centroid drift
+  `4.92e-7 Angstrom`.
 - Stage 4 compares `lgl` with interacting `M=1,4,8` under the selected
   preceding settings and radial trace off.
   The multi-memory claim is falsified for this benchmark if it fails the
@@ -370,6 +451,13 @@
   new frozen hypothesis and compute approval after the transport-efficiency
   failure is addressed. The existing result does not authorize using the
   remaining nominal budget for a different experiment.
+- The user's 2026-07-19 dynamic-coordinate confirmation supplies a new, separate
+  ceiling of 25 cumulative GPU-minutes for the frozen screen and conditional
+  confirmation above. That packet is now consumed: 26 runs completed in 944.3
+  seconds and both promotion decisions failed. It authorizes no test
+  evaluation, checkpoint publication, dependency change, 10,000-step run, or
+  additional post-hoc arm. Further GPU training requires a new frozen
+  hypothesis and compute approval.
 
 ## Commands
 
@@ -379,6 +467,9 @@
 - GPU smoke: `scripts/check.sh gpu`
 - Training probe: `uv run python scripts/train_compare.py --dataset synthetic`
 - Benchmark: `uv run python scripts/bench_attention.py`
+- Coordinate-study inspection: `uv run --locked python
+  scripts/run_registered_coordinate_study.py artifacts/coordinate-study-reproduction
+  --dry-run`
 
 ## Paths
 

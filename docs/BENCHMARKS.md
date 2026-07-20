@@ -142,6 +142,98 @@ uv run --locked python scripts/run_registered_transport_study.py \
   artifacts/transport-study-reproduction --dry-run
 ```
 
+## Registered dynamic-coordinate/EGNN result (2026-07-19)
+
+The independent coordinate packet used the same local QM9 `gap` data identity,
+110k/10k random-row warm validation protocol, FP32, batch size 64, and three
+layers. Its seed-42/500-step screen admitted `ggg` attention and dynamic EGNN;
+`lgl` dynamic regressed by 0.056577 eV and did not advance. Confirmation paired
+static and dynamic initializations at seeds 41--45 for 2,000 updates.
+
+| seed | attention static | attention dynamic | improvement | EGNN static | EGNN dynamic | improvement |
+|---:|---:|---:|---:|---:|---:|---:|
+| 41 | 0.512575 | 0.510856 | 0.001718 | 0.429862 | 0.395129 | 0.034733 |
+| 42 | 0.586021 | 0.605571 | -0.019550 | 0.431229 | 0.417954 | 0.013275 |
+| 43 | 0.623774 | 0.629016 | -0.005241 | 0.421278 | 0.372225 | 0.049053 |
+| 44 | 0.598871 | 0.589326 | 0.009545 | 0.396939 | 0.449499 | -0.052560 |
+| 45 | 0.593489 | 0.592905 | 0.000584 | 0.365354 | 0.417335 | -0.051981 |
+| mean | 0.582946 | 0.585535 | -0.002589 | 0.408932 | 0.410428 | -0.001496 |
+
+Positive improvement favors dynamic coordinates. The frozen rule required
+every listed gate:
+
+| family | mean improvement | improving seeds | worst improvement | elapsed ratio | memory ratio | result |
+|---|---:|---:|---:|---:|---:|---|
+| attention `ggg` | -0.002589 | 3/5 | -0.019550 | 1.179 | 1.010 | fail mean gain |
+| private EGNN | -0.001496 | 3/5 | -0.052560 | 1.456 | 1.008 | fail mean/worst/elapsed |
+
+Neither family is promoted. Attention keeps `coordinate_updates=False` as the
+public default; the dynamic private EGNN remains an equation-level diagnostic
+control. All ten dynamic confirmation arms had active nonzero coordinate
+gradients. Maximum observed per-layer step was `0.25000003 Angstrom`, maximum
+graph-centroid drift was `4.92e-7 Angstrom`, and every run kept
+`test_evaluated=false`. These are latent-coordinate and validation findings,
+not physical geometry or official EGNN reproduction claims.
+
+The budget-enforced runner completed 26 GPU arms in 944.3 wall seconds under a
+1,500-second ceiling. Inspect the frozen packet with:
+
+```bash
+uv run --locked python scripts/run_registered_coordinate_study.py \
+  artifacts/coordinate-study-reproduction --dry-run
+```
+
+### Competitiveness assessment against the private EGNN
+
+The coordinate ablation answered whether latent coordinate motion helped each
+family; it did not establish attention/EGNN parity. Under the same 2,000-update
+QM9 validation harness, the current static GGG attention remains substantially
+behind the near-parameter-matched private static EGNN:
+
+| path | trainable parameters | mean final-batch train loss | mean validation MAE | median recorded elapsed | peak CUDA memory |
+|---|---:|---:|---:|---:|---:|
+| static GGG attention | 153,081 | 0.377288 | 0.582946 eV | 47.934 s | 245,148,672 B |
+| static LGL learned | 153,081 | 0.328162 | 0.515688 eV | 41.545 s | 181,456,896 B |
+| private static EGNN | 152,065 | 0.168751 | 0.408932 eV | 7.148 s | 269,261,824 B |
+
+GGG trails EGNN by 0.174014 eV and takes 6.706x its recorded elapsed time,
+while using 9.0% less peak memory. The stronger LGL result narrows the
+descriptive MAE gap to 0.106756 eV and uses 32.6% less peak memory, but still
+takes 5.812x the elapsed time. LGL and EGNN values come from separate registered
+studies and source hashes, so that row-to-row comparison is diagnostic rather
+than a paired promotion result. `train_loss` is the last normalized-target
+minibatch loss, not a train-set mean; its large gap is an optimization or
+capacity warning, not proof of a particular cause.
+
+Code inspection suggests five falsifiable bottlenecks:
+
+1. The registered local attention arms froze `learn_local_radial_gate=false`.
+   Their 16 RBF values therefore do not learn a radial logit; distance affects
+   the weight mainly through the fixed cosine cutoff. EGNN instead puts raw
+   squared distance directly inside a learned receiver/sender edge MLP.
+2. Attention normalizes each receiver row before aggregation. EGNN sums edge
+   messages, directly retaining neighborhood mass and coordination. The moment
+   scalar updater currently receives neither the local denominator nor an
+   explicit degree/mass invariant.
+3. The attention content has the separable form of a scalar pair weight times a
+   sender value. EGNN can change edge-message content jointly with receiver,
+   sender, and distance features.
+4. The private EGNN uses every directed same-graph nonself pair, whereas local
+   attention uses a 2.5-Angstrom cutoff plus self edges. The middle factorized
+   global block compresses geometry into bounded degree-2 moments and may not
+   recover all missing pairwise distance distinctions.
+5. Attention residual branches start at `0.1/sqrt(num_layers)`, and recorded
+   final gradient norms sit at the clipping boundary. Periodic fixed-train-probe
+   loss and pre-clip norms are needed before attributing the train-loss gap only
+   to representation.
+
+These are inferences from the implementation and registered metrics. They are
+not causal findings. The highest-priority candidate is a sparse, invariant
+receiver/sender/RBF edge-content branch inside the existing local moment block,
+with explicit degree or attention-mass invariants, while retaining factorized
+global attention. Coordinate updates, multi-memory interaction, higher moment
+degree, and indiscriminate width/depth increases remain downstream choices.
+
 ## Registered M=1 routing result (2026-07-17)
 
 On clean commit `a8bda61`, the validation-only QM9 `gap` comparison used the

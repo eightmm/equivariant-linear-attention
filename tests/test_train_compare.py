@@ -181,12 +181,51 @@ def test_internal_static_egnn_run_config_is_explicitly_nonofficial() -> None:
     assert sum(parameter.numel() for parameter in model.parameters()) == 152_065
 
 
+def test_dynamic_coordinate_models_record_the_exact_private_and_public_controls() -> None:
+    symbols = _script_symbols()
+    attention_args = symbols["parse_args"](
+        ["--routing", "lgl", "--coordinate-updates"]
+    )
+    egnn_args = symbols["parse_args"](
+        ["--benchmark-model", "internal_dynamic_egnn_baseline"]
+    )
+
+    attention_config = symbols["_run_config"](
+        attention_args, split_seed=42, model_seed=43
+    )
+    egnn_config = symbols["_run_config"](
+        egnn_args, split_seed=42, model_seed=43
+    )
+    attention = symbols["_build_benchmark_model"](attention_args, node_dim=11)
+    egnn = symbols["_build_benchmark_model"](egnn_args, node_dim=11)
+
+    assert attention_config["coordinate_updates"] is True
+    assert attention_config["coordinate_update_max_step_angstrom"] == 0.25
+    assert attention_config["coordinate_update_count"] == 2
+    assert attention.config.coordinate_updates is True
+    assert egnn_config["model"] == "internal_dynamic_egnn_baseline"
+    assert egnn_config["comparison_role"] == "internal_same_harness_baseline"
+    assert egnn_config["official_reproduction"] is False
+    assert egnn_config["coordinate_updates"] is True
+    assert egnn_config["coordinate_update_formula"] == (
+        "centered_bounded_relative_vectors_times_invariant_edge_scalars"
+    )
+    assert egnn_args.hidden_dim == 91
+    assert abs(
+        sum(parameter.numel() for parameter in attention.parameters())
+        - sum(parameter.numel() for parameter in egnn.parameters())
+    ) / sum(parameter.numel() for parameter in attention.parameters()) < 0.01
+
+
 def test_model_specific_hidden_width_defaults_are_parameter_matched() -> None:
     symbols = _script_symbols()
 
     factorized = symbols["parse_args"]([])
     egnn = symbols["parse_args"](
         ["--benchmark-model", "internal_static_egnn_baseline"]
+    )
+    dynamic_egnn = symbols["parse_args"](
+        ["--benchmark-model", "internal_dynamic_egnn_baseline"]
     )
     explicit = symbols["parse_args"](
         [
@@ -199,6 +238,7 @@ def test_model_specific_hidden_width_defaults_are_parameter_matched() -> None:
 
     assert factorized.hidden_dim == 64
     assert egnn.hidden_dim == 91
+    assert dynamic_egnn.hidden_dim == 91
     assert explicit.hidden_dim == 16
 
 
@@ -279,6 +319,107 @@ def test_internal_static_egnn_runner_uses_shared_training_and_hides_test(
     json.dumps(metrics, allow_nan=False)
 
 
+def test_dynamic_egnn_runner_records_active_coordinate_diagnostics_without_test(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "internal_dynamic_egnn_baseline",
+            "--num-samples",
+            "12",
+            "--train-size",
+            "7",
+            "--val-size",
+            "2",
+            "--batch-size",
+            "2",
+            "--steps",
+            "2",
+            "--hidden-dim",
+            "8",
+            "--num-layers",
+            "2",
+            "--bounded-diagnostics",
+        ]
+    )
+    monkeypatch.setattr(
+        symbols["argparse"].ArgumentParser,
+        "parse_args",
+        lambda self, argv=None: args,
+    )
+
+    symbols["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["model"] == "internal_dynamic_egnn_baseline"
+    assert metrics["test_evaluated"] is False
+    assert "test_mae" not in metrics
+    assert metrics["baseline_details"]["coordinate_updates"] is True
+    assert metrics["bounded_diagnostics"]["status"] == (
+        "not_applicable_internal_dynamic_egnn_baseline"
+    )
+    coordinate = metrics["coordinate_diagnostics"]
+    assert coordinate["enabled"] is True
+    assert coordinate["active"] is True
+    assert coordinate["displacement_rms_angstrom"] > 0.0
+    assert coordinate["displacement_max_angstrom"] <= 0.25 + 1e-6
+    assert coordinate["centroid_drift_max_angstrom"] < 1e-6
+    assert len(coordinate["layers"]) == 1
+    assert metrics["coordinate_gradient_parameters"][
+        "nonzero_gradient_parameter_count"
+    ] > 0
+    json.dumps(metrics, allow_nan=False)
+
+
+def test_factorized_coordinate_runner_records_dynamic_geometry_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--coordinate-updates",
+            "--routing",
+            "lgl",
+            "--num-samples",
+            "12",
+            "--train-size",
+            "7",
+            "--val-size",
+            "2",
+            "--batch-size",
+            "2",
+            "--steps",
+            "2",
+            "--hidden-dim",
+            "8",
+            "--num-layers",
+            "3",
+            "--num-heads",
+            "2",
+        ]
+    )
+    monkeypatch.setattr(
+        symbols["argparse"].ArgumentParser,
+        "parse_args",
+        lambda self, argv=None: args,
+    )
+
+    symbols["main"]()
+    metrics = json.loads(capsys.readouterr().out)
+
+    assert metrics["run_config"]["coordinate_updates"] is True
+    assert metrics["run_config"]["geometry_recomputed_per_layer"] is True
+    assert metrics["coordinate_diagnostics"]["enabled"] is True
+    assert metrics["coordinate_diagnostics"]["active"] is True
+    assert len(metrics["coordinate_diagnostics"]["layers"]) == 2
+    assert metrics["test_evaluated"] is False
+    json.dumps(metrics, allow_nan=False)
+
+
 def test_gradient_diagnostics_are_finite_json_scalars() -> None:
     symbols = _script_symbols()
     model = symbols["build_regression_model"](
@@ -332,6 +473,34 @@ def test_initial_state_hash_is_common_across_memory_count_and_value_sensitive() 
         changed_hashes["initial_state_sha256"] != single_hashes["initial_state_sha256"]
     )
     assert changed_hashes["state_schema_sha256"] == single_hashes["state_schema_sha256"]
+
+
+def test_static_dynamic_pairs_share_the_same_noncoordinate_initialization() -> None:
+    symbols = _script_symbols()
+    attention_static_args = symbols["parse_args"](["--routing", "lgl"])
+    attention_dynamic_args = symbols["parse_args"](
+        ["--routing", "lgl", "--coordinate-updates"]
+    )
+    egnn_static_args = symbols["parse_args"](
+        ["--benchmark-model", "internal_static_egnn_baseline"]
+    )
+    egnn_dynamic_args = symbols["parse_args"](
+        ["--benchmark-model", "internal_dynamic_egnn_baseline"]
+    )
+
+    hashes = []
+    for args in (
+        attention_static_args,
+        attention_dynamic_args,
+        egnn_static_args,
+        egnn_dynamic_args,
+    ):
+        torch.manual_seed(43)
+        model = symbols["_build_benchmark_model"](args, node_dim=11)
+        hashes.append(symbols["_paired_base_state_hashes"](model))
+
+    assert hashes[0] == hashes[1]
+    assert hashes[2] == hashes[3]
 
 
 def test_nonzero_gradient_parameter_count_is_scalar_element_count() -> None:

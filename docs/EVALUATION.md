@@ -1,10 +1,10 @@
 # Evaluation
 
 The public architecture remains one `EquivariantAttention` class. Routing,
-global transport, and memory flags select registered arms of that class. The
-runner also contains one explicitly private `internal_static_egnn_baseline`
-selector for a same-data/training comparison; it is not exported or described
-as an official-paper reproduction.
+global transport, memory, and coordinate-update flags select registered arms of
+that class. The runner also contains explicitly private static/dynamic EGNN
+selectors for a same-data/training comparison; neither is exported or
+described as an official-paper code reproduction.
 
 ```bash
 uv run python scripts/train_compare.py \
@@ -59,6 +59,13 @@ seeds 41--45; attention width 64 is matched by EGNN width 91.
    It keeps PyG features, split, train-only target normalization, MSE, AdamW,
    cyclic batches, and LayerNorm-node-linear-graph-mean readout fixed. Its
    complete directed edges exclude self edges and use raw squared distance.
+5a. The independently approved coordinate study first screens static/dynamic
+   `ggg`, static/dynamic `lgl`, and static/dynamic private EGNN at seed 42 for
+   500 updates. It then confirms one admitted attention route and EGNN with
+   static/dynamic pairs at seeds 41--45 for 2,000 updates. Every dynamic run
+   must report active nonzero coordinate gradients, per-layer steps at most
+   0.25 Angstrom, and graph-centroid drift below `1e-6` Angstrom. Test labels
+   remain disabled and the entire packet has a 1,500 GPU-second ceiling.
 6. On `lgl`, compare interacting `M=1,4,8`; `M=1` is the exact incumbent
    reduction. Memory count with interaction off is not an expressivity arm.
    The current Stage-0 result blocks M=4/M=8, so this step cannot run without a
@@ -79,7 +86,14 @@ Exact row statistics are streamed in query blocks and the differentiable probe
 uses only a fixed number of query rows. The script therefore retains no full
 attention matrix and deliberately does not compute effective rank.
 
-A 500-step run is a numerical screen. The transport confirmation requires
+Inspect the exact dynamic-coordinate packet without running it:
+
+```bash
+uv run --locked python scripts/run_registered_coordinate_study.py \
+  artifacts/coordinate-study-reproduction --dry-run
+```
+
+A 500-step run is a numerical screen. The coordinate confirmation requires
 paired mean validation MAE improvement of at least 0.01 eV, improvement in at
 least three of five seeds, worst-seed regression no larger than 0.02 eV, and
 median latency and peak-memory increases no larger than 20%. Earlier registered
@@ -106,6 +120,87 @@ The complete promotion rule therefore failed. This is evidence of validation
 accuracy benefit at this update budget, but not an admitted accuracy/efficiency
 mechanism lock. The public `ggg learned` default remains unchanged and the
 conditional private-EGNN comparison was not run.
+
+## Registered dynamic-coordinate outcome (2026-07-19)
+
+The independent validation-only packet completed six seed-42/500-step screen
+arms and twenty seed-41--45/2,000-step confirmation arms in 944.3 GPU-wall
+seconds, below the frozen 1,500-second ceiling. The screen admitted `ggg`
+attention and private dynamic EGNN. Source/data/split/state and paired-base
+initialization hashes validated, all values were finite, and every run recorded
+`test_evaluated=false`.
+
+| seed | attention static | attention dynamic | improvement | EGNN static | EGNN dynamic | improvement |
+|---:|---:|---:|---:|---:|---:|---:|
+| 41 | 0.512575 | 0.510856 | 0.001718 | 0.429862 | 0.395129 | 0.034733 |
+| 42 | 0.586021 | 0.605571 | -0.019550 | 0.431229 | 0.417954 | 0.013275 |
+| 43 | 0.623774 | 0.629016 | -0.005241 | 0.421278 | 0.372225 | 0.049053 |
+| 44 | 0.598871 | 0.589326 | 0.009545 | 0.396939 | 0.449499 | -0.052560 |
+| 45 | 0.593489 | 0.592905 | 0.000584 | 0.365354 | 0.417335 | -0.051981 |
+| mean | 0.582946 | 0.585535 | -0.002589 | 0.408932 | 0.410428 | -0.001496 |
+
+Positive improvement favors dynamic coordinates. Attention improved in three
+of five seeds and passed the worst-seed, elapsed (`1.179x`), and peak-memory
+(`1.010x`) gates, but failed the required `0.010 eV` mean gain. EGNN also
+improved in three seeds, but failed mean gain, worst regression (`-0.052560
+eV`), and elapsed (`1.456x`) gates; its peak-memory ratio was `1.008x`.
+Neither coordinate path is promoted.
+
+All ten dynamic confirmation arms had active coordinate displacements and
+nonzero coordinate-parameter gradients. Across them, maximum per-layer step
+was `0.25000003 Angstrom` (float32 tolerance), maximum graph-centroid drift was
+`4.92e-7 Angstrom`, and displacement RMS ranged from `0.0640` to `0.2943
+Angstrom`. These validate the registered numerical contract only; they do not
+establish relaxed physical geometries, forces, dynamics, or energy
+conservation.
+
+## Proposed EGNN-parity study (not yet authorized)
+
+The next scientific question is whether the attention gap comes primarily from
+its local pairwise representation rather than coordinate motion. No code or GPU
+run is authorized by this proposal alone.
+
+- Observation: private static EGNN reaches 0.408932 eV five-seed mean
+  validation MAE, compared with 0.582946 eV for static GGG and the historical
+  0.515688 eV for static LGL learned transport at 2,000 updates.
+- Hypothesis: adding receiver/sender/distance-conditioned invariant local edge
+  content and exposing neighborhood degree or attention mass to the scalar
+  updater will reduce LGL validation MAE by at least 0.050 eV. A learned radial
+  gate alone may help but is not expected to close the full 0.106756 eV LGL-to-
+  EGNN descriptive gap.
+- Primary baseline: private static EGNN width 91. Attention baseline: static LGL
+  width 64, learned global transport, coordinate updates off.
+- Changed variables, in order: (A) enable the already allocated learned local
+  radial gate; (B) add a parameter-bounded local edge-content MLP over receiver,
+  sender, and RBF distance features plus explicit degree/mass invariants; (C)
+  compare complete-candidate and 2.5-Angstrom cutoff topology to identify
+  whether missing long-range pairs dominate. Do not combine A--C until their
+  isolated effects are measured.
+- Optimization diagnostic: record a fixed train-probe MAE, validation MAE,
+  pre-clip gradient norm and clip fraction, and residual-scale trajectories at
+  fixed intervals. Only then consider an isolated residual-scale, learning-rate,
+  or gradient-clip change.
+- Development screen: seed 42 and at most 500 updates may reject nonfinite,
+  inactive, or clearly regressing arms; it cannot promote an architecture.
+- Confirmation: matched seeds 41--45 and 2,000 updates, unchanged QM9 data and
+  random-row warm split, train-only target normalization, FP32, batch size 64,
+  and test evaluation disabled.
+- Parity threshold: candidate mean validation MAE at most 0.408932 eV. Promotion
+  threshold: mean at most 0.398932 eV, at least three of five paired seeds beat
+  static EGNN, and worst paired regression no larger than 0.020 eV.
+- Efficiency claim: report parameters, synchronized elapsed, and peak memory.
+  Practical promotion additionally requires either a comparable QM9 resource
+  envelope or a preregistered large-graph crossover where sparse-local plus
+  factorized-global execution offsets the small-graph overhead.
+- Abandonment rule: if the pairwise edge-content branch fails to improve mean
+  validation MAE by 0.050 eV, do not spend a new long-run budget on coordinate
+  updates, multi-memory, or simple scaling as substitutes for the failed local
+  representation hypothesis.
+
+This remains an adaptive random-row interpolation study. Even a pass is only a
+same-harness validation result against a private EGNN-style control; an official
+baseline reproduction, similarity/scaffold split, and untouched final test are
+separate gates.
 
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel

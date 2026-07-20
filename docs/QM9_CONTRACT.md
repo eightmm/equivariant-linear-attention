@@ -49,6 +49,23 @@ uses the exact same PyG features, row split, training-only target transform,
 optimizer/update budget, and graph-mean readout. It is a local layer baseline,
 not the official-paper data/training recipe.
 
+The separately approved dynamic-coordinate study preserves these data and
+label boundaries. It compares static/dynamic `ggg`, `lgl`, and private EGNN
+controls while varying only the coordinate-update switch within a family.
+Updated positions are latent property-model state; the study makes no relaxed
+geometry, force, dynamics, or energy-conservation claim. Its screen and
+conditional five-seed confirmation remain validation-only under a fresh
+1,500 GPU-second ceiling.
+
+That packet completed all 26 registered arms in 944.3 GPU-wall seconds with
+test evaluation disabled. The five-seed mean validation MAEs were
+`0.582946/0.585535 eV` for attention static/dynamic and
+`0.408932/0.410428 eV` for private EGNN static/dynamic. Neither family passed
+the complete accuracy/resource rule, so coordinate updates remain optional and
+off by default. Every dynamic confirmation arm had nonzero coordinate
+gradients, maximum per-layer step no greater than `0.25000003 Angstrom`, and
+maximum centroid drift `4.92e-7 Angstrom`.
+
 The approved 2026-07-19 validation-only execution completed the six-arm screen
 and five-seed learned/uniform/none confirmation without test-label access.
 Both global modes improved validation MAE over `none`, but at least one frozen

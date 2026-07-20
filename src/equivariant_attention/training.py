@@ -31,6 +31,7 @@ def build_regression_model(
     memory_interaction_cutoff: float = 2.5,
     use_radial_trace: bool = False,
     global_transport_mode: str = "learned",
+    coordinate_updates: bool = False,
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -54,6 +55,7 @@ def build_regression_model(
             memory_assignment_scale=memory_assignment_scale,
             memory_interaction_cutoff=memory_interaction_cutoff,
             use_radial_trace=use_radial_trace,
+            coordinate_updates=coordinate_updates,
         )
     )
     _zero_init_linear(model.scalar_out)
