@@ -1,0 +1,302 @@
+{
+  "budget_seconds": 3600,
+  "candidate": "pairwise",
+  "completed_run_count": 2,
+  "confirmation_run_count": 0,
+  "iteration": 2,
+  "iteration_gpu_wall_seconds": 45.72703788199942,
+  "packet_gpu_wall_seconds": 440.9171748740009,
+  "packet_id": "egnn-parity-20260720",
+  "prior_iterations": [
+    {
+      "budget_seconds": 3600,
+      "candidate": "radial",
+      "completed_run_count": 12,
+      "confirmation_run_count": 10,
+      "iteration": 1,
+      "iteration_gpu_wall_seconds": 395.1901369920015,
+      "packet_gpu_wall_seconds": 395.1901369920015,
+      "packet_id": "egnn-parity-20260720",
+      "prior_iterations": [],
+      "prior_packet_gpu_seconds": 0.0,
+      "promoted": false,
+      "promotion": {
+        "candidate_mean_val_mae_eV": 0.49950805106163026,
+        "candidate_val_mae_by_seed_eV": {
+          "41": 0.49301877603530886,
+          "42": 0.4978906992435455,
+          "43": 0.540665902709961,
+          "44": 0.5043226543426513,
+          "45": 0.46164222297668456
+        },
+        "criteria": {
+          "at_least_three_of_five_seed_wins": false,
+          "candidate_mean_mae_at_most_0.398932_eV": false,
+          "worst_paired_improvement_at_least_minus_0.020_eV": false
+        },
+        "egnn_mean_val_mae_eV": 0.4211993760585785,
+        "egnn_val_mae_by_seed_eV": {
+          "41": 0.3986886459827423,
+          "42": 0.4432841873168945,
+          "43": 0.42171937165260315,
+          "44": 0.3906773507118225,
+          "45": 0.45162732462882993
+        },
+        "improving_seed_count": 0,
+        "mean_improvement_eV": -0.07830867500305178,
+        "median_elapsed_ratio_candidate_over_egnn": 5.830995686727565,
+        "median_peak_memory_ratio_candidate_over_egnn": 0.6761297732277116,
+        "passed": false,
+        "seed_improvements_eV": {
+          "41": -0.09433013005256657,
+          "42": -0.054606511926651,
+          "43": -0.11894653105735781,
+          "44": -0.11364530363082881,
+          "45": -0.010014898347854628
+        },
+        "worst_seed_improvement_eV": -0.11894653105735781
+      },
+      "provenance": {
+        "initial_state_sha256": {
+          "attention_baseline.seed42": "ed124552969caafc590256872dc1de2528f7c4bc1f0dc75507fec4cef95288ae",
+          "candidate.seed41": "8e0ad0d6956cb800b2abac622dc92e0883183d2d4d3d3fe0c2bccede3bc07dae",
+          "candidate.seed42": "ed124552969caafc590256872dc1de2528f7c4bc1f0dc75507fec4cef95288ae",
+          "candidate.seed43": "3cca3ff4c37ec27ad23b06c684250ec4c38499cc611324cb6ad656b5311a6d3a",
+          "candidate.seed44": "ae933ae7820501375e69809cca4f2408bf1df3b6f9c9647c17b6d50da91eba09",
+          "candidate.seed45": "e51bfded9b2768f636a40953b8320943da97795cdd4a79c6c1ee333890e2506d",
+          "egnn.seed41": "ea108912510d98631bc09a9040e164feb83ca5624518663d900e934ea18038ce",
+          "egnn.seed42": "3c81446cc02f75d3ab3b77393d834c4a2c6e876354614f23d54f3557bc171c62",
+          "egnn.seed43": "39d21a716b3c7080df46d92cb0e3855a23f125ffc6980a8a47ea032870b0003f",
+          "egnn.seed44": "290043f04d7acc1218341b761a98d34042aaf6690dfd1f24adf48087d96277e0",
+          "egnn.seed45": "ec2ec6790f7a363219d93abe6b7051662e13a26b4d9b7f19808f0597a09acf11"
+        },
+        "source_sha256": "28398ab915eac61e3bf13e6eebb8a095055a3f633b5c1a43c1953a4d7ae1d283",
+        "state_schema_sha256": {
+          "attention_baseline": "380bd22c660c456eb1cd960686a4150b54a380a2f1395ffa02368ff3c5761195",
+          "candidate": "380bd22c660c456eb1cd960686a4150b54a380a2f1395ffa02368ff3c5761195",
+          "egnn": "aa19fc2b160f146e45f6ef8ec9f9c3d34b63123e19f6c703fe52b4a1495b5183"
+        }
+      },
+      "runs": [
+        {
+          "clip_fraction": 0.908,
+          "command_wall_seconds": 22.61300270599895,
+          "group": "screen",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/screen/screen-attention-lgl-baseline.json",
+          "model_seed": 42,
+          "name": "screen-attention-lgl-baseline",
+          "parameter_count": 153285,
+          "role": "attention_baseline",
+          "train_elapsed_seconds": 11.754996773999665,
+          "val_mae": 0.7785929758071899
+        },
+        {
+          "clip_fraction": 0.914,
+          "command_wall_seconds": 22.46432582500165,
+          "group": "screen",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/screen/screen-attention-lgl-radial.json",
+          "model_seed": 42,
+          "name": "screen-attention-lgl-radial",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 11.806207431000075,
+          "val_mae": 0.7596551021575928
+        },
+        {
+          "clip_fraction": 0.9725,
+          "command_wall_seconds": 53.07924422199903,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-attention-radial-seed41.json",
+          "model_seed": 41,
+          "name": "confirmation-attention-radial-seed41",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 42.430045074999725,
+          "val_mae": 0.49301877603530886
+        },
+        {
+          "clip_fraction": 0.984,
+          "command_wall_seconds": 17.05084733500007,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-egnn-static-seed41.json",
+          "model_seed": 41,
+          "name": "confirmation-egnn-static-seed41",
+          "parameter_count": 152065,
+          "role": "egnn",
+          "train_elapsed_seconds": 7.2537519249999605,
+          "val_mae": 0.3986886459827423
+        },
+        {
+          "clip_fraction": 0.9775,
+          "command_wall_seconds": 52.56570882899905,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-attention-radial-seed42.json",
+          "model_seed": 42,
+          "name": "confirmation-attention-radial-seed42",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 41.94327358100054,
+          "val_mae": 0.4978906992435455
+        },
+        {
+          "clip_fraction": 0.973,
+          "command_wall_seconds": 17.10053158499977,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-egnn-static-seed42.json",
+          "model_seed": 42,
+          "name": "confirmation-egnn-static-seed42",
+          "parameter_count": 152065,
+          "role": "egnn",
+          "train_elapsed_seconds": 7.243994935999581,
+          "val_mae": 0.4432841873168945
+        },
+        {
+          "clip_fraction": 0.974,
+          "command_wall_seconds": 52.73620288899838,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-attention-radial-seed43.json",
+          "model_seed": 43,
+          "name": "confirmation-attention-radial-seed43",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 42.13384521700027,
+          "val_mae": 0.540665902709961
+        },
+        {
+          "clip_fraction": 0.98,
+          "command_wall_seconds": 17.500072041999374,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-egnn-static-seed43.json",
+          "model_seed": 43,
+          "name": "confirmation-egnn-static-seed43",
+          "parameter_count": 152065,
+          "role": "egnn",
+          "train_elapsed_seconds": 7.3248356969997985,
+          "val_mae": 0.42171937165260315
+        },
+        {
+          "clip_fraction": 0.972,
+          "command_wall_seconds": 52.634428054001546,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-attention-radial-seed44.json",
+          "model_seed": 44,
+          "name": "confirmation-attention-radial-seed44",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 41.94781543099998,
+          "val_mae": 0.5043226543426513
+        },
+        {
+          "clip_fraction": 0.9795,
+          "command_wall_seconds": 17.19815458100129,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-egnn-static-seed44.json",
+          "model_seed": 44,
+          "name": "confirmation-egnn-static-seed44",
+          "parameter_count": 152065,
+          "role": "egnn",
+          "train_elapsed_seconds": 7.193936968000344,
+          "val_mae": 0.3906773507118225
+        },
+        {
+          "clip_fraction": 0.9725,
+          "command_wall_seconds": 53.03068429400082,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-attention-radial-seed45.json",
+          "model_seed": 45,
+          "name": "confirmation-attention-radial-seed45",
+          "parameter_count": 153285,
+          "role": "candidate",
+          "train_elapsed_seconds": 42.273330803000135,
+          "val_mae": 0.46164222297668456
+        },
+        {
+          "clip_fraction": 0.986,
+          "command_wall_seconds": 17.201968061001025,
+          "group": "confirmation",
+          "metrics_path": "artifacts/egnn-parity-20260720/iteration-1-radial/registered-runs/confirmation/confirmation-egnn-static-seed45.json",
+          "model_seed": 45,
+          "name": "confirmation-egnn-static-seed45",
+          "parameter_count": 152065,
+          "role": "egnn",
+          "train_elapsed_seconds": 7.21490914900096,
+          "val_mae": 0.45162732462882993
+        }
+      ],
+      "screen": {
+        "baseline_val_mae_eV": 0.7785929758071899,
+        "candidate_minus_baseline_eV": -0.018937873649597092,
+        "candidate_val_mae_eV": 0.7596551021575928,
+        "confirmation_admitted": true,
+        "criteria": {
+          "candidate_minus_baseline_at_most_0.020_eV": true,
+          "finite": true,
+          "parameter_ratio_at_most_1.05": true
+        },
+        "parameter_ratio": 1.0
+      },
+      "screen_run_count": 2,
+      "status": "confirmation_failed_promotion",
+      "study": "private_egnn_parity_20260720",
+      "test_evaluated": false,
+      "val_mae": 0.49950805106163026
+    }
+  ],
+  "prior_packet_gpu_seconds": 395.1901369920015,
+  "promoted": false,
+  "promotion": null,
+  "provenance": {
+    "initial_state_sha256": {
+      "attention_baseline.seed42": "ed124552969caafc590256872dc1de2528f7c4bc1f0dc75507fec4cef95288ae",
+      "candidate.seed42": "1c5fee44c78c6bfcb4ee2a3c9c8d2945c6f95a65fb426d08ec680a1ee92a9c20"
+    },
+    "source_sha256": "28398ab915eac61e3bf13e6eebb8a095055a3f633b5c1a43c1953a4d7ae1d283",
+    "state_schema_sha256": {
+      "attention_baseline": "380bd22c660c456eb1cd960686a4150b54a380a2f1395ffa02368ff3c5761195",
+      "candidate": "dc5c10f5afbfe75bbf2d6b96681ae33be2c0e8bbedc132002efb781539d6f82f"
+    }
+  },
+  "runs": [
+    {
+      "clip_fraction": 0.912,
+      "command_wall_seconds": 22.411137609000434,
+      "group": "screen",
+      "metrics_path": "artifacts/egnn-parity-20260720/iteration-2-pairwise/registered-runs/screen/screen-attention-lgl-baseline.json",
+      "model_seed": 42,
+      "name": "screen-attention-lgl-baseline",
+      "parameter_count": 153285,
+      "role": "attention_baseline",
+      "train_elapsed_seconds": 11.634618776000934,
+      "val_mae": 0.7678473665237426
+    },
+    {
+      "clip_fraction": 0.922,
+      "command_wall_seconds": 23.314887622000242,
+      "group": "screen",
+      "metrics_path": "artifacts/egnn-parity-20260720/iteration-2-pairwise/registered-runs/screen/screen-attention-lgl-pairwise.json",
+      "model_seed": 42,
+      "name": "screen-attention-lgl-pairwise",
+      "parameter_count": 154390,
+      "role": "candidate",
+      "train_elapsed_seconds": 12.548016017000919,
+      "val_mae": 0.8406635845184326
+    }
+  ],
+  "screen": {
+    "baseline_val_mae_eV": 0.7678473665237426,
+    "candidate_minus_baseline_eV": 0.07281621799468996,
+    "candidate_val_mae_eV": 0.8406635845184326,
+    "confirmation_admitted": false,
+    "criteria": {
+      "candidate_minus_baseline_at_most_0.020_eV": false,
+      "finite": true,
+      "parameter_ratio_at_most_1.05": true
+    },
+    "parameter_ratio": 1.0072087940763936
+  },
+  "screen_run_count": 2,
+  "status": "screen_not_admitted",
+  "study": "private_egnn_parity_20260720",
+  "test_evaluated": false,
+  "val_mae": 0.8406635845184326
+}

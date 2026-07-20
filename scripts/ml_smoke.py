@@ -43,6 +43,8 @@ def main() -> int:
             output_irreps="2x0e + 1x1o + 1x2e",
             num_layers=2,
             num_heads=4,
+            local_head_counts=(4, 4),
+            use_pairwise_local_content=True,
             coordinate_updates=True,
         )
     ).to(device=device, dtype=dtype)

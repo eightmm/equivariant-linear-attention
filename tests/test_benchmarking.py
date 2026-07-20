@@ -100,6 +100,32 @@ def test_regression_train_and_eval_smoke() -> None:
     assert metrics["rmse"] >= 0.0
 
 
+def test_regression_step_records_preclip_norm_and_clip_fraction() -> None:
+    torch.manual_seed(37)
+    dataset = SyntheticMoleculeDataset(
+        num_samples=6, node_dim=5, min_nodes=4, max_nodes=6, seed=41
+    )
+    batch = collate_graphs([dataset[i] for i in range(4)])
+    model = build_regression_model(node_dim=5, hidden_dim=8, num_layers=1, num_heads=2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    monitor: dict[str, float | int] = {}
+
+    for _ in range(3):
+        train_regression_step(
+            model,
+            batch,
+            optimizer,
+            grad_clip=1e-12,
+            gradient_monitor=monitor,
+        )
+
+    assert monitor["step_count"] == 3
+    assert monitor["clipped_step_count"] == 3
+    assert monitor["pre_clip_grad_norm_last"] > 0.0
+    assert monitor["pre_clip_grad_norm_max"] >= monitor["pre_clip_grad_norm_last"]
+    assert monitor["pre_clip_grad_norm_sum"] > 0.0
+
+
 def test_builder_uses_the_single_promoted_architecture() -> None:
     model = build_regression_model(node_dim=5, hidden_dim=32, num_layers=2, num_heads=4)
 

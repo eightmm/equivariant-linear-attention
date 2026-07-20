@@ -120,6 +120,37 @@ def test_run_config_records_local_memory_and_trace_controls() -> None:
     assert config["hemm_admission_status"] == "stage0_blocked_experimental"
 
 
+def test_run_config_records_pairwise_local_content_and_mass_contract() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        ["--routing", "lgl", "--pairwise-local-content"]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["pairwise_local_content"] is True
+    assert config["pairwise_local_formula"] == (
+        "shared_receiver_sender_rbf_mlp_plus_degree_and_cutoff_mass"
+    )
+    assert config["pairwise_local_aggregation"] == "cutoff_sum_over_sqrt_degree"
+    assert model.config.use_pairwise_local_content is True
+    assert config["pairwise_residual_scale_init"] == 0.1
+    assert any("local_pairwise_content" in name for name, _ in model.named_parameters())
+
+    zero_args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--pairwise-local-content",
+            "--pairwise-residual-scale-init",
+            "0.0",
+        ]
+    )
+    zero_model = symbols["_build_benchmark_model"](zero_args, node_dim=11)
+    assert zero_model.local_pairwise_content.residual_scale.item() == 0.0
+
+
 @pytest.mark.parametrize(
     ("mode", "formula", "balancing"),
     [
@@ -618,6 +649,12 @@ def test_runner_json_connects_bounded_metrics_without_evaluating_test(
     assert len(metrics["final_state_sha256"]) == 64
     assert len(metrics["state_schema_sha256"]) == 64
     assert metrics["nonzero_gradient_parameter_count"] > 0
+    assert metrics["gradient_clipping"]["measurement_point"] == "before_clipping"
+    assert metrics["gradient_clipping"]["step_count"] == 1
+    assert 0.0 <= metrics["gradient_clipping"]["clip_fraction"] <= 1.0
+    assert metrics["train_probe"]["selection"] == "train_split_order_prefix"
+    assert metrics["train_probe"]["sample_count"] == 7
+    assert metrics["train_probe"]["mae"] >= 0.0
     assert metrics["test_evaluated"] is False
     assert "test_mae" not in metrics
     assert metrics["node_count_strata"]["split"] == "validation"
@@ -631,6 +668,27 @@ def test_runner_json_connects_bounded_metrics_without_evaluating_test(
     assert diagnostics["kernel_attention"]["attention.effective_rank"] >= 1.0
     assert diagnostics["memory"]["status"] == "disabled"
     json.dumps(metrics, allow_nan=False)
+
+
+def test_pairwise_named_gradient_diagnostics_are_active() -> None:
+    symbols = _script_symbols()
+    model = symbols["build_regression_model"](
+        node_dim=4,
+        hidden_dim=8,
+        num_layers=3,
+        num_heads=2,
+        local_head_counts=(2, 0, 2),
+        use_pairwise_local_content=True,
+    )
+    sum(parameter.sum() for parameter in model.parameters()).backward()
+
+    summary = symbols["_named_gradient_parameter_diagnostics"](
+        model, "local_pairwise_content"
+    )
+
+    assert summary["parameter_count"] > 0
+    assert summary["parameters_with_gradient_count"] == summary["parameter_count"]
+    assert summary["nonzero_gradient_parameter_count"] == summary["parameter_count"]
 
 
 @pytest.mark.parametrize("memory_count", [4, 8])

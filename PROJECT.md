@@ -52,8 +52,25 @@
   descriptively by `0.106756 eV`. The next proposed hypothesis is that learned
   receiver/sender/distance-conditioned local edge content plus explicit
   neighborhood mass closes at least `0.050 eV` of the LGL gap. This proposal is
-  recorded in `docs/EVALUATION.md` but does not authorize a model change or new
-  GPU compute without a separately confirmed scope.
+  recorded in `docs/EVALUATION.md`.
+- EGNN-parity extension: the user's 2026-07-20 confirmation authorizes the
+  proposed static-coordinate LGL work, at most three sequential architecture
+  iterations, and at most 60 cumulative GPU-minutes on one local GPU. The
+  ordered interventions are learned local radial gating, a parameter-bounded
+  receiver/sender/RBF edge-content branch with explicit neighborhood
+  mass/degree invariants, and one evidence-selected topology or optimization
+  repair if needed. Test evaluation, new dependencies, multi-memory,
+  coordinate updates, checkpoint publication, and 10,000-step claims remain
+  excluded. The exact frozen packet is
+  `artifacts/egnn-parity-20260720/scope.md`.
+- The EGNN-parity packet completed all three permitted architecture iterations
+  in 850.7 cumulative GPU-wall seconds with no test evaluation. Radial-only
+  reached 0.499508 eV five-seed mean versus its rerun static EGNN at 0.421199
+  eV. Pairwise content at residual scale 0.1 failed its screen; exact-baseline
+  zero initialization passed the screen but reached 0.509008 eV versus rerun
+  EGNN at 0.438268 eV. Neither confirmation won any paired seed, so no model or
+  default is promoted. Further architecture training requires a new confirmed
+  packet; seeded CUDA repeat drift must be addressed first.
 
 ## Project
 
@@ -458,6 +475,15 @@
   evaluation, checkpoint publication, dependency change, 10,000-step run, or
   additional post-hoc arm. Further GPU training requires a new frozen
   hypothesis and compute approval.
+- The user's 2026-07-20 confirmation supplies a fresh 3,600-second cumulative
+  GPU ceiling for the EGNN-parity packet only. Each architecture iteration
+  begins with a seed-42/500-update validation screen and advances to matched
+  seeds 41--45/2,000 updates only when finite and nonregressing. The packet
+  stops immediately when the candidate reaches mean validation MAE at most
+  `0.398932 eV`, wins at least three of five paired seeds against a rerun private
+  static EGNN, and has worst paired regression no lower than `-0.020 eV`; or
+  when three iterations or 3,600 GPU-seconds are consumed. No test labels may
+  be opened, and failed/null iterations must remain in the ledger.
 
 ## Commands
 

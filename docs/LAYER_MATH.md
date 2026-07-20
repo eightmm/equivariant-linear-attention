@@ -216,6 +216,45 @@ parameters frozen. The bounded degree-2 kernel times this radial gate is
 normalized over each receiver's local senders. Local moments are evaluated
 directly on retained edges, including self edges.
 
+The opt-in pairwise-content repair leaves those equivariant moments unchanged
+and adds one invariant scalar message. Let `qbar_ih` and `kbar_jh` be the raw
+scalar query/key projections before positive-feature normalization, and let
+`rho(u_ij)` be the existing RBF vector. A head-shared two-layer MLP gives
+
+```text
+e_ijh = MLP([qbar_ih, kbar_jh, rho(u_ij)]),  i != j.
+```
+
+For retained nonself edges, define the unweighted neighbor degree and smooth
+cutoff mass
+
+```text
+n_i = sum_j 1,
+c_i = sum_j f_c(u_ij).
+```
+
+The added scalar message is
+
+```text
+m_pair_ih = alpha (
+    sum_j f_c(u_ij) e_ijh / sqrt(max(1, n_i))
+    + W_mass [log(1+n_i), log(1+c_i)]
+).
+```
+
+`alpha` is one learned residual scalar, initialized to `0.1` by default. The
+registered staged-initialization repair may set it to zero so the first forward
+pass is the exact incumbent while `alpha` itself receives the first learning
+signal. One shared module is reused by every local layer and every head, so the
+registered width-64 model adds only 1,105 parameters. The unnormalized numerator retains pair content;
+the explicit degree/cutoff-mass term restores neighborhood-size information
+that receiver-row normalization removes. All inputs to this branch are
+invariant scalars, so adding it to the scalar moment preserves O(3), reflection,
+translation, permutation, and graph-batch isolation. Self edges remain in the
+incumbent moment path but are excluded from this neighbor-content branch.
+`use_pairwise_local_content=False` allocates no module and preserves the exact
+default state schema and output.
+
 ## Optional latent-coordinate update
 
 Let `s_i` be the invariant scalar state and `v_ic` the polar-vector state after

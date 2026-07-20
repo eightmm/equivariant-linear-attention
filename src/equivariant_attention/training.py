@@ -32,6 +32,8 @@ def build_regression_model(
     use_radial_trace: bool = False,
     global_transport_mode: str = "learned",
     coordinate_updates: bool = False,
+    use_pairwise_local_content: bool = False,
+    pairwise_residual_scale_init: float = 0.1,
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -49,6 +51,8 @@ def build_regression_model(
             local_cutoff=local_cutoff,
             num_rbf=num_rbf,
             learn_local_radial_gate=learn_local_radial_gate,
+            use_pairwise_local_content=use_pairwise_local_content,
+            pairwise_residual_scale_init=pairwise_residual_scale_init,
             global_memory_count=global_memory_count,
             use_memory_interaction=use_memory_interaction,
             memory_assignment_temperature=memory_assignment_temperature,
@@ -74,6 +78,7 @@ def train_regression_step(
     grad_clip: float | None = 1.0,
     target_normalizer: TargetNormalizer | None = None,
     amp_dtype: torch.dtype | None = None,
+    gradient_monitor: dict[str, float | int] | None = None,
 ) -> float:
     device, dtype = _model_device_dtype(model)
     batch = batch.to(device=device, dtype=dtype)
@@ -87,9 +92,51 @@ def train_regression_step(
     loss = F.mse_loss(pred.float(), target.float())
     loss.backward()
     if grad_clip is not None:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        pre_clip_norm = float(
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            .detach()
+            .cpu()
+        )
+    else:
+        pre_clip_norm = _gradient_l2_norm(model.parameters())
+    if gradient_monitor is not None:
+        _update_gradient_monitor(
+            gradient_monitor,
+            pre_clip_norm=pre_clip_norm,
+            grad_clip=grad_clip,
+        )
     optimizer.step()
     return float(loss.detach().cpu().item())
+
+
+def _gradient_l2_norm(parameters: Iterable[nn.Parameter]) -> float:
+    square_sum = sum(
+        float(parameter.grad.detach().float().square().sum().cpu())
+        for parameter in parameters
+        if parameter.grad is not None
+    )
+    return square_sum**0.5
+
+
+def _update_gradient_monitor(
+    monitor: dict[str, float | int],
+    *,
+    pre_clip_norm: float,
+    grad_clip: float | None,
+) -> None:
+    step_count = int(monitor.get("step_count", 0)) + 1
+    clipped = grad_clip is not None and pre_clip_norm > grad_clip
+    monitor["step_count"] = step_count
+    monitor["clipped_step_count"] = int(monitor.get("clipped_step_count", 0)) + int(
+        clipped
+    )
+    monitor["pre_clip_grad_norm_last"] = pre_clip_norm
+    monitor["pre_clip_grad_norm_sum"] = float(
+        monitor.get("pre_clip_grad_norm_sum", 0.0)
+    ) + pre_clip_norm
+    monitor["pre_clip_grad_norm_max"] = max(
+        float(monitor.get("pre_clip_grad_norm_max", 0.0)), pre_clip_norm
+    )
 
 
 @torch.no_grad()

@@ -77,6 +77,8 @@ class EquivariantAttentionConfig:
     eps: float = 1e-12
     global_transport_mode: str = "learned"
     coordinate_updates: bool = False
+    use_pairwise_local_content: bool = False
+    pairwise_residual_scale_init: float = 0.1
 
 
 class EquivariantAttention(nn.Module):
@@ -148,6 +150,16 @@ class EquivariantAttention(nn.Module):
             ]
             if config.coordinate_updates
             else []
+        )
+        self.local_pairwise_content = (
+            _LocalPairwiseContent(
+                head_dim=self.hidden_irreps.scalars // config.num_heads,
+                num_rbf=config.num_rbf,
+                residual_scale_init=config.pairwise_residual_scale_init,
+                eps=config.eps,
+            )
+            if config.use_pairwise_local_content
+            else None
         )
         self.scalar_out_norm = nn.LayerNorm(self.hidden_irreps.scalars)
         self.scalar_out = nn.Linear(
@@ -249,6 +261,7 @@ class EquivariantAttention(nn.Module):
                 num_graphs,
                 graph_counts,
                 local_geometry,
+                self.local_pairwise_content,
             )
             if layer_index < len(self.coordinate_updaters):
                 pos = pos + self.coordinate_updaters[layer_index](
@@ -454,6 +467,7 @@ class _EquivariantMomentLayer(nn.Module):
         num_graphs: int,
         graph_counts: torch.Tensor,
         local_geometry: tuple[torch.Tensor, ...] | None,
+        local_pairwise_content: _LocalPairwiseContent | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.local_head_count == 0 and self.global_transport_mode == "none":
             tensor = raw_pos.new_zeros((scalars.shape[0], self.num_heads, 5))
@@ -464,20 +478,18 @@ class _EquivariantMomentLayer(nn.Module):
         bounded_vectors = _bounded_irrep(vectors, self.eps)
         n_nodes = scalars.shape[0]
 
+        raw_query_scalar = self.query_scalar(s_norm).reshape(
+            n_nodes, self.num_heads, self.head_dim
+        )
+        raw_key_scalar = self.key_scalar(s_norm).reshape(
+            n_nodes, self.num_heads, self.head_dim
+        )
         q0 = _normalize_positive_features(
-            F.elu(
-                self.query_scalar(s_norm).reshape(
-                    n_nodes, self.num_heads, self.head_dim
-                )
-            )
-            + 1.0,
+            F.elu(raw_query_scalar) + 1.0,
             self.eps,
         )
         k0 = _normalize_positive_features(
-            F.elu(
-                self.key_scalar(s_norm).reshape(n_nodes, self.num_heads, self.head_dim)
-            )
-            + 1.0,
+            F.elu(raw_key_scalar) + 1.0,
             self.eps,
         )
         q1 = _unit_ball(
@@ -537,22 +549,34 @@ class _EquivariantMomentLayer(nn.Module):
                     local_geometry=local_geometry,
                 )
             )
-            message_groups.append(
-                _local_moment_messages(
-                    receiver,
-                    sender,
-                    weights,
-                    displacement,
-                    squared_distance,
-                    scalar_value[:, local],
-                    vector_value[:, local],
-                    relative_gate[:, local],
-                    tensor_gate[:, local],
-                    radial_trace_gate[:, local],
-                    use_radial_trace=self.use_radial_trace,
+            local_messages = _local_moment_messages(
+                receiver,
+                sender,
+                weights,
+                displacement,
+                squared_distance,
+                scalar_value[:, local],
+                vector_value[:, local],
+                relative_gate[:, local],
+                tensor_gate[:, local],
+                radial_trace_gate[:, local],
+                use_radial_trace=self.use_radial_trace,
+                num_nodes=n_nodes,
+            )
+            if local_pairwise_content is not None:
+                if local_geometry is None:
+                    raise RuntimeError("pairwise local content requires local geometry")
+                pairwise_scalar = local_pairwise_content(
+                    raw_query_scalar[:, local],
+                    raw_key_scalar[:, local],
+                    local_geometry,
                     num_nodes=n_nodes,
                 )
-            )
+                local_messages = (
+                    local_messages[0] + pairwise_scalar,
+                    *local_messages[1:],
+                )
+            message_groups.append(local_messages)
         if self.global_head_count:
             global_heads = slice(self.local_head_count, self.num_heads)
             if self.global_transport_mode == "none":
@@ -672,6 +696,77 @@ class _EquivariantMomentLayer(nn.Module):
             vector_ffn, self.eps
         )
         return scalars, vectors
+
+
+class _LocalPairwiseContent(nn.Module):
+    """Invariant receiver/sender/RBF content with explicit neighborhood mass."""
+
+    def __init__(
+        self,
+        head_dim: int,
+        num_rbf: int,
+        residual_scale_init: float,
+        eps: float,
+    ) -> None:
+        super().__init__()
+        self.eps = eps
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(2 * head_dim + num_rbf, head_dim),
+            nn.SiLU(),
+            nn.Linear(head_dim, head_dim),
+        )
+        self.mass_projection = nn.Linear(2, head_dim)
+        self.residual_scale = nn.Parameter(torch.tensor(float(residual_scale_init)))
+
+    def forward(
+        self,
+        query_scalar: torch.Tensor,
+        key_scalar: torch.Tensor,
+        local_geometry: tuple[torch.Tensor, ...],
+        *,
+        num_nodes: int,
+    ) -> torch.Tensor:
+        receiver, sender, _displacement, squared_distance, rbf = local_geometry
+        nonself = receiver != sender
+        receiver = receiver[nonself]
+        sender = sender[nonself]
+        squared_distance = squared_distance[nonself]
+        rbf = rbf[nonself]
+
+        head_count = query_scalar.shape[1]
+        rbf_features = rbf.to(dtype=query_scalar.dtype).unsqueeze(1).expand(
+            -1, head_count, -1
+        )
+        edge_features = torch.cat(
+            [query_scalar[receiver], key_scalar[sender], rbf_features], dim=-1
+        )
+        edge_content = self.edge_mlp(edge_features)
+        reduction_dtype = _moment_dtype(edge_content, squared_distance)
+        cutoff_weight = _cosine_of_squared_distance_cutoff(
+            squared_distance.to(dtype=reduction_dtype)
+        )
+        weighted_content = edge_content.to(dtype=reduction_dtype) * cutoff_weight[
+            :, None, None
+        ]
+
+        aggregated = weighted_content.new_zeros(
+            (num_nodes, head_count, query_scalar.shape[-1])
+        ).index_add(0, receiver, weighted_content)
+        degree = cutoff_weight.new_zeros(num_nodes).index_add(
+            0, receiver, torch.ones_like(cutoff_weight)
+        )
+        cutoff_mass = cutoff_weight.new_zeros(num_nodes).index_add(
+            0, receiver, cutoff_weight
+        )
+        normalized = aggregated / degree.clamp_min(1.0).sqrt()[:, None, None]
+        mass_features = torch.stack(
+            [torch.log1p(degree), torch.log1p(cutoff_mass)], dim=-1
+        )
+        mass_content = self.mass_projection(
+            mass_features.to(dtype=query_scalar.dtype)
+        ).to(dtype=reduction_dtype)
+        message = normalized + mass_content[:, None, :]
+        return self.residual_scale.to(dtype=reduction_dtype) * message
 
 
 class _CoordinateUpdater(nn.Module):
@@ -2405,6 +2500,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_alignment_linear_term",
         "use_key_balancing",
         "learn_local_radial_gate",
+        "use_pairwise_local_content",
         "use_memory_interaction",
         "use_radial_trace",
         "coordinate_updates",
@@ -2433,6 +2529,15 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                     "each local_head_counts value must lie between zero and num_heads"
                 )
         local_head_counts = config.local_head_counts
+    if config.use_pairwise_local_content and not any(local_head_counts):
+        raise ValueError(
+            "use_pairwise_local_content requires at least one local head"
+        )
+    _float32_control(
+        "pairwise_residual_scale_init",
+        config.pairwise_residual_scale_init,
+        nonnegative=True,
+    )
     if config.use_memory_interaction:
         if config.global_transport_mode != "learned":
             raise ValueError(

@@ -154,11 +154,12 @@ Angstrom`. These validate the registered numerical contract only; they do not
 establish relaxed physical geometries, forces, dynamics, or energy
 conservation.
 
-## Proposed EGNN-parity study (not yet authorized)
+## Registered EGNN-parity study (confirmed 2026-07-20)
 
 The next scientific question is whether the attention gap comes primarily from
-its local pairwise representation rather than coordinate motion. No code or GPU
-run is authorized by this proposal alone.
+its local pairwise representation rather than coordinate motion. The user
+confirmed this packet for at most three architecture iterations and 3,600
+cumulative GPU-seconds on one local GPU. Test evaluation remains disabled.
 
 - Observation: private static EGNN reaches 0.408932 eV five-seed mean
   validation MAE, compared with 0.582946 eV for static GGG and the historical
@@ -173,9 +174,8 @@ run is authorized by this proposal alone.
 - Changed variables, in order: (A) enable the already allocated learned local
   radial gate; (B) add a parameter-bounded local edge-content MLP over receiver,
   sender, and RBF distance features plus explicit degree/mass invariants; (C)
-  compare complete-candidate and 2.5-Angstrom cutoff topology to identify
-  whether missing long-range pairs dominate. Do not combine A--C until their
-  isolated effects are measured.
+  select one topology or optimization repair only after A--B diagnostics. Do
+  not combine unrelated repairs.
 - Optimization diagnostic: record a fixed train-probe MAE, validation MAE,
   pre-clip gradient norm and clip fraction, and residual-scale trajectories at
   fixed intervals. Only then consider an isolated residual-scale, learning-rate,
@@ -196,6 +196,67 @@ run is authorized by this proposal alone.
   validation MAE by 0.050 eV, do not spend a new long-run budget on coordinate
   updates, multi-memory, or simple scaling as substitutes for the failed local
   representation hypothesis.
+- Packet stop: stop on the first robust promotion pass, after three architecture
+  iterations, or at 3,600 cumulative GPU-seconds, whichever comes first. A
+  failed source/data/split/equivariance/precision check stops the packet rather
+  than substituting an unregistered arm.
+
+The executable iteration runner freezes the data, split, update count, static
+coordinates, candidate switches, private-EGNN control, provenance validation,
+and cumulative packet timer. Inspect iteration A without spending GPU time:
+
+```bash
+uv run --locked python scripts/run_registered_egnn_parity_iteration.py \
+  artifacts/egnn-parity-20260720/iteration-1-radial \
+  --candidate radial --iteration 1 --dry-run
+```
+
+Each completed update contributes to a run-wide pre-clip gradient-norm summary
+and clip fraction. Post-training metrics also include validation and the fixed
+first 256 rows of the frozen train split. Candidate-specific gradient counters
+must show an active learned radial or pairwise path before confirmation is
+admitted. The runner writes progress after every arm so a failed or interrupted
+iteration still consumes its measured share of the 3,600-second packet.
+
+After iterations A--B, the evidence-selected third repair is staged pairwise
+initialization: change only the pairwise residual scale from `0.1` to `0.0`.
+Iteration B activated all 1,105 pairwise parameters but worsened both the fixed
+train probe and validation while changing the 500-step clip fraction only from
+`91.2%` to `92.2%`. This points to immediate residual injection rather than an
+inactive branch or a uniquely binding clip threshold. Complete-local topology
+was therefore not selected within this packet.
+
+### Outcome (completed 2026-07-20)
+
+All three permitted iterations completed in 850.7 cumulative GPU-wall seconds,
+well below the time ceiling but exactly at the architecture-iteration ceiling.
+No test metric was evaluated.
+
+| iteration | seed-42/500 baseline | candidate | candidate minus baseline | disposition |
+|---|---:|---:|---:|---|
+| learned radial gate | 0.778593 | 0.759655 | -0.018938 | confirm |
+| pairwise, `alpha=0.1` | 0.767847 | 0.840664 | +0.072816 | reject |
+| pairwise, `alpha=0` | 0.738009 | 0.712453 | -0.025556 | confirm |
+
+The radial confirmation averaged 0.499508 eV against rerun static EGNN at
+0.421199 eV. The staged-pairwise confirmation averaged 0.509008 eV against its
+rerun EGNN at 0.438268 eV. Both candidates lost all five paired seeds and had
+worst paired improvements of -0.118947 and -0.134977 eV, respectively. Thus
+every frozen promotion criterion failed and all public defaults remain off.
+
+The staged branch was active, not dead: all 1,105 pairwise parameters had
+nonzero finite final gradients, and its learned `alpha` ended at
+`[-0.1055, 0.0888, -0.1393, -0.0956, -0.0945]` across seeds. The sign change
+and wide validation spread show that this additive repair is seed-unstable at
+2,000 updates. Gradient clipping affected roughly 97.3% of candidate updates,
+but the private EGNN was also heavily clipped, so this packet does not identify
+the clip threshold as the causal gap.
+
+One reproducibility warning is now explicit: the iteration-1 and iteration-2
+screen baselines had identical source, data/split, command semantics, and
+initial-state hashes, yet ended at 0.778593 and 0.767847 eV. The seeded CUDA
+lane is therefore not bitwise deterministic. Future accuracy work should first
+add a deterministic/repeated-run gate before interpreting effects near 0.01 eV.
 
 This remains an adaptive random-row interpolation study. Even a pass is only a
 same-harness validation result against a private EGNN-style control; an official

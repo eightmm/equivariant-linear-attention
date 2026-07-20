@@ -99,6 +99,7 @@ def main() -> None:
         else fit_target_normalizer(dataset[i] for i in train_idx)
     )
     final_loss = 0.0
+    gradient_monitor: dict[str, float | int] = {}
     for step in range(args.steps):
         batch_indices = _cyclic_batch(train_idx, step, args.batch_size)
         batch = collate_graphs([dataset[i] for i in batch_indices])
@@ -109,11 +110,19 @@ def main() -> None:
             grad_clip=args.grad_clip,
             target_normalizer=normalizer,
             amp_dtype=amp_dtype,
+            gradient_monitor=gradient_monitor,
         )
 
     val_batches = list(_iter_batches(dataset, val_idx, args.batch_size))
     val_metrics = evaluate_regression(
         model, val_batches, target_normalizer=normalizer, amp_dtype=amp_dtype
+    )
+    train_probe_indices = train_idx[: min(256, len(train_idx))]
+    train_probe_metrics = evaluate_regression(
+        model,
+        _iter_batches(dataset, train_probe_indices, args.batch_size),
+        target_normalizer=normalizer,
+        amp_dtype=amp_dtype,
     )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -123,6 +132,12 @@ def main() -> None:
         "model": args.benchmark_model,
         "steps": args.steps,
         "train_loss": final_loss,
+        "train_probe": {
+            "selection": "train_split_order_prefix",
+            "sample_count": len(train_probe_indices),
+            "batch_size": args.batch_size,
+            **train_probe_metrics,
+        },
         "val_mae": val_metrics["mae"],
         "val_rmse": val_metrics["rmse"],
         "split_seed": split_seed,
@@ -148,6 +163,9 @@ def main() -> None:
             parameter.numel()
             for parameter in model.parameters()
             if parameter.requires_grad
+        ),
+        "gradient_clipping": _gradient_clipping_summary(
+            gradient_monitor, grad_clip=args.grad_clip
         ),
         **initial_state_hashes,
         "paired_base_initial_state_sha256": paired_base_initial_state_hashes[
@@ -233,6 +251,18 @@ def main() -> None:
     ]
     metrics["coordinate_gradient_parameters"] = (
         _coordinate_gradient_parameter_diagnostics(model)
+    )
+    metrics["pairwise_local_gradient_parameters"] = (
+        _named_gradient_parameter_diagnostics(model, "local_pairwise_content")
+    )
+    pairwise_module = getattr(model, "local_pairwise_content", None)
+    metrics["pairwise_local_residual_scale"] = (
+        float(pairwise_module.residual_scale.detach().cpu())
+        if pairwise_module is not None
+        else "not_applicable"
+    )
+    metrics["local_radial_gradient_parameters"] = (
+        _named_gradient_parameter_diagnostics(model, "local_radial")
     )
     metrics["node_count_strata"] = _node_count_strata_metrics(
         model,
@@ -323,6 +353,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--local-cutoff", type=float, default=2.5)
     parser.add_argument("--num-rbf", type=int, default=16)
     parser.add_argument("--learn-local-radial-gate", action="store_true")
+    parser.add_argument("--pairwise-local-content", action="store_true")
+    parser.add_argument("--pairwise-residual-scale-init", type=float, default=0.1)
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
     parser.add_argument("--memory-interaction", action="store_true")
     parser.add_argument("--memory-assignment-temperature", type=float, default=1.0)
@@ -395,6 +427,8 @@ def _build_benchmark_model(
             "memory_interaction_cutoff": 2.5,
             "radial_trace": False,
             "learn_local_radial_gate": False,
+            "pairwise_local_content": False,
+            "pairwise_residual_scale_init": 0.1,
             "no_alignment_linear_term": False,
             "no_key_balancing": False,
             "diagnostic_max_nodes": 128,
@@ -442,6 +476,8 @@ def _build_benchmark_model(
         local_cutoff=args.local_cutoff,
         num_rbf=args.num_rbf,
         learn_local_radial_gate=args.learn_local_radial_gate,
+        use_pairwise_local_content=args.pairwise_local_content,
+        pairwise_residual_scale_init=args.pairwise_residual_scale_init,
         global_memory_count=args.memory_count,
         use_memory_interaction=args.memory_interaction,
         memory_assignment_temperature=args.memory_assignment_temperature,
@@ -515,6 +551,65 @@ def _gradient_parameter_diagnostics(model: torch.nn.Module) -> dict[str, int | s
         "parameters_with_gradient_count": with_gradient_count,
         "nonfinite_gradient_parameter_count": nonfinite_count,
         "parameter_tensors_with_gradient_count": tensor_count,
+    }
+
+
+def _named_gradient_parameter_diagnostics(
+    model: torch.nn.Module,
+    name_fragment: str,
+) -> dict[str, int | str]:
+    named_parameters = [
+        parameter
+        for name, parameter in model.named_parameters()
+        if name_fragment in name
+    ]
+    trainable_parameters = [
+        parameter for parameter in named_parameters if parameter.requires_grad
+    ]
+    with_gradient_count = 0
+    nonzero_count = 0
+    nonfinite_count = 0
+    for parameter in trainable_parameters:
+        if parameter.grad is None:
+            continue
+        gradient = parameter.grad.detach()
+        finite = torch.isfinite(gradient)
+        with_gradient_count += gradient.numel()
+        nonzero_count += int(torch.count_nonzero((gradient != 0) & finite).item())
+        nonfinite_count += int(torch.count_nonzero(~finite).item())
+    return {
+        "count_unit": "scalar_parameter_elements",
+        "parameter_count": sum(parameter.numel() for parameter in named_parameters),
+        "trainable_parameter_count": sum(
+            parameter.numel() for parameter in trainable_parameters
+        ),
+        "parameters_with_gradient_count": with_gradient_count,
+        "nonzero_gradient_parameter_count": nonzero_count,
+        "nonfinite_gradient_parameter_count": nonfinite_count,
+    }
+
+
+def _gradient_clipping_summary(
+    monitor: dict[str, float | int],
+    *,
+    grad_clip: float | None,
+) -> dict[str, float | int | str]:
+    step_count = int(monitor.get("step_count", 0))
+    if step_count <= 0:
+        raise ValueError("gradient clipping summary requires at least one step")
+    clipped_step_count = int(monitor.get("clipped_step_count", 0))
+    return {
+        "measurement_point": "before_clipping",
+        "clip_threshold": "disabled" if grad_clip is None else float(grad_clip),
+        "step_count": step_count,
+        "clipped_step_count": clipped_step_count,
+        "clip_fraction": clipped_step_count / step_count,
+        "pre_clip_grad_norm_mean": float(
+            monitor["pre_clip_grad_norm_sum"]
+        )
+        / step_count,
+        "pre_clip_grad_norm_max": float(monitor["pre_clip_grad_norm_max"]),
+        "pre_clip_grad_norm_last": float(monitor["pre_clip_grad_norm_last"]),
     }
 
 
@@ -657,6 +752,7 @@ def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
         model,
         excluded_prefixes=(
             "coordinate_updaters.",
+            "local_pairwise_content.",
             "vector_out.",
             "tensor_out.",
         ),
@@ -1471,7 +1567,9 @@ def _source_hash() -> str:
         for path in [
             root / "scripts" / "train_compare.py",
             root / "scripts" / "run_registered_coordinate_study.py",
+            root / "scripts" / "run_registered_egnn_parity_iteration.py",
             root / "artifacts" / "dynamic-coordinate-egnn-20260719" / "scope.md",
+            root / "artifacts" / "egnn-parity-20260720" / "scope.md",
             root / "PROJECT.md",
             root / "docs" / "LAYER_MATH.md",
             root / "docs" / "QM9_CONTRACT.md",
@@ -1656,6 +1754,18 @@ def _run_config(
         "local_cutoff": args.local_cutoff,
         "num_rbf": args.num_rbf,
         "learn_local_radial_gate": args.learn_local_radial_gate,
+        "pairwise_local_content": args.pairwise_local_content,
+        "pairwise_residual_scale_init": args.pairwise_residual_scale_init,
+        "pairwise_local_formula": (
+            "shared_receiver_sender_rbf_mlp_plus_degree_and_cutoff_mass"
+            if args.pairwise_local_content
+            else "not_applicable"
+        ),
+        "pairwise_local_aggregation": (
+            "cutoff_sum_over_sqrt_degree"
+            if args.pairwise_local_content
+            else "not_applicable"
+        ),
         "memory_count": args.memory_count,
         "memory_interaction": args.memory_interaction,
         "hemm_admission_status": hemm_status,

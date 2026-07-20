@@ -49,6 +49,9 @@ model = EquivariantAttention(
         use_radial_trace=False,
         # Optional latent-coordinate refinement; disabled by default.
         coordinate_updates=False,
+        # Optional invariant receiver/sender/RBF local content; default off.
+        use_pairwise_local_content=False,
+        pairwise_residual_scale_init=0.1,
     )
 )
 
@@ -68,6 +71,13 @@ step is at most 0.25 Angstrom, and every later local/global geometry calculation
 uses the updated positions. The default remains off, preserving the existing
 six output keys and checkpoint schema. These are latent task coordinates, not
 optimized molecular geometries or force predictions.
+
+For local routes, `use_pairwise_local_content=True` adds a small shared
+receiver/sender/RBF edge MLP plus explicit degree and smooth cutoff-mass
+features to the scalar message. It excludes self edges only in this added
+branch, keeps coordinates static unless separately enabled, and preserves the
+default parameter/state schema when off. See
+[the exact local equations](docs/LAYER_MATH.md#local-heads).
 
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:
@@ -167,16 +177,16 @@ Angstrom per-layer bounds, but the accuracy gates failed and dynamic EGNN also
 used 1.456x median elapsed time. Coordinate updates therefore remain opt-in and
 the public default stays off. See [the coordinate-study record](docs/BENCHMARKS.md#registered-dynamic-coordinateegnn-result-2026-07-19).
 
-The current accuracy reference is therefore the parameter-matched private
-static EGNN, not the coordinate-enabled attention arm. At 2,000 updates its
-five-seed validation MAE was 0.408932 eV, versus 0.582946 eV for static GGG and
-0.515688 eV for the stronger historical static LGL result. The gap analysis
-points first to missing learned pairwise distance-conditioned local content,
-normalized aggregation that hides neighborhood mass, and complete-graph versus
-cutoff topology—not to coordinate motion. These are hypotheses for the next
-registered study, not established causes or implemented defaults. See
-[the competitiveness analysis](docs/BENCHMARKS.md#competitiveness-assessment-against-the-private-egnn)
-and [the proposed falsifying study](docs/EVALUATION.md#proposed-egnn-parity-study-not-yet-authorized).
+The subsequent three-iteration EGNN-parity packet tested learned radial gating,
+an opt-in 1,105-parameter receiver/sender/RBF plus degree/mass branch, and
+exact-baseline staged initialization. Radial-only reached 0.499508 eV five-seed
+mean versus its rerun private static EGNN at 0.421199 eV. Pairwise `alpha=0.1`
+failed its 500-step screen; staged `alpha=0` passed the screen but reached
+0.509008 eV versus rerun EGNN at 0.438268 eV. Both confirmations lost 0/5 paired
+seeds, so no default or candidate is promoted. The packet stopped at its third
+architecture iteration after 850.7 GPU-wall seconds with test evaluation off.
+See [the completed parity record](docs/BENCHMARKS.md#registered-egnn-parity-result-2026-07-20)
+and [the frozen evaluation contract](docs/EVALUATION.md#registered-egnn-parity-study-confirmed-2026-07-20).
 
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg

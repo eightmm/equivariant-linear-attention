@@ -234,6 +234,61 @@ with explicit degree or attention-mass invariants, while retaining factorized
 global attention. Coordinate updates, multi-memory interaction, higher moment
 degree, and indiscriminate width/depth increases remain downstream choices.
 
+## Registered EGNN-parity result (2026-07-20)
+
+The confirmed packet kept static coordinates, width-64 LGL learned transport,
+the QM9 `gap` random-row split, FP32, batch size 64, and test evaluation off.
+It allowed three sequential architecture iterations and 3,600 cumulative
+GPU-wall seconds. Each iteration first reran a seed-42/500-step static LGL
+control; only finite, active, parameter-bounded candidates no more than 0.020
+eV worse could advance.
+
+| iteration | LGL screen | candidate screen | candidate minus LGL | outcome |
+|---|---:|---:|---:|---|
+| learned radial gate | 0.778593 | 0.759655 | -0.018938 | confirmed |
+| pairwise content, `alpha=0.1` | 0.767847 | 0.840664 | +0.072816 | screen reject |
+| pairwise content, `alpha=0` | 0.738009 | 0.712453 | -0.025556 | confirmed |
+
+The pairwise branch adds 1,105 parameters (154,390 total versus 153,285 for
+LGL and 152,065 for EGNN), and all 1,105 received finite nonzero gradients.
+Because `alpha=0.1` worsened both the fixed train probe and validation while its
+clip fraction was close to LGL, the final evidence-selected repair changed only
+`alpha` initialization to zero. It preserved the exact incumbent first forward,
+then learned `alpha=0.038083` by the 500-step screen.
+
+The two admitted five-seed confirmations were:
+
+| seed | radial | EGNN rerun A | EGNN minus radial | staged pairwise | EGNN rerun B | EGNN minus pairwise |
+|---:|---:|---:|---:|---:|---:|---:|
+| 41 | 0.493019 | 0.398689 | -0.094330 | 0.488625 | 0.481749 | -0.006875 |
+| 42 | 0.497891 | 0.443284 | -0.054607 | 0.571414 | 0.436437 | -0.134977 |
+| 43 | 0.540666 | 0.421719 | -0.118947 | 0.513891 | 0.420657 | -0.093234 |
+| 44 | 0.504323 | 0.390677 | -0.113645 | 0.523597 | 0.410540 | -0.113058 |
+| 45 | 0.461642 | 0.451627 | -0.010015 | 0.447514 | 0.441955 | -0.005559 |
+| mean | 0.499508 | 0.421199 | -0.078309 | 0.509008 | 0.438268 | -0.070741 |
+
+Neither candidate reached the absolute 0.398932 eV threshold, won a paired
+seed, or respected the -0.020 eV worst-regression floor. Radial and staged
+pairwise took 5.831x and 6.238x the median EGNN elapsed time; their median peak
+memory ratios were 0.676x and 0.762x. Candidate update clip fractions averaged
+0.9737 and 0.9729. Staged pairwise's final `alpha` values were
+`[-0.105471, 0.088824, -0.139261, -0.095576, -0.094521]`, so the additive
+message direction itself was seed-unstable.
+
+The packet stopped after its third architecture iteration at 850.7 cumulative
+GPU-wall seconds. No default changed; pairwise content and its initialization
+remain explicit experimental controls. Exact scalar outcomes and commands are
+in `docs/EXPERIMENTS.jsonl`, while the frozen scope and compact summaries live
+under `artifacts/egnn-parity-20260720/`.
+
+There is also a material reproducibility limitation. Iterations 1 and 2 reran
+the same LGL screen command with identical source, data/split, and initial-state
+hashes, but obtained 0.778593 and 0.767847 eV and different final-state hashes.
+This proves the current seeded CUDA lane is not bitwise deterministic; CUDA
+atomic reductions are a plausible implementation source, not yet a confirmed
+cause. The large confirmation failures remain larger than this observed drift,
+but future claims near 0.01 eV require a deterministic or repeated-run gate.
+
 ## Registered M=1 routing result (2026-07-17)
 
 On clean commit `a8bda61`, the validation-only QM9 `gap` comparison used the
