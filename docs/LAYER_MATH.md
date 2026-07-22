@@ -198,9 +198,11 @@ ablation.
 
 Local heads use raw-coordinate directed edges `i <- j` within the same graph.
 The optional public `edge_index` uses receiver row 0 and sender row 1. It is a
-candidate list rather than a replacement kernel: the implementation validates
-same-graph unique indices and complete self coverage, then applies the same
-strict cutoff below. Without it, the core constructs all same-graph candidates.
+candidate list rather than a replacement kernel: direct callers validate
+same-graph unique indices and complete self coverage, then apply the same strict
+cutoff below. `GraphBatch` collation performs those content checks once and
+sets a trusted fast-path assertion, so repeated model forwards check only tensor
+metadata. Without supplied edges, the core constructs all same-graph candidates.
 With cutoff `R_c`, define
 
 ```text
@@ -215,6 +217,39 @@ radial gate with a fixed mixture floor; routing comparisons keep its learned
 parameters frozen. The bounded degree-2 kernel times this radial gate is
 normalized over each receiver's local senders. Local moments are evaluated
 directly on retained edges, including self edges.
+
+The opt-in edge-conditioned local transport replaces that normalized local
+kernel while leaving global blocks unchanged. For a local block with invariant
+normalized scalar state `sbar_i`, sender vector channels `v_j`, and RBF vector
+`rho(u_ij)`, one block-local MLP gives
+
+```text
+[a_ij, g^v_ij, g^r_ij, g^T_ij]
+    = MLP([sbar_i, sbar_j, rho(u_ij)]),  i != j.
+```
+
+At width 64 with four heads the frozen MLP is
+`Linear(144,12) -> SiLU -> Linear(12,76)`: `a_ij` contains 64 scalar channels
+and each gate contains four head channels. The equivariant sums are
+
+```text
+m^0_i = sum_j f_c(u_ij) reshape_H(a_ij),
+m^v_i = sum_j f_c(u_ij) tanh(g^v_ij) v_j,
+m^r_i = sum_j f_c(u_ij) tanh(g^r_ij) d_ij,
+m^T_i = sum_j f_c(u_ij) tanh(g^T_ij) ST(d_ij).
+```
+
+Self edges are excluded from these four sums because self information remains
+in the node residual. Invariant gates times polar vectors, relative polar
+vectors, or even symmetric-traceless tensors preserve O(3); receiver sums
+preserve node-permutation consistency and graph isolation. After edge contents
+have been validated, the local transport is `O(E_local)` and the complete
+fixed-width model hot path is `O(E_local + N)`. Duplicate/self validation and
+neighbor construction are deliberately outside that claim. The current
+registered operator uses an unnormalized sum: its failed repeated QM9 screen
+and high clipping rate make bounded normalization or staged residual
+initialization the next testable optimization hypothesis, not an established
+repair.
 
 The opt-in pairwise-content repair leaves those equivariant moments unchanged
 and adds one invariant scalar message. Let `qbar_ih` and `kbar_jh` be the raw

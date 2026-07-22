@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "skill": "cx-modeling-problem-execution",
+  "uses": [
+    {
+      "schema_version": 1,
+      "skill": "cx-modeling-problem-execution",
+      "reference_id": "audited-wrapper",
+      "path": "catalog/codex-skills/cx-modeling-problem-execution/SKILL.md",
+      "sha256": "37a86192a65e15c14612cbe7b7c759a4dcf1fb1e435b3c62b1515bd4597b27bc",
+      "read_reason": "Required preflight, smoke, full execution, downstream analysis, provenance and review for a concrete model intervention.",
+      "loaded_at": "2026-07-22T14:30:00Z",
+      "used_for": ["scope.md", "verification-summary.json", "manifest.json"],
+      "sections": ["execution workflow"],
+      "search_terms": ["preflight", "execute", "review"]
+    }
+  ]
+}

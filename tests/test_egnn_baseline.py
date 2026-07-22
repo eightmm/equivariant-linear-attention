@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 import equivariant_attention as package
@@ -192,6 +193,30 @@ def test_static_egnn_singleton_has_finite_backward() -> None:
         parameter.grad is None or torch.isfinite(parameter.grad).all()
         for parameter in model.parameters()
     )
+
+
+def test_static_egnn_supplied_edges_bypass_complete_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch.manual_seed(110)
+    model = _nontrivial_model()
+    node_feats = torch.randn(4, 4, dtype=torch.float64)
+    pos = torch.randn(4, 3, dtype=torch.float64)
+    edge_index = torch.tensor(
+        [[0, 1, 2, 3, 0, 1, 2, 3], [0, 1, 2, 3, 1, 2, 3, 0]]
+    )
+
+    def fail_discovery(*args: object, **kwargs: object) -> tuple[torch.Tensor, ...]:
+        raise AssertionError("complete edge discovery must be bypassed")
+
+    monkeypatch.setattr(
+        "equivariant_attention._egnn_baseline._batched_complete_graph_edges",
+        fail_discovery,
+    )
+
+    output = model(node_feats, pos, edge_index=edge_index)
+
+    assert torch.isfinite(output["graph_scalars"]).all()
 
 
 def test_qm9_parameter_match_zero_init_minimal_output_and_private_api() -> None:

@@ -69,7 +69,16 @@ normalization, alignment/balancing/floor controls, routing, local cutoff/RBF,
 memory, radial-trace, and test-evaluation policy. The explicit public flags are
 `--routing ggg/lgg/ggl/lgl/lll`,
 `--global-transport-mode learned/uniform/none`, `--memory-count 1/4/8`,
-`--memory-interaction`, `--radial-trace`, and opt-in `--evaluate-test`.
+`--memory-interaction`, `--radial-trace`,
+`--edge-conditioned-local-transport`, `--precompute-local-edges`, and opt-in
+`--evaluate-test`. Edge-conditioned local transport requires all local heads,
+matching hidden vector/head counts, and cannot be combined with
+`--pairwise-local-content` or `--learn-local-radial-gate`. Precomputed QM9
+radius candidates avoid forward-time pair discovery but do not make the data
+loader asymptotically linear. `GraphBatch` collation validates supplied edge
+contents and enables the model's trusted linear hot path; direct model calls
+validate by default, and callers must not assert `edge_index_is_validated` for
+unchecked external tensors.
 `--bounded-diagnostics` recomputes every active local layer/head outside timed
 training; `--diagnostic-sample-count` defaults to 32 deterministic validation
 graphs selected after sorting by `(node_count, dataset_index)`.

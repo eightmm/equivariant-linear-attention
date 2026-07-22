@@ -14,6 +14,7 @@ class GraphSample:
     pos: torch.Tensor
     target: torch.Tensor
     sample_id: str
+    edge_index: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,8 @@ class GraphBatch:
     batch: torch.Tensor
     target: torch.Tensor
     sample_ids: tuple[str, ...]
+    edge_index: torch.Tensor | None = None
+    edge_index_is_validated: bool = False
 
     def to(
         self,
@@ -46,6 +49,12 @@ class GraphBatch:
             batch=self.batch.to(device=device),
             target=self.target.to(device=device, dtype=value_dtype),
             sample_ids=self.sample_ids,
+            edge_index=(
+                None
+                if self.edge_index is None
+                else self.edge_index.to(device=device, dtype=torch.long)
+            ),
+            edge_index_is_validated=self.edge_index_is_validated,
         )
 
 
@@ -91,12 +100,26 @@ def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
         ],
         dim=0,
     )
+    edge_presence = [sample.edge_index is not None for sample in samples]
+    if any(edge_presence) and not all(edge_presence):
+        raise ValueError("all samples must either provide edge_index or omit it")
+    edge_index = None
+    if all(edge_presence):
+        offset_edges = []
+        node_offset = 0
+        for sample in samples:
+            sample_edges = _validated_sample_edge_index(sample)
+            offset_edges.append(sample_edges + node_offset)
+            node_offset += sample.node_feats.shape[0]
+        edge_index = torch.cat(offset_edges, dim=1)
     return GraphBatch(
         node_feats=node_feats,
         pos=pos,
         batch=batch,
         target=target,
         sample_ids=tuple(sample.sample_id for sample in samples),
+        edge_index=edge_index,
+        edge_index_is_validated=edge_index is not None,
     )
 
 
@@ -117,7 +140,11 @@ def split_dataset(
 
 
 def load_qm9_samples(
-    root: str | Path, target_index: int = 4, limit: int | None = None
+    root: str | Path,
+    target_index: int = 4,
+    limit: int | None = None,
+    *,
+    local_cutoff: float | None = None,
 ) -> list[GraphSample]:
     try:
         from torch_geometric.datasets import QM9
@@ -141,9 +168,76 @@ def load_qm9_samples(
                 pos=pos,
                 target=target,
                 sample_id=_qm9_sample_id(data, row_index=i),
+                edge_index=(
+                    None
+                    if local_cutoff is None
+                    else _radius_candidate_edge_index(pos, cutoff=local_cutoff)
+                ),
             )
         )
     return samples
+
+
+def _radius_candidate_edge_index(
+    pos: torch.Tensor,
+    *,
+    cutoff: float,
+) -> torch.Tensor:
+    """Build row-0 receiver/row-1 sender radius candidates, including self."""
+    if pos.ndim != 2 or pos.shape[1] != 3:
+        raise ValueError("pos must have shape (N, 3)")
+    if not torch.is_floating_point(pos):
+        raise TypeError("pos must be floating point")
+    if not isinstance(cutoff, (int, float)) or isinstance(cutoff, bool):
+        raise TypeError("cutoff must be a real number")
+    if not 0.0 < float(cutoff) < float("inf"):
+        raise ValueError("cutoff must be finite and positive")
+    displacement = pos[:, None, :] - pos[None, :, :]
+    squared_distance = displacement.square().sum(dim=-1)
+    receiver, sender = torch.nonzero(
+        squared_distance < float(cutoff) ** 2,
+        as_tuple=True,
+    )
+    return torch.stack([receiver, sender]).to(dtype=torch.long)
+
+
+def _validated_sample_edge_index(sample: GraphSample) -> torch.Tensor:
+    edge_index = sample.edge_index
+    if edge_index is None:
+        raise RuntimeError("sample edge_index unexpectedly missing")
+    if not isinstance(edge_index, torch.Tensor):
+        raise TypeError("sample edge_index must be a tensor")
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+        raise ValueError("sample edge_index must have shape (2, E)")
+    integer_dtypes = {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+    if edge_index.dtype not in integer_dtypes:
+        raise TypeError("sample edge_index must use an integer dtype")
+    edge_index = edge_index.to(dtype=torch.long)
+    if edge_index.numel():
+        if bool((edge_index < 0).any().item()):
+            raise ValueError("sample edge_index values must be nonnegative")
+        if int(edge_index.max().item()) >= sample.node_feats.shape[0]:
+            raise ValueError("sample edge_index values are out of range")
+    receiver, sender = edge_index.unbind(dim=0)
+    pair_codes = receiver * sample.node_feats.shape[0] + sender
+    if torch.unique(pair_codes).numel() != pair_codes.numel():
+        raise ValueError("sample edge_index must not contain duplicate directed edges")
+    self_nodes = receiver[receiver == sender]
+    has_self = torch.zeros(
+        sample.node_feats.shape[0],
+        dtype=torch.bool,
+        device=edge_index.device,
+    )
+    has_self[self_nodes] = True
+    if not bool(has_self.all().item()):
+        raise ValueError("sample edge_index must contain a self edge for every node")
+    return edge_index
 
 
 def _qm9_sample_id(data: object, *, row_index: int) -> str:

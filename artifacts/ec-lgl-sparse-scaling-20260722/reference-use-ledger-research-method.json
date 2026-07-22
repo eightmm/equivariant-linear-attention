@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "skill": "research-method",
+  "uses": [
+    {
+      "schema_version": 1,
+      "skill": "research-method",
+      "reference_id": "design-review",
+      "path": "references/design-review.md",
+      "sha256": "706f0cfefcdf29cd50667d5683b272427043ef832931017f41fa9c93dc36e65a",
+      "read_reason": "Separated identical-kernel evidence, same-edge constants, different-edge systems comparisons and the accuracy falsifier.",
+      "loaded_at": "2026-07-22T14:30:00Z",
+      "used_for": ["scope.md", "scaling-analysis.md", "screen-summary.json"],
+      "sections": ["design review"],
+      "search_terms": ["hypothesis", "alternative", "acceptance"]
+    }
+  ]
+}

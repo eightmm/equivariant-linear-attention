@@ -79,6 +79,7 @@ class EquivariantAttentionConfig:
     coordinate_updates: bool = False
     use_pairwise_local_content: bool = False
     pairwise_residual_scale_init: float = 0.1
+    use_edge_conditioned_local_transport: bool = False
 
 
 class EquivariantAttention(nn.Module):
@@ -100,13 +101,27 @@ class EquivariantAttention(nn.Module):
         self.config = config
         self.hidden_irreps = CartesianIrreps.parse(config.hidden_irreps)
         self.output_irreps = CartesianIrreps.parse(config.output_irreps)
+        local_head_counts = config.local_head_counts or (0,) * config.num_layers
+        if config.use_edge_conditioned_local_transport:
+            if self.hidden_irreps.vectors != config.num_heads:
+                raise ValueError(
+                    "edge-conditioned local transport requires hidden vector "
+                    "channels to equal num_heads"
+                )
+            if any(
+                local_heads not in {0, config.num_heads}
+                for local_heads in local_head_counts
+            ):
+                raise ValueError(
+                    "edge-conditioned local transport requires each local stage "
+                    "to use all heads"
+                )
 
         self.scalar_in = nn.Linear(config.node_dim, self.hidden_irreps.scalars)
         self.global_scalar_in = nn.Linear(3, self.hidden_irreps.scalars, bias=False)
         self.vector_in = nn.Linear(
             self.hidden_irreps.scalars, self.hidden_irreps.vectors
         )
-        local_head_counts = config.local_head_counts or (0,) * config.num_layers
         layer_scale = config.residual_scale_init / sqrt(config.num_layers)
         self.layers = nn.ModuleList(
             [
@@ -127,6 +142,9 @@ class EquivariantAttention(nn.Module):
                     local_cutoff=config.local_cutoff,
                     num_rbf=config.num_rbf,
                     learn_local_radial_gate=config.learn_local_radial_gate,
+                    use_edge_conditioned_local_transport=(
+                        config.use_edge_conditioned_local_transport
+                    ),
                     global_memory_count=config.global_memory_count,
                     use_memory_interaction=config.use_memory_interaction,
                     memory_assignment_temperature=config.memory_assignment_temperature,
@@ -177,7 +195,12 @@ class EquivariantAttention(nn.Module):
         batch: torch.Tensor | None = None,
         *,
         edge_index: torch.Tensor | None = None,
+        edge_index_is_validated: bool = False,
     ) -> dict[str, torch.Tensor]:
+        if not isinstance(edge_index_is_validated, bool):
+            raise TypeError("edge_index_is_validated must be boolean")
+        if edge_index is None and edge_index_is_validated:
+            raise ValueError("validated edge mode requires edge_index")
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
             pos,
@@ -199,6 +222,7 @@ class EquivariantAttention(nn.Module):
                 num_rbf=self.config.num_rbf,
                 graph_counts=graph_counts,
                 edge_index=edge_index,
+                edge_index_is_validated=edge_index_is_validated,
             )
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
@@ -214,6 +238,7 @@ class EquivariantAttention(nn.Module):
                         num_rbf=self.config.num_rbf,
                         graph_counts=graph_counts,
                         edge_index=edge_index,
+                        edge_index_is_validated=edge_index_is_validated,
                     )
                     if layer.local_head_count
                     else None
@@ -357,6 +382,7 @@ class _EquivariantMomentLayer(nn.Module):
         local_cutoff: float,
         num_rbf: int,
         learn_local_radial_gate: bool,
+        use_edge_conditioned_local_transport: bool,
         global_memory_count: int,
         use_memory_interaction: bool,
         memory_assignment_temperature: float,
@@ -392,6 +418,16 @@ class _EquivariantMomentLayer(nn.Module):
         self.memory_assignment_scale = memory_assignment_scale
         self.memory_interaction_cutoff = memory_interaction_cutoff
         self.use_radial_trace = use_radial_trace
+        self.edge_conditioned_local = (
+            _EdgeConditionedLocalTransport(
+                scalars=scalars,
+                vectors=vectors,
+                num_heads=local_head_count,
+                num_rbf=num_rbf,
+            )
+            if use_edge_conditioned_local_transport and local_head_count
+            else None
+        )
 
         self.norm = nn.LayerNorm(scalars)
         self.query_scalar = nn.Linear(scalars, scalars)
@@ -528,41 +564,53 @@ class _EquivariantMomentLayer(nn.Module):
         message_groups: list[tuple[torch.Tensor, ...]] = []
         if self.local_head_count:
             local = slice(0, self.local_head_count)
-            receiver, sender, weights, displacement, squared_distance = (
-                _local_attention_weights(
-                    q0[:, local],
-                    k0[:, local],
-                    q1[:, local],
-                    k1[:, local],
-                    kernel_scale[local],
-                    raw_pos,
-                    batch,
-                    num_graphs=num_graphs,
-                    balanced=self.use_key_balancing,
-                    alignment_scale=alignment_scale[local],
-                    alignment_dot_scale=alignment_dot_scale[local],
-                    kernel_floor=self.kernel_floor,
-                    cutoff=self.local_cutoff,
-                    num_rbf=self.num_rbf,
-                    radial_weight=self.local_radial_weight[local],
-                    radial_bias=self.local_radial_bias[local],
-                    local_geometry=local_geometry,
+            if self.edge_conditioned_local is not None:
+                if local_geometry is None:
+                    raise RuntimeError(
+                        "edge-conditioned local transport requires local geometry"
+                    )
+                local_messages = self.edge_conditioned_local(
+                    s_norm,
+                    bounded_vectors,
+                    local_geometry,
+                    num_nodes=n_nodes,
                 )
-            )
-            local_messages = _local_moment_messages(
-                receiver,
-                sender,
-                weights,
-                displacement,
-                squared_distance,
-                scalar_value[:, local],
-                vector_value[:, local],
-                relative_gate[:, local],
-                tensor_gate[:, local],
-                radial_trace_gate[:, local],
-                use_radial_trace=self.use_radial_trace,
-                num_nodes=n_nodes,
-            )
+            else:
+                receiver, sender, weights, displacement, squared_distance = (
+                    _local_attention_weights(
+                        q0[:, local],
+                        k0[:, local],
+                        q1[:, local],
+                        k1[:, local],
+                        kernel_scale[local],
+                        raw_pos,
+                        batch,
+                        num_graphs=num_graphs,
+                        balanced=self.use_key_balancing,
+                        alignment_scale=alignment_scale[local],
+                        alignment_dot_scale=alignment_dot_scale[local],
+                        kernel_floor=self.kernel_floor,
+                        cutoff=self.local_cutoff,
+                        num_rbf=self.num_rbf,
+                        radial_weight=self.local_radial_weight[local],
+                        radial_bias=self.local_radial_bias[local],
+                        local_geometry=local_geometry,
+                    )
+                )
+                local_messages = _local_moment_messages(
+                    receiver,
+                    sender,
+                    weights,
+                    displacement,
+                    squared_distance,
+                    scalar_value[:, local],
+                    vector_value[:, local],
+                    relative_gate[:, local],
+                    tensor_gate[:, local],
+                    radial_trace_gate[:, local],
+                    use_radial_trace=self.use_radial_trace,
+                    num_nodes=n_nodes,
+                )
             if local_pairwise_content is not None:
                 if local_geometry is None:
                     raise RuntimeError("pairwise local content requires local geometry")
@@ -696,6 +744,103 @@ class _EquivariantMomentLayer(nn.Module):
             vector_ffn, self.eps
         )
         return scalars, vectors
+
+
+class _EdgeConditionedLocalTransport(nn.Module):
+    """Invariant edge filters driving equivariant sparse local sums."""
+
+    def __init__(
+        self,
+        *,
+        scalars: int,
+        vectors: int,
+        num_heads: int,
+        num_rbf: int,
+    ) -> None:
+        super().__init__()
+        if scalars % num_heads:
+            raise ValueError("scalars must be divisible by num_heads")
+        if vectors != num_heads:
+            raise ValueError(
+                "edge-conditioned local transport requires vectors == num_heads"
+            )
+        self.scalars = scalars
+        self.num_heads = num_heads
+        self.head_dim = scalars // num_heads
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(2 * scalars + num_rbf, 12),
+            nn.SiLU(),
+            nn.Linear(12, scalars + 3 * num_heads),
+        )
+
+    def forward(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+        local_geometry: tuple[torch.Tensor, ...],
+        *,
+        num_nodes: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        receiver, sender, displacement, squared_distance, rbf = local_geometry
+        nonself = receiver != sender
+        receiver = receiver[nonself]
+        sender = sender[nonself]
+        displacement = displacement[nonself]
+        squared_distance = squared_distance[nonself]
+        rbf = rbf[nonself]
+
+        edge_features = torch.cat(
+            [
+                scalars[receiver],
+                scalars[sender],
+                rbf.to(dtype=scalars.dtype),
+            ],
+            dim=-1,
+        )
+        edge_output = self.edge_mlp(edge_features)
+        scalar_edge, sender_gate, relative_gate, tensor_gate = torch.split(
+            edge_output,
+            [self.scalars, self.num_heads, self.num_heads, self.num_heads],
+            dim=-1,
+        )
+        dtype = _moment_dtype(scalars, vectors, displacement)
+        cutoff = _cosine_of_squared_distance_cutoff(
+            squared_distance.to(dtype=dtype)
+        )
+        weights = cutoff.unsqueeze(-1).expand(-1, self.num_heads)
+        scalar_message = _edge_sum(
+            weights,
+            scalar_edge.to(dtype=dtype).reshape(
+                -1, self.num_heads, self.head_dim
+            ),
+            receiver,
+            num_nodes,
+        )
+        vector_base = _edge_sum(
+            weights,
+            torch.tanh(sender_gate).to(dtype=dtype).unsqueeze(-1)
+            * vectors[sender].to(dtype=dtype),
+            receiver,
+            num_nodes,
+        )
+        relative = _edge_sum(
+            weights,
+            torch.tanh(relative_gate).to(dtype=dtype).unsqueeze(-1)
+            * displacement.to(dtype=dtype).unsqueeze(1),
+            receiver,
+            num_nodes,
+        )
+        tensor = _edge_sum(
+            weights,
+            torch.tanh(tensor_gate).to(dtype=dtype).unsqueeze(-1)
+            * _symmetric_traceless_features(
+                displacement.to(dtype=dtype)
+            ).unsqueeze(1),
+            receiver,
+            num_nodes,
+        )
+        radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
+        return scalar_message, vector_base, relative, tensor, radial_trace
 
 
 class _LocalPairwiseContent(nn.Module):
@@ -1182,18 +1327,25 @@ def _local_geometry(
     num_rbf: int,
     graph_counts: torch.Tensor | None = None,
     edge_index: torch.Tensor | None = None,
+    edge_index_is_validated: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if edge_index is None:
         if graph_counts is None:
             graph_counts = torch.bincount(batch, minlength=num_graphs)
         receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
     else:
-        receiver, sender = _validated_local_edge_index(
-            edge_index,
-            batch,
-            num_nodes=pos.shape[0],
-            device=pos.device,
-        )
+        if edge_index_is_validated:
+            receiver, sender = _local_edge_index_components(
+                edge_index,
+                device=pos.device,
+            )
+        else:
+            receiver, sender = _validated_local_edge_index(
+                edge_index,
+                batch,
+                num_nodes=pos.shape[0],
+                device=pos.device,
+            )
     cutoff_tensor = pos.new_full((), float(cutoff))
     candidate_distance = _stable_vector_norm(pos[sender] - pos[receiver]).squeeze(-1)
     inside = candidate_distance < cutoff_tensor
@@ -1222,23 +1374,7 @@ def _validated_local_edge_index(
     num_nodes: int,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if not isinstance(edge_index, torch.Tensor):
-        raise TypeError("edge_index must be a tensor")
-    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-        raise ValueError("edge_index must have shape (2, E)")
-    if edge_index.device != device:
-        raise ValueError("edge_index and model inputs must use the same device")
-    integer_dtypes = {
-        torch.int8,
-        torch.int16,
-        torch.int32,
-        torch.int64,
-        torch.uint8,
-    }
-    if edge_index.dtype not in integer_dtypes:
-        raise TypeError("edge_index must use an integer dtype")
-
-    receiver, sender = edge_index.to(dtype=torch.long).unbind(dim=0)
+    receiver, sender = _local_edge_index_components(edge_index, device=device)
     if receiver.numel() == 0:
         raise ValueError("edge_index must contain a self edge for every node")
     if bool((receiver < 0).any().item()) or bool((sender < 0).any().item()):
@@ -1259,6 +1395,30 @@ def _validated_local_edge_index(
     if not bool(has_self.all().item()):
         raise ValueError("edge_index must contain a self edge for every node")
     return receiver, sender
+
+
+def _local_edge_index_components(
+    edge_index: torch.Tensor,
+    *,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Check tensor metadata only; callers own validated edge contents."""
+    if not isinstance(edge_index, torch.Tensor):
+        raise TypeError("edge_index must be a tensor")
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+        raise ValueError("edge_index must have shape (2, E)")
+    if edge_index.device != device:
+        raise ValueError("edge_index and model inputs must use the same device")
+    integer_dtypes = {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+    if edge_index.dtype not in integer_dtypes:
+        raise TypeError("edge_index must use an integer dtype")
+    return edge_index.to(dtype=torch.long).unbind(dim=0)
 
 
 def _batched_complete_graph_edges(
@@ -2405,12 +2565,11 @@ def _scatter_mean(
 def _graph_metadata(batch: torch.Tensor) -> tuple[int, torch.Tensor]:
     if (batch < 0).any():
         raise ValueError("batch indices must be nonnegative")
-    graph_ids = torch.unique(batch, sorted=True)
-    expected = torch.arange(graph_ids.numel(), device=batch.device)
-    if not torch.equal(graph_ids, expected):
+    num_graphs = int(batch.max().item()) + 1
+    graph_counts = torch.bincount(batch, minlength=num_graphs)
+    if bool((graph_counts == 0).any().item()):
         raise ValueError("batch indices must be contiguous and start at zero")
-    num_graphs = graph_ids.numel()
-    return num_graphs, torch.bincount(batch, minlength=num_graphs)
+    return num_graphs, graph_counts
 
 
 def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
@@ -2501,6 +2660,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_key_balancing",
         "learn_local_radial_gate",
         "use_pairwise_local_content",
+        "use_edge_conditioned_local_transport",
         "use_memory_interaction",
         "use_radial_trace",
         "coordinate_updates",
@@ -2533,6 +2693,21 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "use_pairwise_local_content requires at least one local head"
         )
+    if config.use_edge_conditioned_local_transport:
+        if not any(local_head_counts):
+            raise ValueError(
+                "edge-conditioned local transport requires at least one local head"
+            )
+        if config.use_pairwise_local_content:
+            raise ValueError(
+                "edge-conditioned local transport cannot be combined with "
+                "pairwise local content"
+            )
+        if config.learn_local_radial_gate:
+            raise ValueError(
+                "edge-conditioned local transport cannot be combined with the "
+                "legacy learned local radial gate"
+            )
     _float32_control(
         "pairwise_residual_scale_init",
         config.pairwise_residual_scale_init,

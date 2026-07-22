@@ -1,0 +1,206 @@
+{
+  "degree": 16,
+  "device": "cuda",
+  "inference_boundary": {
+    "dense_egnn_computation_identical_to_candidate": false,
+    "domain_generalization_inferred": false,
+    "fixed_degree_model_complexity": "O(E_local + N) at fixed width",
+    "neighbor_builder_included": false,
+    "qm9_accuracy_inferred": false,
+    "same_edge_density_computation_identical": false,
+    "same_kernel_computation_identical": true
+  },
+  "model_dtype": "float32",
+  "model_scaling": {
+    "reason": "include_model_benchmarks=False",
+    "status": "skipped"
+  },
+  "repeats": 9,
+  "same_kernel": {
+    "correctness_gate_passed": true,
+    "first_measured_runtime_crossover_nodes": 4096,
+    "kernel_formula": "q0_dot_k0 + floor + beta*(1 + q1_dot_k1) + gamma*(q1_dot_k1)^2",
+    "max_abs_error": 2.4060343561255193e-15,
+    "normalization": "exact_row_sum",
+    "quadratic_pair_tensor_in_factorized_path": false,
+    "rows": [
+      {
+        "declared_largest_intermediate_bytes": 4352,
+        "declared_largest_intermediate_elements": 544,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.11465497664175928,
+        "method": "factorized",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 32768,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8192,
+        "declared_largest_intermediate_elements": 1024,
+        "materialized_pair_elements": 1024,
+        "median_ms": 0.057586003094911575,
+        "method": "materialized_dense",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 40960,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8704,
+        "declared_largest_intermediate_elements": 1088,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.12777297524735332,
+        "method": "factorized",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 57856,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 32768,
+        "declared_largest_intermediate_elements": 4096,
+        "materialized_pair_elements": 4096,
+        "median_ms": 0.06512200343422592,
+        "method": "materialized_dense",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 163840,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 17408,
+        "declared_largest_intermediate_elements": 2176,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.1830589899327606,
+        "method": "factorized",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 110592,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 131072,
+        "declared_largest_intermediate_elements": 16384,
+        "materialized_pair_elements": 16384,
+        "median_ms": 0.08164800237864256,
+        "method": "materialized_dense",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 655360,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 34816,
+        "declared_largest_intermediate_elements": 4352,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.27432499337010086,
+        "method": "factorized",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 216064,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 524288,
+        "declared_largest_intermediate_elements": 65536,
+        "materialized_pair_elements": 65536,
+        "median_ms": 0.11500201071612537,
+        "method": "materialized_dense",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 2621440,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 69632,
+        "declared_largest_intermediate_elements": 8704,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.47149701276794076,
+        "method": "factorized",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 427008,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 2097152,
+        "declared_largest_intermediate_elements": 262144,
+        "materialized_pair_elements": 262144,
+        "median_ms": 0.09916999260894954,
+        "method": "materialized_dense",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 10485760,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 139264,
+        "declared_largest_intermediate_elements": 17408,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.8637679857201874,
+        "method": "factorized",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 848896,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8388608,
+        "declared_largest_intermediate_elements": 1048576,
+        "materialized_pair_elements": 1048576,
+        "median_ms": 0.37773200892843306,
+        "method": "materialized_dense",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 41943040,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 278528,
+        "declared_largest_intermediate_elements": 34816,
+        "materialized_pair_elements": 0,
+        "median_ms": 1.6544259851798415,
+        "method": "factorized",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 1692672,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 33554432,
+        "declared_largest_intermediate_elements": 4194304,
+        "materialized_pair_elements": 4194304,
+        "median_ms": 0.5036210059188306,
+        "method": "materialized_dense",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 167772160,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 557056,
+        "declared_largest_intermediate_elements": 69632,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.7611309993080795,
+        "method": "factorized",
+        "nodes": 4096,
+        "peak_cuda_bytes_delta": 3380224,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 134217728,
+        "declared_largest_intermediate_elements": 16777216,
+        "materialized_pair_elements": 16777216,
+        "median_ms": 3.3743740059435368,
+        "method": "materialized_dense",
+        "nodes": 4096,
+        "peak_cuda_bytes_delta": 671088640,
+        "status": "completed"
+      }
+    ],
+    "runtime_loglog_slope": {
+      "factorized": -0.0912495334233126,
+      "materialized_dense": 1.579592469467885
+    }
+  },
+  "same_kernel_dtype": "float64",
+  "schema_version": 1,
+  "sizes": [
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096
+  ],
+  "warmup": 3
+}

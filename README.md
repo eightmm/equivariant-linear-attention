@@ -52,6 +52,8 @@ model = EquivariantAttention(
         # Optional invariant receiver/sender/RBF local content; default off.
         use_pairwise_local_content=False,
         pairwise_residual_scale_init=0.1,
+        # Optional per-local-layer invariant edge filters; default off.
+        use_edge_conditioned_local_transport=False,
     )
 )
 
@@ -79,6 +81,14 @@ branch, keeps coordinates static unless separately enabled, and preserves the
 default parameter/state schema when off. See
 [the exact local equations](docs/LAYER_MATH.md#local-heads).
 
+`use_edge_conditioned_local_transport=True` instead replaces each active local
+attention transport with an independent invariant receiver/sender/RBF edge MLP
+and equivariant scalar, sender-vector, relative-vector, and rank-2 sums. It is
+registered only when every local block uses all heads and the hidden vector
+channel count equals the head count. It cannot be combined with the legacy
+pairwise-content or learned-radial controls. This path is opt-in: its scaling
+contract passed, but its repeated 500-step QM9 accuracy screen failed.
+
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:
 
@@ -95,6 +105,17 @@ out = local_model(node_feats[:2], pos[:2], edge_index=edge_index)
 The supplied path bypasses quadratic pair discovery, applies the same strict
 distance cutoff, and uses O(E) candidate/retained storage. Omitting it preserves
 the vectorized complete-candidate fallback exactly.
+
+`GraphSample` and `GraphBatch` carry the same optional `edge_index`; collation
+checks uniqueness/self coverage, offsets graph-local indices, and marks the
+result for the validated hot path. Training then skips repeated content
+validation inside the model; direct tensor callers remain fully validated by
+default. `edge_index_is_validated=True` is a trusted assertion and must not be
+set on unchecked external edges. The resulting fixed-width model forward is
+`O(E_local + N)`; one-time validation and graph construction are separate.
+The QM9 CLI flag `--precompute-local-edges` builds radius candidates once while
+loading. That convenience builder still performs a dense per-graph radius scan
+and is excluded from any linear-time preprocessing claim.
 
 ## Mathematical contract
 
@@ -188,6 +209,18 @@ architecture iteration after 850.7 GPU-wall seconds with test evaluation off.
 See [the completed parity record](docs/BENCHMARKS.md#registered-egnn-parity-result-2026-07-20)
 and [the frozen evaluation contract](docs/EVALUATION.md#registered-egnn-parity-study-confirmed-2026-07-20).
 
+The scaling-aware EC-LGL packet then separated identical-kernel factorization
+from different-edge-regime model comparisons. For the exact same float64
+kernel at 4096 nodes, factorized evaluation used 0 pair elements and 3.38 MB
+peak CUDA delta versus 16,777,216 pair elements and 671.09 MB for the
+materialized dense path; median latency was 0.761/3.374 ms and maximum output
+error was `2.41e-15`. Full EC-LGL with degree 16 first crossed complete-edge
+static EGNN at 512 nodes (5.243/5.577 ms, 11.71/391.59 MB), but remained slower
+than EGNN when both used the same sparse edges. Its repeated QM9 screen mean was
+0.802194 eV versus static LGL at 0.712178 eV, so the accuracy gate rejected
+confirmation and the feature remains off by default. See
+[the scaling record](docs/BENCHMARKS.md#scaling-aware-ec-lgl-result-2026-07-22).
+
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
@@ -205,13 +238,16 @@ uv run --locked python scripts/run_registered_transport_study.py \
 uv run --locked python scripts/run_registered_coordinate_study.py \
   artifacts/coordinate-study-reproduction --dry-run
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
+uv run python scripts/benchmark_sparse_scaling.py --device cuda \
+  --metrics-out artifacts/sparse-scaling.json
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
 
 The training CLI exposes registered `--routing ggg/lgg/ggl/lgl/lll`,
 `--global-transport-mode learned/uniform/none`,
 `--memory-count 1/4/8`, `--memory-interaction`, `--radial-trace`, and opt-in
-`--coordinate-updates` arms. Use
+`--coordinate-updates`, `--edge-conditioned-local-transport`, and
+`--precompute-local-edges` arms. Use
 `--no-alignment-linear-term`, `--no-key-balancing`, and
 `--kernel-floor-mode fixed/inverse_graph_size` only for matched ablations. Test
 evaluation is disabled by default and requires explicit `--evaluate-test`.
@@ -221,8 +257,9 @@ content and `gamma*t^2` terms unchanged.
 
 `--benchmark-model internal_static_egnn_baseline` and
 `internal_dynamic_egnn_baseline` are private comparison paths, not second public
-architectures. Both use fully connected same-graph directed non-self edges,
-squared-distance scalar messages, and the same local
+architectures. By default both use fully connected same-graph directed
+non-self edges; they also accept the validated supplied-edge path for
+controlled sparse scaling. Their messages use squared-distance scalars and the same local
 split/normalization/optimizer/readout harness. The dynamic control additionally
 uses invariant edge scalars to weight relative coordinate vectors, followed by
 the same 0.25-Angstrom bound and graph-centroid correction. Neither is an

@@ -2,6 +2,24 @@
 
 ## Status
 
+- Scaling-aware EC-LGL extension: the user's 2026-07-22 instruction to improve
+  the model while accounting for the small/low-edge-count QM9 regime confirms
+  local implementation, sparse edge plumbing, synthetic scaling/crossover
+  measurement, and a validation-only QM9 screen/conditional confirmation on
+  one local GPU. The packet caps cumulative GPU wall time at 1,200 seconds,
+  keeps test evaluation disabled, adds no dependency, and does not claim that
+  preprocessing a radius/kNN graph is linear. The frozen contract is
+  `artifacts/ec-lgl-sparse-scaling-20260722/scope.md`.
+- The scaling-aware packet completed on 2026-07-22. Sparse edges now traverse
+  loading, collation, device transfer, training, public attention, and the
+  private EGNN control. Collation validates edge contents once; the trusted
+  forward path avoids repeated sorting/uniqueness work, while direct callers
+  remain validated by default. The exact factorized kernel first beat its materialized
+  dense form at 4096 nodes while using 3.38 MB versus 671.09 MB peak CUDA delta.
+  Degree-16 EC-LGL first crossed complete-edge EGNN at 512 nodes, but remained
+  slower on the same sparse edges. Its repeated 500-step QM9 mean was 0.802194
+  eV versus static LGL at 0.712178 eV, failing the +0.020 eV admission gate; no
+  confirmation or test evaluation ran and the EC switch remains off by default.
 - State: confirmed 2026-07-19 evidence-first strengthening extension; all
   earlier confirmed contracts remain active.
 - State: confirmed for local code, bounded QM9 dependency setup, and at most

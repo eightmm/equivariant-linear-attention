@@ -7,7 +7,9 @@ from .moment import (
     _batched_complete_graph_edges,
     _bounded_centered_displacement,
     _graph_metadata,
+    _local_edge_index_components,
     _scatter_mean,
+    _validated_local_edge_index,
 )
 
 
@@ -115,12 +117,20 @@ class _StaticEGNNBaseline(nn.Module):
         node_feats: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor | None = None,
+        *,
+        edge_index: torch.Tensor | None = None,
+        edge_index_is_validated: bool = False,
     ) -> dict[str, torch.Tensor]:
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats, pos, batch
         )
-        receiver, sender = _directed_complete_edges_without_self(
-            batch, graph_counts
+        receiver, sender = _resolve_egnn_edges(
+            batch,
+            graph_counts,
+            edge_index=edge_index,
+            edge_index_is_validated=edge_index_is_validated,
+            num_nodes=node_feats.shape[0],
+            device=node_feats.device,
         )
 
         value = self.embedding(node_feats)
@@ -198,7 +208,11 @@ class _EGNNCoordinateUpdater(nn.Module):
         weight = torch.tanh(self.coordinate_gate(edge)).to(dtype=pos.dtype)
         messages = relative * weight
         aggregate = pos.new_zeros(pos.shape).index_add(0, receiver, messages)
-        neighbor_count = (graph_counts[batch] - 1).clamp_min(1).to(dtype=pos.dtype)
+        neighbor_count = pos.new_zeros(pos.shape[0]).index_add(
+            0,
+            receiver,
+            pos.new_ones(receiver.shape[0]),
+        ).clamp_min(1)
         raw_displacement = aggregate / neighbor_count.unsqueeze(-1)
         return _bounded_centered_displacement(
             raw_displacement,
@@ -236,15 +250,22 @@ class _DynamicEGNNBaseline(_StaticEGNNBaseline):
         node_feats: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor | None = None,
+        *,
+        edge_index: torch.Tensor | None = None,
+        edge_index_is_validated: bool = False,
     ) -> dict[str, torch.Tensor]:
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
             pos,
             batch,
         )
-        receiver, sender = _directed_complete_edges_without_self(
+        receiver, sender = _resolve_egnn_edges(
             batch,
             graph_counts,
+            edge_index=edge_index,
+            edge_index_is_validated=edge_index_is_validated,
+            num_nodes=node_feats.shape[0],
+            device=node_feats.device,
         )
 
         value = self.embedding(node_feats)
@@ -278,6 +299,37 @@ def _directed_complete_edges_without_self(
     graph_counts: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
+    nonself = receiver != sender
+    return receiver[nonself], sender[nonself]
+
+
+def _resolve_egnn_edges(
+    batch: torch.Tensor,
+    graph_counts: torch.Tensor,
+    *,
+    edge_index: torch.Tensor | None,
+    edge_index_is_validated: bool,
+    num_nodes: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not isinstance(edge_index_is_validated, bool):
+        raise TypeError("edge_index_is_validated must be boolean")
+    if edge_index is None:
+        if edge_index_is_validated:
+            raise ValueError("validated edge mode requires edge_index")
+        return _directed_complete_edges_without_self(batch, graph_counts)
+    if edge_index_is_validated:
+        receiver, sender = _local_edge_index_components(
+            edge_index,
+            device=device,
+        )
+    else:
+        receiver, sender = _validated_local_edge_index(
+            edge_index,
+            batch,
+            num_nodes=num_nodes,
+            device=device,
+        )
     nonself = receiver != sender
     return receiver[nonself], sender[nonself]
 

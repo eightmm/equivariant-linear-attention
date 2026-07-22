@@ -34,6 +34,7 @@ def build_regression_model(
     coordinate_updates: bool = False,
     use_pairwise_local_content: bool = False,
     pairwise_residual_scale_init: float = 0.1,
+    use_edge_conditioned_local_transport: bool = False,
 ) -> nn.Module:
     model = EquivariantAttention(
         EquivariantAttentionConfig(
@@ -53,6 +54,7 @@ def build_regression_model(
             learn_local_radial_gate=learn_local_radial_gate,
             use_pairwise_local_content=use_pairwise_local_content,
             pairwise_residual_scale_init=pairwise_residual_scale_init,
+            use_edge_conditioned_local_transport=use_edge_conditioned_local_transport,
             global_memory_count=global_memory_count,
             use_memory_interaction=use_memory_interaction,
             memory_assignment_temperature=memory_assignment_temperature,
@@ -67,7 +69,16 @@ def build_regression_model(
 
 
 def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
-    out = model(batch.node_feats, batch.pos, batch=batch.batch)
+    if batch.edge_index is None:
+        out = model(batch.node_feats, batch.pos, batch=batch.batch)
+    else:
+        out = model(
+            batch.node_feats,
+            batch.pos,
+            batch=batch.batch,
+            edge_index=batch.edge_index,
+            edge_index_is_validated=batch.edge_index_is_validated,
+        )
     return out["graph_scalars"].reshape(batch.target.shape[0], -1)
 
 

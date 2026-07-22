@@ -236,7 +236,11 @@ def main() -> None:
             "name": args.benchmark_model,
             "official_reproduction": False,
             "coordinate_updates": coordinate_updates,
-            "edge_topology": "same_graph_directed_complete_without_self",
+            "edge_topology": (
+                "precomputed_radius_candidates_without_self"
+                if args.precompute_local_edges
+                else "same_graph_directed_complete_without_self"
+            ),
             "distance_feature": "raw_squared_distance",
             "readout": "layernorm_node_linear_graph_mean",
         }
@@ -355,6 +359,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--learn-local-radial-gate", action="store_true")
     parser.add_argument("--pairwise-local-content", action="store_true")
     parser.add_argument("--pairwise-residual-scale-init", type=float, default=0.1)
+    parser.add_argument("--edge-conditioned-local-transport", action="store_true")
+    parser.add_argument("--precompute-local-edges", action="store_true")
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
     parser.add_argument("--memory-interaction", action="store_true")
     parser.add_argument("--memory-assignment-temperature", type=float, default=1.0)
@@ -401,7 +407,10 @@ def load_dataset(args: argparse.Namespace) -> Sequence[GraphSample]:
             num_samples=args.num_samples, node_dim=8, seed=args.seed
         )
     return load_qm9_samples(
-        args.data_root, target_index=args.qm9_target_index, limit=args.num_samples
+        args.data_root,
+        target_index=args.qm9_target_index,
+        limit=args.num_samples,
+        local_cutoff=(args.local_cutoff if args.precompute_local_edges else None),
     )
 
 
@@ -429,6 +438,7 @@ def _build_benchmark_model(
             "learn_local_radial_gate": False,
             "pairwise_local_content": False,
             "pairwise_residual_scale_init": 0.1,
+            "edge_conditioned_local_transport": False,
             "no_alignment_linear_term": False,
             "no_key_balancing": False,
             "diagnostic_max_nodes": 128,
@@ -478,6 +488,9 @@ def _build_benchmark_model(
         learn_local_radial_gate=args.learn_local_radial_gate,
         use_pairwise_local_content=args.pairwise_local_content,
         pairwise_residual_scale_init=args.pairwise_residual_scale_init,
+        use_edge_conditioned_local_transport=(
+            args.edge_conditioned_local_transport
+        ),
         global_memory_count=args.memory_count,
         use_memory_interaction=args.memory_interaction,
         memory_assignment_temperature=args.memory_assignment_temperature,
@@ -1637,7 +1650,12 @@ def _run_config(
                 else "not_applicable"
             ),
             "geometry_recomputed_per_layer": coordinate_updates,
-            "edge_topology": "same_graph_directed_complete_without_self",
+            "edge_topology": (
+                "precomputed_radius_candidates_without_self"
+                if args.precompute_local_edges
+                else "same_graph_directed_complete_without_self"
+            ),
+            "precompute_local_edges": args.precompute_local_edges,
             "distance_feature": "raw_squared_distance",
             "edge_gate": "learned_sigmoid",
             "aggregation": "sum",
@@ -1754,6 +1772,15 @@ def _run_config(
         "local_cutoff": args.local_cutoff,
         "num_rbf": args.num_rbf,
         "learn_local_radial_gate": args.learn_local_radial_gate,
+        "edge_conditioned_local_transport": (
+            args.edge_conditioned_local_transport
+        ),
+        "precompute_local_edges": args.precompute_local_edges,
+        "local_candidate_builder": (
+            "load_time_dense_radius_scan"
+            if args.precompute_local_edges
+            else "forward_same_graph_cartesian_fallback"
+        ),
         "pairwise_local_content": args.pairwise_local_content,
         "pairwise_residual_scale_init": args.pairwise_residual_scale_init,
         "pairwise_local_formula": (

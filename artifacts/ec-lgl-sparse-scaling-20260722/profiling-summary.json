@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "device": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "model": "ec_lgl",
+  "nodes": 512,
+  "candidate_degree_including_self": 16,
+  "profiled_forwards": 10,
+  "warmup_forwards": 5,
+  "activities": [
+    "CPU",
+    "CUDA"
+  ],
+  "record_shapes": true,
+  "profile_memory": true,
+  "edge_index_is_validated": true,
+  "reproduction": {
+    "interpreter": ".venv/bin/python",
+    "model_builder": "build_regression_model",
+    "model_kwargs": {
+      "node_dim": 11,
+      "hidden_dim": 64,
+      "num_layers": 3,
+      "num_heads": 4,
+      "local_head_counts": [
+        4,
+        0,
+        4
+      ],
+      "local_cutoff": 2.5,
+      "num_rbf": 16,
+      "use_edge_conditioned_local_transport": true
+    },
+    "input_builder": "scripts.benchmark_sparse_scaling._model_inputs(512, device=cuda)",
+    "edge_builder": "scripts.benchmark_sparse_scaling.bounded_ring_edge_index(512, degree=16, device=cuda)",
+    "context": "torch.inference_mode with model.eval()",
+    "sort_key": "cuda_time_total",
+    "row_limit": 25
+  },
+  "aggregate": {
+    "self_cpu_time_total_ms": 90.104,
+    "self_cuda_time_total_ms": 18.261
+  },
+  "selected_cuda_time_total_ms": {
+    "aten::linear": 2.478,
+    "aten::addmm": 2.453,
+    "aten::index": 2.103,
+    "aten::mul": 2.155,
+    "aten::index_add": 1.613,
+    "aten::div": 1.027,
+    "aten::einsum": 1.001,
+    "aten::nonzero": 0.868001,
+    "aten::sum": 0.845409
+  },
+  "unique_operator_observed": false,
+  "interpretation": "The content-validated path removed torch.unique from the profile. No single sparse scatter dominates: aten::index_add is about 8.8 percent of aggregate self CUDA time, while many small linear, index, elementwise, reduction and einsum kernels contribute. The same-edge gap is therefore primarily a broad fixed launch/feature-stack cost, not evidence that the O(E_local) scatter itself is asymptotically wrong.",
+  "optimization_boundary": "A fused or compiled production kernel is the next systems target. Profiler timings include instrumentation overhead and must not replace synchronized benchmark medians in scaling-results.json."
+}

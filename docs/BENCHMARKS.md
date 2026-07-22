@@ -234,6 +234,70 @@ with explicit degree or attention-mass invariants, while retaining factorized
 global attention. Coordinate updates, multi-memory interaction, higher moment
 degree, and indiscriminate width/depth increases remain downstream choices.
 
+## Scaling-aware EC-LGL result (2026-07-22)
+
+This packet implemented end-to-end optional sparse-edge plumbing and a
+per-local-layer edge-conditioned equivariant sum inside the existing public
+`EquivariantAttention`. It separately measured identical global-kernel
+factorization, same-edge model constants, and the different-edge-density regime
+that motivated the work. Neighbor-list construction was excluded from all
+timings; the convenience QM9 radius builder is a dense per-molecule scan.
+
+For the exact same normalized float64 kernel on the RTX PRO 6000 Blackwell:
+
+| nodes | dense time | factorized time | dense peak delta | factorized peak delta |
+|---:|---:|---:|---:|---:|
+| 1024 | 0.3777 ms | 0.8638 ms | 41.94 MB | 0.85 MB |
+| 2048 | 0.5036 ms | 1.6544 ms | 167.77 MB | 1.69 MB |
+| 4096 | 3.3744 ms | 0.7611 ms | 671.09 MB | 3.38 MB |
+
+Maximum dense/factorized output error was `2.406e-15`; the factorized path
+materialized no `N x N` tensor. The first measured runtime crossover was 4096
+nodes. Its negative last-window timing slope reflects finite GPU occupancy
+variation and is not a subconstant-complexity claim.
+
+The measured model path used content-validated synthetic edge tensors; one-time
+validation and neighbor construction were excluded. At fixed degree 16, full
+EC-LGL latency changed from 5.135 ms at 32 nodes to 5.595 ms at 4096 nodes.
+Static EGNN on the same sparse edges was faster at every size (0.599 to
+1.402 ms). Against complete-edge EGNN, however, the first
+descriptive crossover appeared at 512 nodes:
+
+| 512-node system | candidate edges | median time | peak CUDA delta |
+|---|---:|---:|---:|
+| EC-LGL, degree 16 | 8,192 | 5.243 ms | 11.71 MB |
+| static EGNN, complete | 262,144 | 5.577 ms | 391.59 MB |
+
+This crossover does not compare identical computations: EC-LGL caps expensive
+local geometry and retains one factorized global stage, whereas EGNN processes
+every local pair. At the same complete 512-node edge set, EC-LGL remained
+slower (6.675 versus 5.561 ms). The valid conclusion is therefore a memory and
+edge-regime crossover, not a universally faster layer.
+
+The repeated seed-42/500-step QM9 screen then rejected the frozen EC operator:
+
+| arm | run 1 | run 2 | mean validation MAE |
+|---|---:|---:|---:|
+| EC-LGL | 0.743185 | 0.861202 | 0.802194 eV |
+| static LGL | 0.708419 | 0.715938 | 0.712178 eV |
+
+The `+0.090015 eV` mean regression exceeded the `+0.020 eV` confirmation
+ceiling, so no 2,000-step or EGNN accuracy confirmation ran. The parameter
+ratio gate passed (158,537 candidate versus 152,065 EGNN trainable parameters),
+and the symmetry/sparse-path gates passed. The large EC repeat range and 92%
+clip fraction suggest optimization sensitivity, but do not prove its cause.
+The feature stays opt-in and no default changed.
+
+Reproduce the scaling harness with:
+
+```bash
+uv run python scripts/benchmark_sparse_scaling.py --device cuda \
+  --metrics-out artifacts/sparse-scaling.json
+```
+
+Frozen scope, exact JSON results, screen arms, verification, and limitations are
+under `artifacts/ec-lgl-sparse-scaling-20260722/`.
+
 ## Registered EGNN-parity result (2026-07-20)
 
 The confirmed packet kept static coordinates, width-64 LGL learned transport,

@@ -263,6 +263,30 @@ same-harness validation result against a private EGNN-style control; an official
 baseline reproduction, similarity/scaffold split, and untouched final test are
 separate gates.
 
+## Scaling-aware EC-LGL study (completed 2026-07-22)
+
+The confirmed packet required three distinct conclusions rather than one
+aggregate speed claim:
+
+1. exact dense and factorized implementations of one finite kernel must agree
+   below `1e-10` and demonstrate the storage/runtime boundary;
+2. full EC-LGL and static EGNN must be compared both on the same precomputed
+   sparse edges and in the intended capped-local versus complete-edge regime;
+   timed model forwards use already content-validated edges, while validation
+   and neighbor construction are reported outside the `O(E_local + N)` claim;
+3. a repeated seed-42/500-step EC-LGL screen may enter five-seed confirmation
+   only when its mean is no more than `0.020 eV` worse than static LGL.
+
+The exact kernel passed with `2.406e-15` maximum error and crossed the dense
+implementation at 4096 nodes. Fixed-degree EC-LGL crossed complete-edge EGNN at
+512 nodes but never beat EGNN on the same sparse edges. The accuracy screen
+failed: EC-LGL/static-LGL repeated means were `0.802194/0.712178 eV`. Therefore
+the 15 confirmation arms were not run, no test labels were accessed, and the
+EC feature remains opt-in. A future accuracy packet should preregister one
+bounded message normalization or staged residual intervention and retain the
+repeated-run gate; these results do not authorize selecting among several
+repairs after inspecting validation labels.
+
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel
 scales, mass/denominator quantiles, entropy over log node count, maximum weight,

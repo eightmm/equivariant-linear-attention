@@ -8,9 +8,12 @@ import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.benchmarking import (
+    GraphSample,
     SyntheticMoleculeDataset,
+    _radius_candidate_edge_index,
     _qm9_sample_id,
     collate_graphs,
+    load_qm9_samples,
     split_dataset,
 )
 from equivariant_attention.training import (
@@ -56,6 +59,116 @@ def test_graph_batch_separates_feature_and_geometry_precision() -> None:
 
     assert batch.node_feats.dtype == torch.float16
     assert batch.pos.dtype == torch.float32
+
+
+def test_sparse_edges_collate_with_offsets_and_move_with_batch() -> None:
+    first = GraphSample(
+        node_feats=torch.randn(2, 3),
+        pos=torch.randn(2, 3),
+        target=torch.tensor([1.0]),
+        sample_id="first",
+        edge_index=torch.tensor([[0, 1, 0], [0, 1, 1]]),
+    )
+    second = GraphSample(
+        node_feats=torch.randn(3, 3),
+        pos=torch.randn(3, 3),
+        target=torch.tensor([2.0]),
+        sample_id="second",
+        edge_index=torch.tensor([[0, 1, 2, 2], [0, 1, 2, 0]]),
+    )
+
+    batch = collate_graphs([first, second])
+
+    assert batch.edge_index_is_validated
+    assert torch.equal(
+        batch.edge_index,
+        torch.tensor([[0, 1, 0, 2, 3, 4, 4], [0, 1, 1, 2, 3, 4, 2]]),
+    )
+    moved = batch.to("cpu", dtype=torch.float64)
+    assert moved.edge_index is not None
+    assert moved.edge_index.dtype == torch.long
+    assert moved.edge_index.device == moved.node_feats.device
+    assert torch.equal(moved.edge_index, batch.edge_index)
+    assert moved.edge_index_is_validated
+
+
+@pytest.mark.parametrize(
+    ("edge_index", "match"),
+    [
+        (torch.tensor([[0, 0, 1], [0, 0, 1]]), "duplicate"),
+        (torch.tensor([[0, 0], [0, 1]]), "self edge"),
+    ],
+)
+def test_collate_rejects_edges_that_cannot_enter_validated_fast_path(
+    edge_index: torch.Tensor,
+    match: str,
+) -> None:
+    sample = GraphSample(
+        node_feats=torch.randn(2, 3),
+        pos=torch.randn(2, 3),
+        target=torch.tensor([1.0]),
+        sample_id="invalid",
+        edge_index=edge_index,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        collate_graphs([sample])
+
+
+def test_collate_rejects_mixed_sparse_edge_presence() -> None:
+    dataset = SyntheticMoleculeDataset(num_samples=2, node_dim=4, seed=1209)
+    sparse = GraphSample(
+        node_feats=dataset[0].node_feats,
+        pos=dataset[0].pos,
+        target=dataset[0].target,
+        sample_id=dataset[0].sample_id,
+        edge_index=torch.arange(dataset[0].pos.shape[0]).repeat(2, 1),
+    )
+
+    with pytest.raises(ValueError, match="all samples.*edge_index"):
+        collate_graphs([sparse, dataset[1]])
+
+
+def test_radius_candidates_include_self_and_use_receiver_sender_rows() -> None:
+    pos = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]]
+    )
+
+    edge_index = _radius_candidate_edge_index(pos, cutoff=1.5)
+
+    assert torch.equal(
+        edge_index,
+        torch.tensor([[0, 0, 1, 1, 2], [0, 1, 0, 1, 2]]),
+    )
+
+
+def test_qm9_loader_precomputes_requested_radius_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch_geometric.datasets
+
+    data = type(
+        "Data",
+        (),
+        {
+            "x": torch.eye(3),
+            "pos": torch.tensor(
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]]
+            ),
+            "y": torch.arange(12, dtype=torch.float32).reshape(1, 12),
+            "idx": torch.tensor([7]),
+            "name": "gdb_8",
+        },
+    )()
+    monkeypatch.setattr(torch_geometric.datasets, "QM9", lambda root: [data])
+
+    sample = load_qm9_samples("unused", local_cutoff=1.5)[0]
+
+    assert sample.edge_index is not None
+    assert torch.equal(
+        sample.edge_index,
+        torch.tensor([[0, 0, 1, 1, 2], [0, 1, 0, 1, 2]]),
+    )
 
 
 @pytest.mark.parametrize("geometry_dtype", [torch.float16, torch.bfloat16, torch.int64])
@@ -213,6 +326,27 @@ def test_benchmark_cli_builds_registered_lgl_memory_config() -> None:
     assert config.global_memory_count == 4
     assert config.use_memory_interaction
     assert config.use_radial_trace
+
+
+def test_training_cli_builds_sparse_edge_conditioned_lgl() -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "train_compare.py"
+    symbols = runpy.run_path(script)
+    args = symbols["parse_args"](
+        [
+            "--dataset",
+            "qm9",
+            "--routing",
+            "lgl",
+            "--edge-conditioned-local-transport",
+            "--precompute-local-edges",
+        ]
+    )
+
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert model.config.local_head_counts == (4, 0, 4)
+    assert model.config.use_edge_conditioned_local_transport
+    assert args.precompute_local_edges
 
 
 @pytest.mark.parametrize(

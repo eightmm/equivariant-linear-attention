@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "working_directory": "/home/jaemin/project/layer/equivariant-attention",
+  "environment": "existing locked .venv; PyTorch and device recorded in manifest.json",
+  "qm9_screen": [
+    {
+      "arm": "ec_lgl_seed42_repeat1",
+      "argv": [
+        ".venv/bin/python",
+        "scripts/train_compare.py",
+        "--dataset",
+        "qm9",
+        "--data-root",
+        "data/qm9",
+        "--num-samples",
+        "130000",
+        "--train-size",
+        "110000",
+        "--val-size",
+        "10000",
+        "--batch-size",
+        "64",
+        "--steps",
+        "500",
+        "--hidden-dim",
+        "64",
+        "--num-layers",
+        "3",
+        "--num-heads",
+        "4",
+        "--routing",
+        "lgl",
+        "--local-cutoff",
+        "2.5",
+        "--num-rbf",
+        "16",
+        "--precompute-local-edges",
+        "--edge-conditioned-local-transport",
+        "--lr",
+        "0.0003",
+        "--weight-decay",
+        "0.01",
+        "--grad-clip",
+        "1.0",
+        "--seed",
+        "42",
+        "--split-seed",
+        "42",
+        "--model-seed",
+        "42",
+        "--device",
+        "cuda",
+        "--amp-dtype",
+        "none",
+        "--metrics-out",
+        "artifacts/ec-lgl-sparse-scaling-20260722/screen/ec-lgl-seed42-repeat1.json"
+      ]
+    },
+    {
+      "arm": "ec_lgl_seed42_repeat2",
+      "same_as": "ec_lgl_seed42_repeat1",
+      "metrics_out": "artifacts/ec-lgl-sparse-scaling-20260722/screen/ec-lgl-seed42-repeat2.json"
+    },
+    {
+      "arm": "lgl_seed42_repeat1",
+      "same_as": "ec_lgl_seed42_repeat1",
+      "remove_flags": [
+        "--edge-conditioned-local-transport"
+      ],
+      "metrics_out": "artifacts/ec-lgl-sparse-scaling-20260722/screen/lgl-seed42-repeat1.json"
+    },
+    {
+      "arm": "lgl_seed42_repeat2",
+      "same_as": "lgl_seed42_repeat1",
+      "metrics_out": "artifacts/ec-lgl-sparse-scaling-20260722/screen/lgl-seed42-repeat2.json"
+    }
+  ],
+  "profiler": {
+    "argv_prefix": [
+      ".venv/bin/python",
+      "-c"
+    ],
+    "inline_python": "import torch\nfrom torch.profiler import profile, ProfilerActivity\nfrom equivariant_attention.training import build_regression_model\nfrom scripts.benchmark_sparse_scaling import _model_inputs, bounded_ring_edge_index\ndevice = torch.device('cuda')\nmodel = build_regression_model(node_dim=11, hidden_dim=64, num_layers=3, num_heads=4, local_head_counts=(4, 0, 4), local_cutoff=2.5, num_rbf=16, use_edge_conditioned_local_transport=True).to(device).eval()\nnode_feats, pos, batch = _model_inputs(512, device=device)\nedges = bounded_ring_edge_index(512, degree=16, device=device)\nwith torch.inference_mode():\n    for _ in range(5):\n        model(node_feats, pos, batch=batch, edge_index=edges, edge_index_is_validated=True)\n    torch.cuda.synchronize()\n    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, profile_memory=True) as prof:\n        for _ in range(10):\n            model(node_feats, pos, batch=batch, edge_index=edges, edge_index_is_validated=True)\n    torch.cuda.synchronize()\nprint(prof.key_averages().table(sort_by='cuda_time_total', row_limit=25))",
+    "output_summary": "profiling-summary.json",
+    "note": "Profiler instrumentation changes absolute timing; scaling-results.json remains the performance record."
+  },
+  "test_evaluation": "disabled by default; none of these argv arrays contains --evaluate-test"
+}

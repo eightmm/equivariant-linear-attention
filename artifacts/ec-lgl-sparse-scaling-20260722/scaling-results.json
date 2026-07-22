@@ -1,0 +1,551 @@
+{
+  "degree": 16,
+  "device": "cuda",
+  "inference_boundary": {
+    "dense_egnn_computation_identical_to_candidate": false,
+    "domain_generalization_inferred": false,
+    "fixed_degree_model_complexity": "O(E_local + N) at fixed width",
+    "neighbor_builder_included": false,
+    "qm9_accuracy_inferred": false,
+    "same_edge_density_computation_identical": false,
+    "same_kernel_computation_identical": true
+  },
+  "model_dtype": "float32",
+  "model_scaling": {
+    "candidate_parameters": 158537,
+    "dense_egnn_rows": [
+      {
+        "candidate_degree": 32,
+        "candidate_edges_including_self": 1024,
+        "comparison": "explicit_complete_edge_set",
+        "effective_nonself_edges": 992,
+        "median_ms": 0.5937849928159267,
+        "model": "static_egnn",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 1518080,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 64,
+        "candidate_edges_including_self": 4096,
+        "comparison": "explicit_complete_edge_set",
+        "effective_nonself_edges": 4032,
+        "median_ms": 0.5911270272918046,
+        "model": "static_egnn",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 6088192,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 128,
+        "candidate_edges_including_self": 16384,
+        "comparison": "explicit_complete_edge_set",
+        "effective_nonself_edges": 16256,
+        "median_ms": 0.7188480230979621,
+        "model": "static_egnn",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 24394240,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 256,
+        "candidate_edges_including_self": 65536,
+        "comparison": "explicit_complete_edge_set",
+        "effective_nonself_edges": 65280,
+        "median_ms": 1.4480389945674688,
+        "model": "static_egnn",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 98202112,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 512,
+        "candidate_edges_including_self": 262144,
+        "comparison": "explicit_complete_edge_set",
+        "effective_nonself_edges": 261632,
+        "median_ms": 5.576989002292976,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 391588352,
+        "status": "completed"
+      }
+    ],
+    "density_rows": [
+      {
+        "candidate_degree": 1,
+        "candidate_edges_including_self": 512,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 0,
+        "median_ms": 4.953855997882783,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 7950848,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 1,
+        "candidate_edges_including_self": 512,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 0,
+        "median_ms": 0.4684099985752255,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 1118720,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 4,
+        "candidate_edges_including_self": 2048,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 1536,
+        "median_ms": 5.237299017608166,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 8098304,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 4,
+        "candidate_edges_including_self": 2048,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 1536,
+        "median_ms": 0.6241779774427414,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 2851328,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 8192,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 7680,
+        "median_ms": 5.295726004987955,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 11739136,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 8192,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 7680,
+        "median_ms": 0.6350610055960715,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 12018176,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 128,
+        "candidate_edges_including_self": 65536,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 65024,
+        "median_ms": 5.2842140139546245,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 88178688,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 128,
+        "candidate_edges_including_self": 65536,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 65024,
+        "median_ms": 1.4344480005092919,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 98212352,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 512,
+        "candidate_edges_including_self": 262144,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 261632,
+        "median_ms": 6.675380980595946,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 350224384,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 512,
+        "candidate_edges_including_self": 262144,
+        "comparison": "same_density_control_edge_set",
+        "effective_nonself_edges": 261632,
+        "median_ms": 5.560872989008203,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 391596544,
+        "status": "completed"
+      }
+    ],
+    "egnn_parameters": 152065,
+    "first_descriptive_dense_egnn_crossover_nodes": 512,
+    "first_same_edge_density_crossover_degree": null,
+    "fixed_degree_rows": [
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 512,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 480,
+        "median_ms": 5.134548002388328,
+        "model": "ec_lgl",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 735744,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 512,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 480,
+        "median_ms": 0.5987240001559258,
+        "model": "static_egnn",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 754176,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 1024,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 960,
+        "median_ms": 5.15661999816075,
+        "model": "ec_lgl",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 1466880,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 1024,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 960,
+        "median_ms": 0.6026060145813972,
+        "model": "static_egnn",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 1504768,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 2048,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 1920,
+        "median_ms": 5.184521985938773,
+        "model": "ec_lgl",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 2928128,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 2048,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 1920,
+        "median_ms": 0.6127140077296644,
+        "model": "static_egnn",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 3004928,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 4096,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 3840,
+        "median_ms": 5.204410990700126,
+        "model": "ec_lgl",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 5854208,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 4096,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 3840,
+        "median_ms": 0.6008530035614967,
+        "model": "static_egnn",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 6009344,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 8192,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 7680,
+        "median_ms": 5.242997984169051,
+        "model": "ec_lgl",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 11706368,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 8192,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 7680,
+        "median_ms": 0.6276750063989311,
+        "model": "static_egnn",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 12018176,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 16384,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 15360,
+        "median_ms": 5.296454008203,
+        "model": "ec_lgl",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 23410688,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 16384,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 15360,
+        "median_ms": 0.712365988874808,
+        "model": "static_egnn",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 24035840,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 32768,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 30720,
+        "median_ms": 5.281193007249385,
+        "model": "ec_lgl",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 47343616,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 32768,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 30720,
+        "median_ms": 0.9356839873362333,
+        "model": "static_egnn",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 48071168,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 65536,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 61440,
+        "median_ms": 5.595060007181019,
+        "model": "ec_lgl",
+        "nodes": 4096,
+        "peak_cuda_bytes_delta": 93898752,
+        "status": "completed"
+      },
+      {
+        "candidate_degree": 16,
+        "candidate_edges_including_self": 65536,
+        "comparison": "same_fixed_degree_edge_set",
+        "effective_nonself_edges": 61440,
+        "median_ms": 1.4023479889146984,
+        "model": "static_egnn",
+        "nodes": 4096,
+        "peak_cuda_bytes_delta": 97354240,
+        "status": "completed"
+      }
+    ],
+    "runtime_loglog_slope_dense_egnn": 1.4778638643398094,
+    "runtime_loglog_slope_fixed_degree": {
+      "ec_lgl": 0.03956340500534457,
+      "static_egnn": 0.48857692569148886
+    },
+    "status": "completed"
+  },
+  "repeats": 7,
+  "same_kernel": {
+    "correctness_gate_passed": true,
+    "first_measured_runtime_crossover_nodes": null,
+    "kernel_formula": "q0_dot_k0 + floor + beta*(1 + q1_dot_k1) + gamma*(q1_dot_k1)^2",
+    "max_abs_error": 1.1184900661903585e-15,
+    "normalization": "exact_row_sum",
+    "quadratic_pair_tensor_in_factorized_path": false,
+    "rows": [
+      {
+        "declared_largest_intermediate_bytes": 4352,
+        "declared_largest_intermediate_elements": 544,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.11361198266968131,
+        "method": "factorized",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 32768,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8192,
+        "declared_largest_intermediate_elements": 1024,
+        "materialized_pair_elements": 1024,
+        "median_ms": 0.05802998202852905,
+        "method": "materialized_dense",
+        "nodes": 32,
+        "peak_cuda_bytes_delta": 40960,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8704,
+        "declared_largest_intermediate_elements": 1088,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.13237301027402282,
+        "method": "factorized",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 57856,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 32768,
+        "declared_largest_intermediate_elements": 4096,
+        "materialized_pair_elements": 4096,
+        "median_ms": 0.06522701005451381,
+        "method": "materialized_dense",
+        "nodes": 64,
+        "peak_cuda_bytes_delta": 163840,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 17408,
+        "declared_largest_intermediate_elements": 2176,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.1833080023061484,
+        "method": "factorized",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 110592,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 131072,
+        "declared_largest_intermediate_elements": 16384,
+        "materialized_pair_elements": 16384,
+        "median_ms": 0.08193199755623937,
+        "method": "materialized_dense",
+        "nodes": 128,
+        "peak_cuda_bytes_delta": 655360,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 34816,
+        "declared_largest_intermediate_elements": 4352,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.27450500056147575,
+        "method": "factorized",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 216064,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 524288,
+        "declared_largest_intermediate_elements": 65536,
+        "materialized_pair_elements": 65536,
+        "median_ms": 0.11480099055916071,
+        "method": "materialized_dense",
+        "nodes": 256,
+        "peak_cuda_bytes_delta": 2621440,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 69632,
+        "declared_largest_intermediate_elements": 8704,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.47105399426072836,
+        "method": "factorized",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 427008,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 2097152,
+        "declared_largest_intermediate_elements": 262144,
+        "materialized_pair_elements": 262144,
+        "median_ms": 0.09931100066751242,
+        "method": "materialized_dense",
+        "nodes": 512,
+        "peak_cuda_bytes_delta": 10485760,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 139264,
+        "declared_largest_intermediate_elements": 17408,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.8635940030217171,
+        "method": "factorized",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 848896,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 8388608,
+        "declared_largest_intermediate_elements": 1048576,
+        "materialized_pair_elements": 1048576,
+        "median_ms": 0.37771000643260777,
+        "method": "materialized_dense",
+        "nodes": 1024,
+        "peak_cuda_bytes_delta": 41943040,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 278528,
+        "declared_largest_intermediate_elements": 34816,
+        "materialized_pair_elements": 0,
+        "median_ms": 1.6554079775232822,
+        "method": "factorized",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 1692672,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 33554432,
+        "declared_largest_intermediate_elements": 4194304,
+        "materialized_pair_elements": 4194304,
+        "median_ms": 0.5040950200054795,
+        "method": "materialized_dense",
+        "nodes": 2048,
+        "peak_cuda_bytes_delta": 167772160,
+        "status": "completed"
+      },
+      {
+        "declared_largest_intermediate_bytes": 557056,
+        "declared_largest_intermediate_elements": 69632,
+        "materialized_pair_elements": 0,
+        "median_ms": 0.7615200011059642,
+        "method": "factorized",
+        "nodes": 4096,
+        "peak_cuda_bytes_delta": 3380224,
+        "status": "completed"
+      }
+    ],
+    "runtime_loglog_slope": {
+      "factorized": -0.09073564791649984,
+      "materialized_dense": 1.171835131523332
+    }
+  },
+  "same_kernel_dtype": "float64",
+  "schema_version": 1,
+  "sizes": [
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096
+  ],
+  "warmup": 3
+}

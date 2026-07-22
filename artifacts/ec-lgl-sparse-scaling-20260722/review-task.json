@@ -1,0 +1,761 @@
+{
+  "artifacts": [
+    {
+      "kind": "claim-register",
+      "path": "claim-register.json",
+      "sha256": "9b47e9414415394b8aa163524f7e9243b3bbabbf46a413ab23ff1a22efa46a84"
+    },
+    {
+      "kind": "evidence-graph",
+      "path": "evidence-graph.json",
+      "sha256": "7d6afca9e529906d61dc39814c2e82d8468c2c2edc755fc0dc9e2d26dc1d9b94"
+    },
+    {
+      "kind": "environment",
+      "path": "compute-environment.json",
+      "sha256": "34bc75fed976cba679c8e2443423f9e9d2ad3222622925965714df4526ff0a67"
+    },
+    {
+      "kind": "execution-record",
+      "path": "execution-log.json",
+      "sha256": "2890555b875f878890b0866d5ed6e82ca6a7ce544ddf20c6e38cacd4c3849726"
+    },
+    {
+      "kind": "resource-accounting",
+      "path": "gpu-budget.json",
+      "sha256": "46fdfc377ab375ba3d91d2a42bac9f064a6608f408d02dd25947f9f35b4bbfde"
+    },
+    {
+      "kind": "profiling-result",
+      "path": "profiling-summary.json",
+      "sha256": "fc138d6f5390f29be9c81cbfb25764168197c6fb0a53ffa9bca30f9b9b34c4b1"
+    },
+    {
+      "kind": "reproduction-command-record",
+      "path": "reproduction-commands.json",
+      "sha256": "64f1ab10615e8c43b84eaba1caf651999e23757e99fb087a36754576d4781bfa"
+    },
+    {
+      "kind": "independent-review-repair",
+      "path": "review-repair.json",
+      "sha256": "3fddb1d9ffe3907327646349452a71971a3985040dfc8a6f94c6bab048d53d3d"
+    },
+    {
+      "kind": "source-diff",
+      "path": "source-changes.patch",
+      "sha256": "68b4746bf0c90d18c5813f17c3125e86851d097b947d06e195b0c471289f0c47"
+    },
+    {
+      "kind": "next-experiment-proposal",
+      "path": "next-experiment.md",
+      "sha256": "6968db5df8d1c4ed36b41ed054ea4c2f144dd43b01ef04d6e585309160e905ee"
+    },
+    {
+      "kind": "test-first-record",
+      "path": "red-tests.json",
+      "sha256": "56611433002db6b17a7144eb922d726524bea17c67868a7e1b4c694df1668aba"
+    },
+    {
+      "kind": "report",
+      "path": "report.md",
+      "sha256": "c40d0373d173027d0f6deeb741aeae00ff248c6b715394c2620fb17a8bb1c024"
+    },
+    {
+      "kind": "benchmark-result",
+      "path": "same-kernel-results.json",
+      "sha256": "535aea4d7338944ee26a3df84d4447f96503b20c9f3b2152e34095d7af7c8d1d"
+    },
+    {
+      "kind": "analysis",
+      "path": "scaling-analysis.md",
+      "sha256": "9dfa6a2c2d2abc8ded27492c680f65ad5a8c58999ef8ccff7b0b20d062297c4b"
+    },
+    {
+      "kind": "benchmark-result",
+      "path": "scaling-results.json",
+      "sha256": "368ac0120c15e0b1205a27fc8dd6932c598cebb68ac607a1c487b70951e5e786"
+    },
+    {
+      "kind": "benchmark-smoke",
+      "path": "scaling-smoke.json",
+      "sha256": "b210e58963e1bc96e59284b77f8879a16f8d0f88ea51fd0d2492a925611db1c3"
+    },
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "sha256": "8156cc68a47a87cadc542fbb8af2ca4e0fe1ace21528d5ed4cff9ed644e15f25"
+    },
+    {
+      "kind": "analysis",
+      "path": "screen-analysis.md",
+      "sha256": "761ae5359451415ef963e316fba16fa23e061b9654bdbea5ad32bcd410c656de"
+    },
+    {
+      "kind": "evaluation-result",
+      "path": "screen-summary.json",
+      "sha256": "a9f405893aafdcc4a26a8b23eceafc3a91771b8447c6cbcfb3ee6429afb3ab40"
+    },
+    {
+      "kind": "training-result",
+      "path": "screen/ec-lgl-seed42-repeat1.json",
+      "sha256": "b64fa37b2fb007670cc8146ceb971b5e7410fbb8df36932040bf0e488c1956fd"
+    },
+    {
+      "kind": "training-result",
+      "path": "screen/ec-lgl-seed42-repeat2.json",
+      "sha256": "340daea5b0c58a6c6f6ec4943c03f4f999162385030a84d1e45073eef50fcf98"
+    },
+    {
+      "kind": "training-result",
+      "path": "screen/lgl-seed42-repeat1.json",
+      "sha256": "f94e2248862d8b0c0dfc74f00941a86ce59bd9a2f4fef0763c1d5eddbb3563e9"
+    },
+    {
+      "kind": "training-result",
+      "path": "screen/lgl-seed42-repeat2.json",
+      "sha256": "053caa3500220b782169dde2470bc28bffba9ebebaf4dc65553fb0c5e2837137"
+    },
+    {
+      "kind": "implementation-record",
+      "path": "sparse-implementation.json",
+      "sha256": "e5c9c6ff47616972d8a06b3cdd9675c1176779010a163ab1e053c4a7b90ff281"
+    },
+    {
+      "kind": "verification-summary",
+      "path": "verification-summary.json",
+      "sha256": "6b829f666bbd0eb129fe87ae393dbf4c6c778acc140c08c5a947dd67d2920a4b"
+    },
+    {
+      "kind": "catalog-selection-record",
+      "path": "reference-use-ledger-catalog-compute.json",
+      "sha256": "ddea8d839c4f636c7cd8ac6533642b4bec36d514faf43e6a54fedb096868a4f4"
+    },
+    {
+      "kind": "catalog-selection-record",
+      "path": "reference-use-ledger-catalog-modeling.json",
+      "sha256": "c7e6e0d1bf186cb116e9491e58bb094a41a130974cd2951470d73f7a1091f6e6"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-chem-bio-ml.json",
+      "sha256": "0fb4f3369ebecbbb6721e0e98058bb5ab68d3bda013dfca208b46a818df93634"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-codex-science.json",
+      "sha256": "7bd977ccf036f9337f580fd128aa40989968959b28425314d31add007cbea083"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-ml-training.json",
+      "sha256": "4de770148c2a03787ef02af586be2a09ca596b9e0a0022e6db4645dd21f11285"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-provenance.json",
+      "sha256": "074a973f0147575c90f8e4965c9006a38932779114a6592e76519a901432c4bf"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-research-method.json",
+      "sha256": "90706ea36df1a81a74e57e5190d78b1657edbd2468353831178120f6d96447bc"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-review.json",
+      "sha256": "7721c3877c808fedae4504ecbe00672f6a009dc422523c17bb762e9f7de9a1ca"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger-torch-geometric.json",
+      "sha256": "4739e2de469e3e77997081f286223e60057226b0fbdec0a6f802f58685d792da"
+    }
+  ],
+  "claims": [
+    {
+      "dependencies": [],
+      "evidence_refs": [
+        "sparse-implementation.json",
+        "verification-summary.json"
+      ],
+      "falsifier": "any supplied-edge public path invokes complete candidate discovery, reverses directed edge semantics or changes graph membership",
+      "id": "C-101",
+      "next_action": "retain the preprocessing boundary in every performance claim",
+      "permitted_inference": "audited public training and inference paths only",
+      "required_evidence": [
+        "implementation tests",
+        "execution record"
+      ],
+      "required_support": 2,
+      "status": "supported",
+      "text": "Supplied sparse candidate edges are preserved through sample loading, collation, device transfer, training and inference without invoking the quadratic forward fallback.",
+      "uncertainty": "neighbor-list preprocessing complexity is outside the model-forward claim"
+    },
+    {
+      "dependencies": [
+        "C-101"
+      ],
+      "evidence_refs": [
+        "sparse-implementation.json",
+        "verification-summary.json",
+        "../../docs/LAYER_MATH.md"
+      ],
+      "falsifier": "any valid relabeling or rigid transform exceeds 1e-6 after aligned comparison",
+      "id": "C-102",
+      "next_action": "add parity-complete types only in a separately tested packet",
+      "permitted_inference": "implemented finite tested configurations, not a universal proof of every future feature path",
+      "required_evidence": [
+        "transformation argument",
+        "dense reference",
+        "float64 public-boundary tests"
+      ],
+      "required_support": 3,
+      "status": "supported",
+      "text": "The frozen edge-conditioned local sum operator is permutation-consistent and O(3)-equivariant for scalar, polar-vector and even rank-2 messages.",
+      "uncertainty": "periodic, axial, pseudoscalar and force paths are excluded"
+    },
+    {
+      "dependencies": [],
+      "evidence_refs": [
+        "same-kernel-results.json",
+        "scaling-analysis.md"
+      ],
+      "falsifier": "factorized output disagrees above 1e-10, materializes quadratic pairs, or shows neither a crossover nor a materially lower large-N slope/storage",
+      "id": "C-103",
+      "next_action": "re-measure crossover on each deployment hardware and shape",
+      "permitted_inference": "measured hardware, dtype, sizes and exact finite kernel only",
+      "required_evidence": [
+        "same-kernel equality",
+        "resource accounting",
+        "timed scaling table"
+      ],
+      "required_support": 3,
+      "status": "supported",
+      "text": "The registered factorized global kernel avoids materializing an N-by-N pair tensor and can exhibit a large-N memory/runtime crossover against materialized dense evaluation of the same kernel.",
+      "uncertainty": "a crossover size is hardware, dtype, width and implementation dependent"
+    },
+    {
+      "dependencies": [
+        "C-101",
+        "C-103"
+      ],
+      "evidence_refs": [
+        "scaling-results.json",
+        "scaling-analysis.md",
+        "sparse-implementation.json"
+      ],
+      "falsifier": "the trusted candidate forward constructs all pairs, invokes sorting/uniqueness validation, or its retained work grows superlinearly under fixed local degree",
+      "id": "C-104",
+      "next_action": "supply a domain-appropriate bounded neighbor builder and report its separate cost",
+      "permitted_inference": "trusted model hot path after edge-content validation; neighbor construction and one-time validation are excluded, and the dense-EGNN crossover is descriptive because the computations differ",
+      "required_evidence": [
+        "code path audit",
+        "fixed-degree scaling",
+        "edge-density controls"
+      ],
+      "required_support": 3,
+      "status": "supported",
+      "text": "A bounded-local plus factorized-global EC-LGL has O(E_local + N) content-validated model execution at fixed width and can avoid the dense-edge EGNN regime when E_local is capped.",
+      "uncertainty": "preprocessing, validation cost and task accuracy after discarding dense domain edges remain outside the claim"
+    },
+    {
+      "dependencies": [
+        "C-101",
+        "C-102"
+      ],
+      "evidence_refs": [
+        "screen-summary.json",
+        "screen-analysis.md",
+        "screen/ec-lgl-seed42-repeat1.json",
+        "screen/ec-lgl-seed42-repeat2.json",
+        "screen/lgl-seed42-repeat1.json",
+        "screen/lgl-seed42-repeat2.json"
+      ],
+      "falsifier": "the screen regresses beyond 0.020 eV or any confirmation promotion threshold fails",
+      "id": "C-105",
+      "next_action": "in a new preregistered packet, test one bounded normalization or staged EC residual against the recorded instability",
+      "permitted_inference": "QM9 random-row validation under the frozen short-update harness only",
+      "required_evidence": [
+        "repeated screen",
+        "conditional five-seed confirmation"
+      ],
+      "required_support": 2,
+      "status": "unsupported",
+      "text": "The frozen EC-LGL composite improves the matched QM9 validation accuracy enough to justify confirmation and possible promotion.",
+      "uncertainty": "short training, CUDA drift and random-row splitting limit generalization and causal attribution"
+    },
+    {
+      "dependencies": [
+        "C-102",
+        "C-104",
+        "C-105"
+      ],
+      "evidence_refs": [
+        "scope.md",
+        "scaling-analysis.md",
+        "screen-analysis.md"
+      ],
+      "falsifier": "the final report promotes the result outside the tested graph, symmetry, preprocessing or split regime",
+      "id": "C-106",
+      "next_action": "retain separate domain, chirality, preprocessing and split gates in future reports",
+      "permitted_inference": "explicit external-validity boundary",
+      "required_evidence": [
+        "domain contract",
+        "final limitations"
+      ],
+      "required_support": 2,
+      "status": "supported",
+      "text": "Any measured scaling or QM9 result does not by itself establish protein, chiral molecule or generic point-cloud superiority.",
+      "uncertainty": "domain-specific adapters and transfer splits are not implemented in this packet"
+    }
+  ],
+  "created_at": "2026-07-22T15:58:57Z",
+  "decision_contract": {
+    "code": [
+      {
+        "path": "../../PROJECT.md",
+        "role": "project status and acceptance boundary",
+        "sha256": "52c1bc8656d05d0eac73a3c487943d5b21e8ecca8f1e2a7261d020c57bb0826e"
+      },
+      {
+        "path": "../../README.md",
+        "role": "public usage and measured-result summary",
+        "sha256": "0976e3f40ea3aa16d117a37d5c9523c2518f76f743442f1fd18b1d11e115ae66"
+      },
+      {
+        "path": "../../docs/BENCHMARKS.md",
+        "role": "scaling result record",
+        "sha256": "e222819818f6e1423f997e0ff7265564b2573820187342f6cfa30f1d615cd147"
+      },
+      {
+        "path": "../../docs/CONFIGS.md",
+        "role": "configuration contract",
+        "sha256": "72741dde857e210e96a711ad4262604c166c912e7aa2319c9c212dbccc764649"
+      },
+      {
+        "path": "../../docs/EVALUATION.md",
+        "role": "evaluation and promotion boundary",
+        "sha256": "4863808522a24a8e2e088f6a9437a7fd095cebaa73ae67e047b9e0797db120d1"
+      },
+      {
+        "path": "../../docs/EXPERIMENTS.jsonl",
+        "role": "append-only experiment ledger",
+        "sha256": "f3d12acff8eabf37764fe2409a4043420272d11ecf14ed2c32f565bbdb05da75"
+      },
+      {
+        "path": "../../docs/LAYER_MATH.md",
+        "role": "operator equations and equivariance argument",
+        "sha256": "3c854a08e5cdb1559f0d1670a03fcdc268fddf0cf0ff6366bd238202de8339e8"
+      },
+      {
+        "path": "../../scripts/benchmark_sparse_scaling.py",
+        "role": "same-kernel and graph-scaling benchmark",
+        "sha256": "0e7e7e0e9cced58ec48c7c1304a6443201ae0f860fb26591607ffa29a76b3160"
+      },
+      {
+        "path": "../../scripts/train_compare.py",
+        "role": "sparse-edge and EC-LGL experiment CLI",
+        "sha256": "aff855eab792e5696665ecbefd48e90ea2ab11d6dfd973b5025566f9795f4ef7"
+      },
+      {
+        "path": "../../src/equivariant_attention/_egnn_baseline.py",
+        "role": "same-edge and dense-edge EGNN controls",
+        "sha256": "22e9165659ec8384e422f3bf2aa4dadb66d9d843ad1e032c500205553a1f7a10"
+      },
+      {
+        "path": "../../src/equivariant_attention/benchmarking.py",
+        "role": "graph edge storage, collation and optional QM9 preprocessing",
+        "sha256": "a52d73fa658ca70db4834ae3aa594e4ba6b4393bb84e7be385f3a9837628591d"
+      },
+      {
+        "path": "../../src/equivariant_attention/moment.py",
+        "role": "edge-conditioned local transport and factorized global attention",
+        "sha256": "d866d1af3c044dee9243cec31e2db28768403b7b300d94a424dfd24695a144dc"
+      },
+      {
+        "path": "../../src/equivariant_attention/training.py",
+        "role": "model construction and supplied-edge forwarding",
+        "sha256": "b2f14155101dabdcd4e3e6f34e8fa1639267be46fa7c67273e72319d11150bab"
+      },
+      {
+        "path": "../../tests/test_benchmarking.py",
+        "role": "edge collation and preprocessing tests",
+        "sha256": "55f9b72eda32785de6340ba557ab1eda0db8ea43eeda1524c0005cd6b5109e6b"
+      },
+      {
+        "path": "../../tests/test_edge_conditioned_local.py",
+        "role": "dense reference, gradient, permutation, graph relabel, isolation and independent-frame O(3) tests",
+        "sha256": "1c0d24aff1b8862159d80c03f8e6b2c22b4689c2d1b0e1d76b9cafff22d6e346"
+      },
+      {
+        "path": "../../tests/test_egnn_baseline.py",
+        "role": "sparse EGNN bypass and behavior tests",
+        "sha256": "8427c393443a81e6dbed52d91026696958f0c8685953fd65b32803b2c70a2a48"
+      },
+      {
+        "path": "../../tests/test_scaling_benchmark.py",
+        "role": "same-kernel identity and benchmark-schema tests",
+        "sha256": "f420505579307ba1d2fa3260ec55131c2dff1082b2148c050102292f379001b1"
+      },
+      {
+        "base_commit": "4adea3c5a982eaa24efd3e78a48de634d21725b1",
+        "path": "source-changes.patch",
+        "role": "self-contained base-to-task source, test and documentation diff",
+        "sha256": "68b4746bf0c90d18c5813f17c3125e86851d097b947d06e195b0c471289f0c47"
+      }
+    ],
+    "environment": {
+      "base_commit": "4adea3c5a982eaa24efd3e78a48de634d21725b1",
+      "cuda_available": true,
+      "cuda_runtime": "13.0",
+      "details": "compute-environment.json",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+      "gpu_budget": "gpu-budget.json",
+      "gpu_count": 1,
+      "python": "3.12.12",
+      "seed": 42,
+      "torch": "2.12.1+cu130"
+    },
+    "executions": [
+      {
+        "command": ".venv/bin/python -m pytest -q tests/test_benchmarking.py tests/test_edge_conditioned_local.py tests/test_sparse_edge_api.py tests/test_egnn_baseline.py",
+        "exit_code": 0,
+        "id": "E-FOCUSED",
+        "result": "66 passed"
+      },
+      {
+        "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py",
+        "exit_code": 0,
+        "id": "E-SCALING-TEST",
+        "result": "4 passed"
+      },
+      {
+        "command": ".venv/bin/python scripts/benchmark_sparse_scaling.py --sizes 32 64 128 256 512 1024 2048 4096 --device cuda --same-kernel-dense-max 2048 --dense-egnn-max 512 --density-size 512 --degree 16 --warmup 3 --repeats 7 --metrics-out artifacts/ec-lgl-sparse-scaling-20260722/scaling-results.json",
+        "evidence": "scaling-results.json",
+        "exit_code": 0,
+        "id": "E-SCALING"
+      },
+      {
+        "command": ".venv/bin/python scripts/benchmark_sparse_scaling.py --sizes 32 64 128 256 512 1024 2048 4096 --device cuda --same-kernel-dense-max 4096 --warmup 3 --repeats 9 --skip-model-benchmarks --metrics-out artifacts/ec-lgl-sparse-scaling-20260722/same-kernel-results.json",
+        "evidence": "same-kernel-results.json",
+        "exit_code": 0,
+        "id": "E-SAME-KERNEL"
+      },
+      {
+        "command": "scripts/check.sh fast",
+        "exit_code": 0,
+        "id": "E-FAST",
+        "result": "372 passed; 89.32% coverage; Ruff, compileall and CPU smoke passed"
+      },
+      {
+        "command": "scripts/check.sh gpu",
+        "exit_code": 0,
+        "id": "E-GPU",
+        "result": "CUDA BF16 and FP32 smoke passed"
+      },
+      {
+        "command": ".venv/bin/python -c <inline_python from reproduction-commands.json>",
+        "evidence": "profiling-summary.json",
+        "exit_code": 0,
+        "id": "E-PROFILE"
+      },
+      {
+        "command": "Four resolved train_compare.py argv recipes recorded in reproduction-commands.json",
+        "decision": "15-arm confirmation not run because the preregistered accuracy gate rejected the candidate",
+        "evidence": "screen-summary.json",
+        "exit_code": 0,
+        "id": "E-QM9-SCREEN"
+      }
+    ],
+    "inputs": [
+      {
+        "base_commit": "4adea3c5a982eaa24efd3e78a48de634d21725b1",
+        "kind": "repository",
+        "path": "../..",
+        "source_state": "base commit plus task-scoped worktree diff"
+      },
+      {
+        "evidence_cutoff": "2026-07-22 Asia/Seoul",
+        "kind": "protocol",
+        "path": "scope.md"
+      },
+      {
+        "kind": "dataset",
+        "name": "QM9 gap",
+        "source_sha256": "df097295935c7f9359159e8c7d67c7d97e270765cfcf1e355262a703067a3fa8",
+        "test_evaluated": false,
+        "validation_split_sha256": "4a98066cf3a91ebc6a1f3b951e65474f3d945baa22e80e9bbfca791c4780fc0b"
+      }
+    ],
+    "plan": [
+      {
+        "description": "Freeze the scaling-aware contract, baselines, gates, resource ceiling and inference boundaries.",
+        "id": "S1",
+        "status": "completed"
+      },
+      {
+        "description": "Write failing sparse-plumbing, EC transport, symmetry and scaling tests.",
+        "id": "S2",
+        "status": "completed"
+      },
+      {
+        "description": "Implement optional sparse edge plumbing and edge-conditioned local transport.",
+        "id": "S3",
+        "status": "completed"
+      },
+      {
+        "description": "Run identical-kernel and edge-density-controlled scaling measurements.",
+        "id": "S4",
+        "status": "completed"
+      },
+      {
+        "description": "Run project gates and the preregistered repeated QM9 screen without test evaluation.",
+        "id": "S5",
+        "status": "completed"
+      },
+      {
+        "description": "Package source, executions, evidence, claims, limitations and independent-review inputs.",
+        "id": "S6",
+        "status": "completed"
+      }
+    ],
+    "question": "Can a bounded sparse edge-conditioned local operator plus exact factorized global attention preserve permutation and O(3) correctness, expose the intended dense-edge scaling advantage over EGNN, and improve a bounded QM9 validation screen?"
+  },
+  "evidence_boundary": "This packet exposes recorded run evidence while excluding producer-only rationale fields. It does not authenticate the reviewer, guarantee true independence, or include unrecorded evidence.",
+  "evidence_graph": {
+    "edges": [
+      {
+        "relation": "supports",
+        "source": "A-sparse-implementation",
+        "target": "C-101"
+      },
+      {
+        "relation": "supports",
+        "source": "A-verification",
+        "target": "C-101"
+      },
+      {
+        "relation": "supports",
+        "source": "A-sparse-implementation",
+        "target": "C-102"
+      },
+      {
+        "relation": "supports",
+        "source": "A-verification",
+        "target": "C-102"
+      },
+      {
+        "relation": "supports",
+        "source": "A-report",
+        "target": "C-102"
+      },
+      {
+        "relation": "supports",
+        "source": "A-same-kernel",
+        "target": "C-103"
+      },
+      {
+        "relation": "supports",
+        "source": "A-scaling-analysis",
+        "target": "C-103"
+      },
+      {
+        "relation": "supports",
+        "source": "E-same-kernel",
+        "target": "C-103"
+      },
+      {
+        "relation": "supports",
+        "source": "A-scaling-results",
+        "target": "C-104"
+      },
+      {
+        "relation": "supports",
+        "source": "A-scaling-analysis",
+        "target": "C-104"
+      },
+      {
+        "relation": "supports",
+        "source": "A-sparse-implementation",
+        "target": "C-104"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-screen-summary",
+        "target": "C-105"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-screen-analysis",
+        "target": "C-105"
+      },
+      {
+        "relation": "supports",
+        "source": "A-scope",
+        "target": "C-106"
+      },
+      {
+        "relation": "supports",
+        "source": "A-scaling-analysis",
+        "target": "C-106"
+      },
+      {
+        "relation": "supports",
+        "source": "A-screen-analysis",
+        "target": "C-106"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C-102",
+        "target": "C-101"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C-104",
+        "target": "C-101"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C-104",
+        "target": "C-103"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C-106",
+        "target": "C-104"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C-106",
+        "target": "C-105"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "C-101",
+        "type": "claim"
+      },
+      {
+        "id": "C-102",
+        "type": "claim"
+      },
+      {
+        "id": "C-103",
+        "type": "claim"
+      },
+      {
+        "id": "C-104",
+        "type": "claim"
+      },
+      {
+        "id": "C-105",
+        "type": "claim"
+      },
+      {
+        "id": "C-106",
+        "type": "claim"
+      },
+      {
+        "id": "A-sparse-implementation",
+        "path": "sparse-implementation.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-verification",
+        "path": "verification-summary.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-report",
+        "path": "report.md",
+        "type": "artifact"
+      },
+      {
+        "id": "A-same-kernel",
+        "path": "same-kernel-results.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-scaling-analysis",
+        "path": "scaling-analysis.md",
+        "type": "artifact"
+      },
+      {
+        "id": "A-scaling-results",
+        "path": "scaling-results.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-scope",
+        "path": "scope.md",
+        "type": "artifact"
+      },
+      {
+        "id": "A-screen-summary",
+        "path": "screen-summary.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-screen-analysis",
+        "path": "screen-analysis.md",
+        "type": "artifact"
+      },
+      {
+        "execution_id": "E-SAME-KERNEL",
+        "id": "E-same-kernel",
+        "type": "execution"
+      }
+    ],
+    "schema_version": 1
+  },
+  "fingerprint": "2b731b02578457b4c6a79a809000b05de46536700735d6fba4a8f0571d66cefd",
+  "independent_required": true,
+  "lane_receipts": [],
+  "material_claim_ids": [
+    "C-101",
+    "C-102",
+    "C-103",
+    "C-104",
+    "C-105",
+    "C-106"
+  ],
+  "model_receipts": [],
+  "producer_context_excluded": [
+    "chain_of_thought",
+    "hidden_answer",
+    "intended_conclusion",
+    "private_scratchpad",
+    "producer_rationale",
+    "suspected_bug"
+  ],
+  "query_records": [],
+  "response_contract": {
+    "findings": "stable ID, severity, code, message, evidence, required action, and resolution status",
+    "independent": "boolean attestation",
+    "limitations": "required",
+    "review_modes": [
+      "method",
+      "record",
+      "reproduction",
+      "source"
+    ],
+    "reviewed_artifacts": "path and SHA-256 pairs from this packet",
+    "reviewed_claim_ids": "all material claims unless an explicit blocked reason is supplied",
+    "reviewer": "required"
+  },
+  "review_modes": [
+    "method",
+    "record",
+    "reproduction",
+    "source"
+  ],
+  "review_questions": [
+    "Does the prevalidated sparse-edge hot path resolve ECSS-REV-001 by removing sorting/uniqueness work from timed model forwards while preserving safe default validation, symmetry, reproducibility, and the stated O(E_local + N) boundary?"
+  ],
+  "review_task_id": "review-task-2b731b02578457b4c6a7",
+  "schema_version": 1,
+  "source_manifest_path": "/home/jaemin/project/layer/equivariant-attention/artifacts/ec-lgl-sparse-scaling-20260722/manifest.json",
+  "source_manifest_sha256": "8d610c72eb194b9f0cb217bc790a6909f2f51992d0f2991a386ae08093a5be52",
+  "source_run_id": "ec-lgl-sparse-scaling-20260722",
+  "study_table": null
+}
