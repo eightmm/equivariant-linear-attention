@@ -426,6 +426,63 @@ Raw initial/optimized grids, the 100-repeat crossover confirmation,
 correctness gates, interpretation, and provenance are under
 `artifacts/edge-free-spatial-linear-20260723/`.
 
+## Full train-step edge-free scaling (2026-07-23)
+
+The forward-only result above did not establish training efficiency. A
+separate eager-FP32 grid therefore timed the complete
+`zero_grad -> forward -> MSE -> backward -> AdamW.step` operation with
+optimizer state initialized during five warmups. It used twenty synchronized
+repeats, isolated each model for absolute peak CUDA allocation, and compared
+edge-free static/dynamic spatial attention with the private static EGNN at
+`N={512,2048,8192}` and exact EGNN receiver degree `k={16,64,128}`.
+Graph construction and host-to-device transfer were measured separately.
+
+The preregistered first grid completed all nine cells but falsified the static
+latency hypothesis. At `N=8192,k=128`, static attention took `109.884 ms`
+versus EGNN `62.601 ms` (`1.755x`) while using `1.252 GB` versus `8.884 GB`
+peak allocation (`0.141x`). A post-outcome three-step profile attributed
+`254.573 ms` aggregate device time to duplicate-index `IndexBackward` in the
+single-graph attention path.
+
+The only optimization changed one-graph graph-summary expansion from
+`summary[batch]`, where every index is zero, to the mathematically identical
+stride-zero broadcast of `summary[0]`. Multi-graph execution remains indexed.
+Focused mathematical/equivariance/gradient tests and the repository fast gate
+passed before the full grid was rerun. The optimized results were:
+
+| N | k | static ms | dynamic ms | EGNN ms | static / EGNN | dynamic / EGNN | static peak / EGNN |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 16 | 21.806 | 26.139 | 2.181 | 9.997 | 11.984 | 1.039 |
+| 512 | 64 | 21.740 | 26.052 | 2.606 | 8.342 | 9.996 | 0.394 |
+| 512 | 128 | 21.830 | 26.129 | 3.954 | 5.521 | 6.608 | 0.227 |
+| 2,048 | 16 | 22.002 | 26.303 | 2.556 | 8.608 | 10.291 | 1.079 |
+| 2,048 | 64 | 21.991 | 26.254 | 6.682 | 3.291 | 3.929 | 0.312 |
+| 2,048 | 128 | 22.040 | 26.403 | 14.008 | 1.573 | 1.885 | 0.160 |
+| 8,192 | 16 | 25.455 | 36.284 | 6.505 | 3.913 | 5.577 | 1.079 |
+| 8,192 | 64 | 25.482 | 36.330 | 30.000 | 0.849 | 1.211 | 0.274 |
+| 8,192 | 128 | 25.471 | 36.319 | 62.626 | 0.407 | 0.580 | 0.138 |
+
+Thus static edge-free attention is 1.18x faster at `N=8192,k=64` and 2.46x
+faster at `k=128`, while using 3.65x and 7.26x less peak allocation. The
+coordinate-updating path crosses only at `k=128`, where it is 1.72x faster and
+uses 7.10x less peak allocation. The optimized profile no longer contains
+`IndexBackward`; `bmm` becomes the largest recorded operator.
+
+This optimization and rerun followed observation of the failed first grid, so
+they are explicitly post-outcome evidence rather than a preregistered
+confirmation. The comparison uses one synthetic graph, one GPU, a private
+same-harness EGNN, and a synthetic loss. It excludes task accuracy,
+convergence, data loading, arbitrary graph topology, and domain
+generalization. Raw grids, profiles, contracts, and review records are under
+`artifacts/train-step-scaling-20260723/`.
+
+Independent review identified one minor protocol deviation: the scope said
+target construction was excluded, while the timed loss stage creates the
+one-element constant target with `torch.full_like`. The same scalar operation
+is included in every arm, so raw timings and ratios are retained rather than
+rewritten. The mismatch is recorded as `PD-001`; a future benchmark revision
+must pass a preconstructed target.
+
 ## Registered EGNN-parity result (2026-07-20)
 
 The confirmed packet kept static coordinates, width-64 LGL learned transport,

@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "run_id": "train-step-scaling-20260723",
+  "question": "Does edge-free spatial-linear attention retain a large dense-graph efficiency advantage after backward and AdamW, and what explains any discrepancy from forward-only timing?",
+  "plan": [
+    {
+      "id": "P1",
+      "step": "Freeze the full train-step GPU comparison before execution.",
+      "objective_done_criteria": "Scope fixes grid, timed components, memory accounting, compute ceiling, and inference boundary.",
+      "status": "completed"
+    },
+    {
+      "id": "P2",
+      "step": "Implement the train-step benchmark with intentional RED and focused GREEN tests.",
+      "objective_done_criteria": "CPU tests cover full-step composition, finite gradients, edge ownership, memory sentinels, and CLI.",
+      "status": "completed"
+    },
+    {
+      "id": "P3",
+      "step": "Run the preregistered nine-cell GPU grid.",
+      "objective_done_criteria": "Every cell records completion, failure, OOM, or ceiling status.",
+      "status": "completed"
+    },
+    {
+      "id": "P4",
+      "step": "Diagnose the falsified latency prediction without rewriting the original result.",
+      "objective_done_criteria": "Profiles identify material operator cost and retain the failed grid.",
+      "status": "completed"
+    },
+    {
+      "id": "P5",
+      "step": "Apply and test the smallest semantics-preserving bottleneck repair.",
+      "objective_done_criteria": "Single-graph values/gradients and multi-graph indexing remain correct; fast gate passes.",
+      "status": "completed"
+    },
+    {
+      "id": "P6",
+      "step": "Rerun the complete identical GPU grid and disclose post-outcome status.",
+      "objective_done_criteria": "Both raw grids, exact source identities, result boundaries, and independent review are retained.",
+      "status": "completed"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../../PROJECT.md",
+      "sha256": "ee2748a5db3282d6957d89e8d7f766e6a75b78e609c1e1bd8f365ae2176b073a",
+      "role": "confirmed project and compute contract"
+    },
+    {
+      "path": "../../uv.lock",
+      "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+      "role": "locked Python environment"
+    }
+  ],
+  "code": [
+    {
+      "path": "../../scripts/benchmark_sparse_scaling.py",
+      "sha256": "e49e891cff95acf25dbbf98bbffe780c9e994a25cc9afde2b5b3b44ac88078bf"
+    },
+    {
+      "path": "../../scripts/profile_train_step.py",
+      "sha256": "472b2b032c21f791480dfce858fe4c83956bc61824aa8b729850b31354c5528d"
+    },
+    {
+      "path": "../../src/equivariant_attention/moment.py",
+      "sha256": "79ad3dcb95296de68021b6e6701e78bd84dfd0bbb5a311c66ca421511087b2b7"
+    },
+    {
+      "path": "../../tests/test_scaling_benchmark.py",
+      "sha256": "ce3d18d0fe25984d34d83f1211c84dccb00429720d3cc334c54608b083bf9023"
+    },
+    {
+      "path": "../../tests/test_single_graph_summary.py",
+      "sha256": "0bc0e152d9d69b35b1918df9a7458f3a69eaa729619ebae07f73c4885c0a585f"
+    },
+    {
+      "path": "../../tests/test_train_step_profile.py",
+      "sha256": "808c0d06ea8904575b92baa8e60b6b8d894be6a182ebea950f3c9f4edef635f2"
+    }
+  ],
+  "executions": [
+    {
+      "id": "benchmark-focused-green",
+      "command": "uv run pytest -q tests/test_scaling_benchmark.py",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "original-grid",
+      "command": "See execution-record.json for exact command.",
+      "exit_code": 0,
+      "status": "scientific-hypothesis-failed"
+    },
+    {
+      "id": "optimization-focused-green",
+      "command": "Focused broadcast, spatial, layer, and profiler tests.",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "fast-gate",
+      "command": "scripts/check.sh fast",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "optimized-grid",
+      "command": "See execution-record.json for exact command.",
+      "exit_code": 0,
+      "status": "post-outcome-optimization-passed"
+    }
+  ],
+  "environment": {
+    "original_source_git_sha": "9102919",
+    "optimized_source_git_sha": "568690e",
+    "python": "3.12.12",
+    "torch": "2.12.1",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "driver": "580.159.03",
+    "device_count": 1,
+    "dtype": "float32",
+    "compile": false,
+    "autocast": false,
+    "dataset_accessed": false,
+    "test_evaluated": false
+  },
+  "artifacts": [
+    {
+      "path": "scope.md",
+      "kind": "protocol",
+      "role": "preregistered full-step scaling contract",
+      "sha256": "54ff1fb48d00bb47489993db83e6b1066f7ca0d8236f44b3b5084322c9304857"
+    },
+    {
+      "path": "optimization-scope.md",
+      "kind": "protocol",
+      "role": "post-outcome bottleneck repair contract frozen before remeasurement",
+      "sha256": "02b8528f686ae5b85f0fbc1c93cb85accd9f0327911171e29dc721ebaafc64f9"
+    },
+    {
+      "path": "claim-register.json",
+      "kind": "claim-register",
+      "role": "claim and inference-boundary register",
+      "sha256": "06346123f753cf335adc4f2b967ba0684f9a06465d6cdba8d31749939363ce6c"
+    },
+    {
+      "path": "evidence-graph.json",
+      "kind": "evidence-graph",
+      "role": "machine-readable original and optimized evidence edges",
+      "sha256": "dcc6776b6590a0b2c249fd6d36efa9968bb2661c4fa1b4166aedd560c4a4d8c7"
+    },
+    {
+      "path": "execution-record.json",
+      "kind": "execution-log",
+      "role": "intentional failures, commands, and outcomes",
+      "sha256": "295afbae4a087a1b4621f7a4e7a080478480e80f3424f8a5093e1b19927cb8cb"
+    },
+    {
+      "path": "protocol-deviation.json",
+      "kind": "decision-log",
+      "role": "independent-review target-construction deviation and disposition",
+      "sha256": "3bf00cdd7bfdb9986989649470754aa5f7fa779dcd065f9a6a6ca8a879121a43"
+    },
+    {
+      "path": "compute-environment.json",
+      "kind": "environment",
+      "role": "local GPU and runtime record",
+      "sha256": "075541dd24bf04b28097f385822ff36fbd53e055c3ce6a6a2ff382e804f1b36c"
+    },
+    {
+      "path": "reference-use-ledger.json",
+      "kind": "decision-log",
+      "role": "material procedural reference hashes",
+      "sha256": "60082d4915095f47f7a5401245fc0b95e6a75f87ecee91c5af8e93857ed9cacd"
+    },
+    {
+      "path": "gpu-grid.json",
+      "kind": "metrics",
+      "role": "retained preregistered hypothesis-failing grid",
+      "sha256": "4f6c1ac0675268bafa237bca71ac416edd3581e54f0a134974cf20785f1dbe54"
+    },
+    {
+      "path": "gpu-grid-optimized.json",
+      "kind": "metrics",
+      "role": "complete post-outcome optimized grid",
+      "sha256": "a6ae787b91c0f8670f0458c122b4ca9e3a5d75ef0758f9219b38c45bf30feeda"
+    },
+    {
+      "path": "profile-spatial-static-n8192-k128.json",
+      "kind": "profile",
+      "role": "pre-optimization static operator diagnostic",
+      "sha256": "20b0b576547814ac709394dd412172e86e49fd648870742b71f811d5d7fd32a1"
+    },
+    {
+      "path": "profile-static-egnn-n8192-k128.json",
+      "kind": "profile",
+      "role": "EGNN operator diagnostic",
+      "sha256": "cf82b875e0c81f01922d1a3ba9d6d0f0e1cc4b7b1b6cb11dd7eb4609bbb89d98"
+    },
+    {
+      "path": "profile-spatial-static-n8192-k128-optimized.json",
+      "kind": "profile",
+      "role": "post-optimization static operator diagnostic",
+      "sha256": "0a280d78badfd1008ecc41a72ec7355d8fe28b86aa917caf8a8bc505620a1a3c"
+    },
+    {
+      "path": "report.md",
+      "kind": "report",
+      "role": "bounded result, null retention, and limitations",
+      "sha256": "f2bf2e25e2a9384e4243b5c02efcfd66715f7dbd76cf8233b2fed10b84b77d71"
+    },
+    {
+      "path": "reviewer-response-initial.json",
+      "kind": "decision-log",
+      "role": "independent initial method finding retained before disclosure repair",
+      "sha256": "6f3a1583f259c4e7c045eab7bb5df488302d321e6eae1386559eb658bb3ad53b"
+    },
+    {
+      "path": "review-task.json",
+      "kind": "decision-log",
+      "role": "hash-bound final independent method-review packet",
+      "sha256": "e58bff6e24270d11b4b577f77fdc148148ddd9b98b30b2d382fe8b61afdc6e47"
+    },
+    {
+      "path": "reviewer-response.json",
+      "kind": "decision-log",
+      "role": "passed independent method-review response",
+      "sha256": "5663f3bfbfcc0ab927408e80673b76fbd4e813a2edafcf29c67b44238447258d"
+    },
+    {
+      "path": "review-receipt-v2.json",
+      "kind": "review-receipt-v2",
+      "role": "finalized hash-bound method-review receipt",
+      "sha256": "1cd7179d00ead8b6ed5956ee8d67adb8308a2fc77cf74dd388f6c42b99d5215f"
+    }
+  ],
+  "claims": [
+    {
+      "id": "C1",
+      "text": "The benchmark measures the registered full train step and isolated peak allocation.",
+      "evidence": ["execution-record.json", "gpu-grid.json", "gpu-grid-optimized.json"]
+    },
+    {
+      "id": "C2",
+      "text": "The original preregistered latency hypothesis was falsified.",
+      "evidence": ["gpu-grid.json"]
+    },
+    {
+      "id": "C3",
+      "text": "Post-outcome optimized static attention crosses private EGNN at N8192,k64 and k128.",
+      "evidence": ["gpu-grid-optimized.json"]
+    },
+    {
+      "id": "C4",
+      "text": "Post-outcome optimized static attention uses less peak CUDA allocation at N8192,k128.",
+      "evidence": ["gpu-grid-optimized.json"]
+    }
+  ],
+  "review": {
+    "status": "passed",
+    "findings": []
+  }
+}

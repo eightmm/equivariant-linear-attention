@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "original_source_git_sha": "9102919",
+  "optimized_source_git_sha": "568690e",
+  "protocol_deviation": {
+    "id": "PD-001",
+    "severity": "minor",
+    "description": "The resource-boundary paragraph said target construction was excluded, but _train_step_loss constructs the one-element constant target with torch.full_like inside the timed loss stage.",
+    "impact": "The same scalar operation is included for every arm and does not alter relative model semantics, but the execution is not an exact implementation of that scope sentence.",
+    "resolution": "Retain raw timings, disclose the deviation, and make future benchmark versions pass a preconstructed target."
+  },
+  "executions": [
+    {
+      "id": "intentional-red",
+      "command": "uv run pytest -q tests/test_scaling_benchmark.py -k train_step",
+      "exit": 1,
+      "status": "expected-red",
+      "result": "5 failures before train-step benchmark implementation"
+    },
+    {
+      "id": "benchmark-focused-green",
+      "command": "uv run pytest -q tests/test_scaling_benchmark.py",
+      "exit": 0,
+      "status": "passed",
+      "result": "22 passed"
+    },
+    {
+      "id": "original-grid",
+      "command": "uv run python scripts/benchmark_sparse_scaling.py --edge-free-train-step-grid --sizes 512 2048 8192 --edge-multipliers 16 64 128 --device cuda --seed 20260723 --model-seed 20260723 --warmup 5 --repeats 20 --max-wall-seconds 1200 --metrics-out artifacts/train-step-scaling-20260723/gpu-grid.json",
+      "exit": 0,
+      "status": "scientific-hypothesis-failed",
+      "result": "9/9 completed; N8192 k128 static latency ratio 1.7553, memory ratio 0.1409"
+    },
+    {
+      "id": "post-outcome-profiles",
+      "command": "uv run python scripts/profile_train_step.py --model <model> --nodes 8192 --edge-multiplier 128 --device cuda --warmup 2 --repeats 3 --output <path>",
+      "exit": 0,
+      "status": "diagnostic",
+      "result": "Static IndexBackward aggregate device time 254572.78 us over 3 steps"
+    },
+    {
+      "id": "optimization-focused-green",
+      "command": "uv run pytest -q tests/test_single_graph_summary.py tests/test_edge_free_spatial.py tests/test_single_layer_contract.py tests/test_train_step_profile.py",
+      "exit": 0,
+      "status": "passed",
+      "result": "25 passed"
+    },
+    {
+      "id": "fast-gate",
+      "command": "scripts/check.sh fast",
+      "exit": 0,
+      "status": "passed",
+      "result": "454 passed; 88.64 percent coverage; CPU float64 ml_smoke passed"
+    },
+    {
+      "id": "optimized-grid",
+      "command": "uv run python scripts/benchmark_sparse_scaling.py --edge-free-train-step-grid --sizes 512 2048 8192 --edge-multipliers 16 64 128 --device cuda --seed 20260723 --model-seed 20260723 --warmup 5 --repeats 20 --max-wall-seconds 1200 --metrics-out artifacts/train-step-scaling-20260723/gpu-grid-optimized.json",
+      "exit": 0,
+      "status": "post-outcome-optimization-passed",
+      "result": "9/9 completed; N8192 k128 static latency ratio 0.4067, memory ratio 0.1377"
+    },
+    {
+      "id": "optimized-profile",
+      "command": "uv run python scripts/profile_train_step.py --model spatial_static --nodes 8192 --edge-multiplier 128 --device cuda --warmup 2 --repeats 3 --output artifacts/train-step-scaling-20260723/profile-spatial-static-n8192-k128-optimized.json",
+      "exit": 0,
+      "status": "diagnostic",
+      "result": "IndexBackward absent; bmm is the largest recorded operator"
+    }
+  ]
+}

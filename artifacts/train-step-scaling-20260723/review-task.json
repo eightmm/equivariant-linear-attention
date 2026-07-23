@@ -1,0 +1,370 @@
+{
+  "artifacts": [
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "sha256": "54ff1fb48d00bb47489993db83e6b1066f7ca0d8236f44b3b5084322c9304857"
+    },
+    {
+      "kind": "protocol",
+      "path": "optimization-scope.md",
+      "sha256": "02b8528f686ae5b85f0fbc1c93cb85accd9f0327911171e29dc721ebaafc64f9"
+    },
+    {
+      "kind": "claim-register",
+      "path": "claim-register.json",
+      "sha256": "06346123f753cf335adc4f2b967ba0684f9a06465d6cdba8d31749939363ce6c"
+    },
+    {
+      "kind": "evidence-graph",
+      "path": "evidence-graph.json",
+      "sha256": "dcc6776b6590a0b2c249fd6d36efa9968bb2661c4fa1b4166aedd560c4a4d8c7"
+    },
+    {
+      "kind": "execution-log",
+      "path": "execution-record.json",
+      "sha256": "295afbae4a087a1b4621f7a4e7a080478480e80f3424f8a5093e1b19927cb8cb"
+    },
+    {
+      "kind": "decision-log",
+      "path": "protocol-deviation.json",
+      "sha256": "3bf00cdd7bfdb9986989649470754aa5f7fa779dcd065f9a6a6ca8a879121a43"
+    },
+    {
+      "kind": "environment",
+      "path": "compute-environment.json",
+      "sha256": "075541dd24bf04b28097f385822ff36fbd53e055c3ce6a6a2ff382e804f1b36c"
+    },
+    {
+      "kind": "decision-log",
+      "path": "reference-use-ledger.json",
+      "sha256": "60082d4915095f47f7a5401245fc0b95e6a75f87ecee91c5af8e93857ed9cacd"
+    },
+    {
+      "kind": "metrics",
+      "path": "gpu-grid.json",
+      "sha256": "4f6c1ac0675268bafa237bca71ac416edd3581e54f0a134974cf20785f1dbe54"
+    },
+    {
+      "kind": "metrics",
+      "path": "gpu-grid-optimized.json",
+      "sha256": "a6ae787b91c0f8670f0458c122b4ca9e3a5d75ef0758f9219b38c45bf30feeda"
+    },
+    {
+      "kind": "profile",
+      "path": "profile-spatial-static-n8192-k128.json",
+      "sha256": "20b0b576547814ac709394dd412172e86e49fd648870742b71f811d5d7fd32a1"
+    },
+    {
+      "kind": "profile",
+      "path": "profile-static-egnn-n8192-k128.json",
+      "sha256": "cf82b875e0c81f01922d1a3ba9d6d0f0e1cc4b7b1b6cb11dd7eb4609bbb89d98"
+    },
+    {
+      "kind": "profile",
+      "path": "profile-spatial-static-n8192-k128-optimized.json",
+      "sha256": "0a280d78badfd1008ecc41a72ec7355d8fe28b86aa917caf8a8bc505620a1a3c"
+    },
+    {
+      "kind": "report",
+      "path": "report.md",
+      "sha256": "f2bf2e25e2a9384e4243b5c02efcfd66715f7dbd76cf8233b2fed10b84b77d71"
+    },
+    {
+      "kind": "decision-log",
+      "path": "reviewer-response-initial.json",
+      "sha256": "6f3a1583f259c4e7c045eab7bb5df488302d321e6eae1386559eb658bb3ad53b"
+    }
+  ],
+  "claims": [
+    {
+      "falsifier": "A timed step omits a registered component or memory includes unrelated resident models",
+      "id": "C1",
+      "next_action": "Preserve the same boundary in future comparisons",
+      "permitted_inference": "software and measurement contract on the recorded environment",
+      "required_evidence": [
+        "focused tests",
+        "two complete GPU grids"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The benchmark measures an eager FP32 zero-grad, forward, synthetic MSE, backward, and AdamW step with isolated absolute peak CUDA allocation.",
+      "uncertainty": "Profiler overhead and model construction are excluded; contrary to one scope sentence, creation of the one-element constant target with torch.full_like is included in every timed arm and is recorded as a protocol deviation"
+    },
+    {
+      "falsifier": "Static-to-EGNN latency ratio is at least one",
+      "id": "C2",
+      "next_action": "Retain the null result beside the post-outcome optimization",
+      "permitted_inference": "none; the registered hypothesis was falsified",
+      "required_evidence": [
+        "original GPU grid"
+      ],
+      "required_support": 0,
+      "status": "unsupported",
+      "text": "The preregistered unoptimized static model beats EGNN train-step latency at N=8192,k=128.",
+      "uncertainty": "Single GPU and synthetic loss"
+    },
+    {
+      "falsifier": "Optimized static-to-EGNN train-step ratio is at least one in either stated cell",
+      "id": "C3",
+      "next_action": "Confirm multi-graph batching separately",
+      "permitted_inference": "post-outcome descriptive same-harness systems result",
+      "required_evidence": [
+        "optimized complete GPU grid"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "After the disclosed single-graph broadcast optimization, static edge-free attention is faster than private static EGNN at N=8192,k=64 and k=128.",
+      "uncertainty": "Not preregistered confirmation; no task accuracy or multi-graph claim"
+    },
+    {
+      "falsifier": "Static-to-EGNN peak-memory ratio is at least one",
+      "id": "C4",
+      "next_action": "Retain absolute and delta memory fields",
+      "permitted_inference": "descriptive memory result under the recorded isolated-process accounting",
+      "required_evidence": [
+        "optimized complete GPU grid"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "At N=8192,k=128, optimized static edge-free attention uses less absolute peak CUDA allocation than private static EGNN.",
+      "uncertainty": "Allocator and hardware specific"
+    }
+  ],
+  "created_at": "2026-07-23T08:46:23Z",
+  "decision_contract": {
+    "code": [
+      {
+        "path": "../../scripts/benchmark_sparse_scaling.py",
+        "sha256": "e49e891cff95acf25dbbf98bbffe780c9e994a25cc9afde2b5b3b44ac88078bf"
+      },
+      {
+        "path": "../../scripts/profile_train_step.py",
+        "sha256": "472b2b032c21f791480dfce858fe4c83956bc61824aa8b729850b31354c5528d"
+      },
+      {
+        "path": "../../src/equivariant_attention/moment.py",
+        "sha256": "79ad3dcb95296de68021b6e6701e78bd84dfd0bbb5a311c66ca421511087b2b7"
+      },
+      {
+        "path": "../../tests/test_scaling_benchmark.py",
+        "sha256": "ce3d18d0fe25984d34d83f1211c84dccb00429720d3cc334c54608b083bf9023"
+      },
+      {
+        "path": "../../tests/test_single_graph_summary.py",
+        "sha256": "0bc0e152d9d69b35b1918df9a7458f3a69eaa729619ebae07f73c4885c0a585f"
+      },
+      {
+        "path": "../../tests/test_train_step_profile.py",
+        "sha256": "808c0d06ea8904575b92baa8e60b6b8d894be6a182ebea950f3c9f4edef635f2"
+      }
+    ],
+    "environment": {
+      "autocast": false,
+      "compile": false,
+      "dataset_accessed": false,
+      "device_count": 1,
+      "driver": "580.159.03",
+      "dtype": "float32",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+      "optimized_source_git_sha": "568690e",
+      "original_source_git_sha": "9102919",
+      "python": "3.12.12",
+      "test_evaluated": false,
+      "torch": "2.12.1"
+    },
+    "executions": [
+      {
+        "command": "uv run pytest -q tests/test_scaling_benchmark.py",
+        "exit_code": 0,
+        "id": "benchmark-focused-green",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json for exact command.",
+        "exit_code": 0,
+        "id": "original-grid",
+        "status": "scientific-hypothesis-failed"
+      },
+      {
+        "command": "Focused broadcast, spatial, layer, and profiler tests.",
+        "exit_code": 0,
+        "id": "optimization-focused-green",
+        "status": "passed"
+      },
+      {
+        "command": "scripts/check.sh fast",
+        "exit_code": 0,
+        "id": "fast-gate",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json for exact command.",
+        "exit_code": 0,
+        "id": "optimized-grid",
+        "status": "post-outcome-optimization-passed"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../../PROJECT.md",
+        "role": "confirmed project and compute contract",
+        "sha256": "ee2748a5db3282d6957d89e8d7f766e6a75b78e609c1e1bd8f365ae2176b073a"
+      },
+      {
+        "path": "../../uv.lock",
+        "role": "locked Python environment",
+        "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2"
+      }
+    ],
+    "plan": [
+      {
+        "id": "P1",
+        "objective_done_criteria": "Scope fixes grid, timed components, memory accounting, compute ceiling, and inference boundary.",
+        "status": "completed",
+        "step": "Freeze the full train-step GPU comparison before execution."
+      },
+      {
+        "id": "P2",
+        "objective_done_criteria": "CPU tests cover full-step composition, finite gradients, edge ownership, memory sentinels, and CLI.",
+        "status": "completed",
+        "step": "Implement the train-step benchmark with intentional RED and focused GREEN tests."
+      },
+      {
+        "id": "P3",
+        "objective_done_criteria": "Every cell records completion, failure, OOM, or ceiling status.",
+        "status": "completed",
+        "step": "Run the preregistered nine-cell GPU grid."
+      },
+      {
+        "id": "P4",
+        "objective_done_criteria": "Profiles identify material operator cost and retain the failed grid.",
+        "status": "completed",
+        "step": "Diagnose the falsified latency prediction without rewriting the original result."
+      },
+      {
+        "id": "P5",
+        "objective_done_criteria": "Single-graph values/gradients and multi-graph indexing remain correct; fast gate passes.",
+        "status": "completed",
+        "step": "Apply and test the smallest semantics-preserving bottleneck repair."
+      },
+      {
+        "id": "P6",
+        "objective_done_criteria": "Both raw grids, exact source identities, result boundaries, and independent review are retained.",
+        "status": "completed",
+        "step": "Rerun the complete identical GPU grid and disclose post-outcome status."
+      }
+    ],
+    "question": "Does edge-free spatial-linear attention retain a large dense-graph efficiency advantage after backward and AdamW, and what explains any discrepancy from forward-only timing?"
+  },
+  "evidence_boundary": "This packet exposes recorded run evidence while excluding producer-only rationale fields. It does not authenticate the reviewer, guarantee true independence, or include unrecorded evidence.",
+  "evidence_graph": {
+    "edges": [
+      {
+        "relation": "contradicts",
+        "source": "original-grid",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "optimized-grid",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "fast-gate",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "optimized-grid",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "optimized-grid",
+        "target": "C4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "C1",
+        "label": "Full train-step measurement contract",
+        "type": "claim"
+      },
+      {
+        "id": "C2",
+        "label": "Original latency hypothesis",
+        "type": "claim"
+      },
+      {
+        "id": "C3",
+        "label": "Post-outcome optimized latency crossover",
+        "type": "claim"
+      },
+      {
+        "id": "C4",
+        "label": "Optimized peak-memory advantage",
+        "type": "claim"
+      },
+      {
+        "id": "original-grid",
+        "label": "Preregistered original nine-cell GPU grid",
+        "type": "execution"
+      },
+      {
+        "id": "optimized-grid",
+        "label": "Post-outcome optimized nine-cell GPU grid",
+        "type": "execution"
+      },
+      {
+        "id": "fast-gate",
+        "label": "Repository fast verification gate",
+        "type": "execution"
+      }
+    ],
+    "schema_version": 1
+  },
+  "fingerprint": "533f2c56f018fbe3c90d4db6916ec416c8eacf54b1018a45906835ff8ab10afa",
+  "independent_required": true,
+  "lane_receipts": [],
+  "material_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4"
+  ],
+  "model_receipts": [],
+  "producer_context_excluded": [
+    "chain_of_thought",
+    "hidden_answer",
+    "intended_conclusion",
+    "private_scratchpad",
+    "producer_rationale",
+    "suspected_bug"
+  ],
+  "query_records": [],
+  "response_contract": {
+    "findings": "stable ID, severity, code, message, evidence, required action, and resolution status",
+    "independent": "boolean attestation",
+    "limitations": "required",
+    "review_modes": [
+      "method"
+    ],
+    "reviewed_artifacts": "path and SHA-256 pairs from this packet",
+    "reviewed_claim_ids": "all material claims unless an explicit blocked reason is supplied",
+    "reviewer": "required"
+  },
+  "review_modes": [
+    "method"
+  ],
+  "review_questions": [
+    "After retaining the original minor finding and recording PD-001, does the artifact accurately distinguish the failed original hypothesis from post-outcome optimization, support the latency/memory ratios, and disclose the target-construction timing deviation and synthetic one-graph boundary?"
+  ],
+  "review_task_id": "review-task-533f2c56f018fbe3c90d",
+  "schema_version": 1,
+  "source_manifest_path": "/home/jaemin/project/layer/equivariant-attention/artifacts/train-step-scaling-20260723/manifest.json",
+  "source_manifest_sha256": "10845bb5e18c4a2e43bd02908bc1cc3a7afd215c0f7c6a2d990d3239204e1b28",
+  "source_run_id": "train-step-scaling-20260723",
+  "study_table": null
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "references": [
+    {
+      "path": "/home/jaemin/.agents/skills/profiling/SKILL.md",
+      "sha256": "2cf5233dfa7ef83a5f8e9c653dcf0016f6809d55d6aa11380a9ba78e1d484092",
+      "used_for": "PyTorch operator and CUDA memory profiling boundary"
+    },
+    {
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/research-method/SKILL.md",
+      "sha256": "0c316ec1b855694969964b075d42887dddfc806549783d5102c49ea40d775870",
+      "used_for": "falsifiable original hypothesis and post-outcome disclosure"
+    },
+    {
+      "path": "/home/jaemin/.codex/plugins/cache/codex-science/codex-science/0.5.0+codex.20260723035417/skills/codex-science/SKILL.md",
+      "sha256": "d084b35a4f1592ddf826333049572d5ae42ea296d835366b50ecde26984c0b83",
+      "used_for": "artifact, provenance, and independent review workflow"
+    }
+  ]
+}

@@ -17,6 +17,21 @@
   synthetic systems comparison only: no dataset, validation/test label,
   accuracy, topology-preservation, or domain-generalization inference is
   authorized.
+- The registered train-step grid completed all nine cells in 33.46 seconds
+  without OOM or nonfinite gradients, but initially falsified the latency
+  hypothesis: at `N=8192,k=128`, static spatial attention took `109.884 ms`
+  versus EGNN `62.601 ms`, despite using only `0.141x` peak memory. A disclosed
+  post-outcome profiler found duplicate-index `IndexBackward` dominating the
+  single-graph attention path. Replacing only one-graph `summary[batch]`
+  expansion with an equivalent stride-zero broadcast removed that operator
+  from the diagnostic profile and reduced the static step to `25.471 ms`
+  (`76.8%`). In the complete optimized rerun, static attention crossed EGNN at
+  `N=8192,k=64` (`0.849x` latency, `0.274x` memory) and strengthened at
+  `k=128` (`0.407x` latency, `0.138x` memory); the coordinate-updating path
+  crossed only at `k=128` (`0.580x`, `0.141x`). At smaller/sparser cells EGNN
+  remained substantially faster, and at `k=16` attention peak memory was
+  slightly higher. Both the preregistered failure and post-outcome optimized
+  rerun are retained under `artifacts/train-step-scaling-20260723/`.
 - Reproducibility hardening confirmed on 2026-07-23. Before another accuracy
   architecture experiment, the matched harness must expose a legacy-compatible
   `seeded` lane and an opt-in `strict` lane that requests deterministic PyTorch
