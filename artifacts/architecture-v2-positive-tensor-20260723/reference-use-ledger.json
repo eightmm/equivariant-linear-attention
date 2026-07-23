@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "skill": "codex-science",
+  "uses": [
+    {
+      "schema_version": 1,
+      "skill": "science-provenance",
+      "reference_id": "artifact-contract",
+      "path": "references/artifact-contract.md",
+      "sha256": "b762bdd86796642e0b098091c043efef750d0462761e09be45996d111897c73a",
+      "read_reason": "control manifest and sidecar structure",
+      "loaded_at": "2026-07-23T19:52:00+09:00",
+      "used_for": [
+        "manifest.json",
+        "claim-register.json",
+        "evidence-graph.json"
+      ],
+      "sections": [
+        "Required manifest fields",
+        "Validated sidecars",
+        "Bundle validation"
+      ],
+      "search_terms": [
+        "manifest",
+        "sidecar",
+        "validation"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "skill": "science-review",
+      "reference_id": "review-checklist",
+      "path": "references/review-checklist.md",
+      "sha256": "9b3957c88263433c16af8df46a4de29d186d8bc173b233767cc79167d6e73c46",
+      "read_reason": "control finding severity and pass boundary",
+      "loaded_at": "2026-07-23T19:52:00+09:00",
+      "used_for": [
+        "review-task.json",
+        "review-receipt-v2.json"
+      ],
+      "sections": [
+        "Severity",
+        "Claim-level checks",
+        "Pass rule"
+      ],
+      "search_terms": [
+        "severity",
+        "pass",
+        "finding"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "skill": "science-review",
+      "reference_id": "independent-review-runtime",
+      "path": "references/independent-review-runtime.md",
+      "sha256": "e88dc02934caca5c524b1598c05539643df8bd681068c41d07f559cee6683006",
+      "read_reason": "control independent reviewer packet and response contract",
+      "loaded_at": "2026-07-23T19:52:00+09:00",
+      "used_for": [
+        "review-task.json",
+        "reviewer-response.json",
+        "review-receipt-v2.json"
+      ],
+      "sections": [
+        "Independence boundary",
+        "Prepare a review packet",
+        "Reviewer response contract",
+        "Finalize a response"
+      ],
+      "search_terms": [
+        "packet",
+        "response",
+        "independent"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "skill": "codex-science",
+      "reference_id": "goal-loop-contract",
+      "path": "references/goal-loop-contract.md",
+      "sha256": "557400c3ea98c127c349b65d1cf5d04858b82580b19c9cab62056742eba76570",
+      "read_reason": "control completion ordering between the scientific checkpoint and native Goal",
+      "loaded_at": "2026-07-23T19:52:00+09:00",
+      "used_for": [
+        "checkpoint.json",
+        "goal-completion-receipt.json"
+      ],
+      "sections": [
+        "Completion order"
+      ],
+      "search_terms": [
+        "complete",
+        "Goal",
+        "receipt"
+      ]
+    }
+  ]
+}

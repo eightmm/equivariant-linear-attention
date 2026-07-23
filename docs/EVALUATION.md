@@ -18,6 +18,57 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Bounded-content and persistent-`2e` kernel outcome (2026-07-23)
+
+Two exact-factorization-compatible options were added behind disabled-by-
+default flags:
+
+- `scalar_content_mode=bounded` retains a bounded norm signal after the
+  positive feature map;
+- `tensor_product_kernel=true` adds a nonnegative shifted Frobenius product of
+  persistent symmetric-traceless `2e` query/key state.
+
+The tensor term is appended as a finite feature map, so global transport stays
+exactly factorized at fixed width without an `N x N` tensor. Focused algebra,
+default-compatibility, O(3)/reflection, translation, permutation, batch-
+isolation, and strict-CUDA finite-gradient checks pass.
+
+The original tensor-enabled run was retained but not used for component
+attribution after finding that optional module construction advanced the CPU
+RNG and shifted common incumbent initialization. The repaired v2.1 source
+constructs those modules inside a CPU RNG fork. Its common state entries match
+the persistent-`2e` control bitwise under the registered construction path.
+Original and repaired results are not pooled.
+
+The repaired strict-CUDA QM9 `gap` screen used seed 42, 500 updates,
+train/validation sizes 110,000/10,000, and no test evaluation:
+
+| arm | validation MAE | delta vs incumbent |
+|---|---:|---:|
+| unit/no tensor-kernel incumbent | 0.709287 eV | 0 |
+| bounded/no tensor kernel | 0.722743 eV | +0.013456 eV |
+| unit + persistent `4x2e` tensor package | 0.811461 eV | +0.102174 eV |
+| bounded + persistent `4x2e` tensor package | 0.716811 eV | +0.007524 eV |
+
+No candidate met the frozen `0.010 eV` improvement rule, so the five-seed
+confirmation and conditional private-EGNN run were not executed. The
+four-arm screen evaluates packages rather than a clean tensor-only ablation;
+no tensor-component benefit is claimed.
+
+On frozen ATOM3D-LBA train rows 0--15, the repaired combined candidate,
+incumbent, and near-parameter private static EGNN all missed the registered
+`train MAE <= 0.10 pK` capacity threshold within 3,000 updates. Their best
+observed train MAEs were `0.184002`, `0.143626`, and `0.191400 pK`,
+respectively. The candidate used 336.3 MiB peak CUDA versus EGNN's 743.0 MiB,
+but its median measured train step was 42.24 ms versus 5.31 ms and it also
+lost to the incumbent on accuracy, time, and memory. Validation and test were
+not accessed, so this provides no affinity-generalization claim.
+
+The implementation is retained as an experimental opt-in mathematical
+capability; defaults and performance claims are unchanged. The complete
+source hashes, raw results, failure record, and decision are in
+`artifacts/architecture-v2-positive-tensor-20260723/`.
+
 ## Registered ATOM3D-LBA overfit outcome (2026-07-23)
 
 The train-only capacity packet froze the first 16 rows of the pinned

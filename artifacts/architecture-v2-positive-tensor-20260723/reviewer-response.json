@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "review_task_id": "review-task-f88655e884bd820b2fd0",
+  "packet_fingerprint": "f88655e884bd820b2fd023e8b3c6fdf4e20cf9233e32ad40492ce2aabd1e6415",
+  "reviewer": "codex-independent-scientific-reviewer:/root/final_bundle_reviewer",
+  "independent": true,
+  "review_modes": [
+    "record",
+    "method"
+  ],
+  "reviewed_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "reviewed_artifacts": [
+    {
+      "path": "scope.md",
+      "sha256": "bdf9a14cda32103df4a311e109b67775e408596dfc8f6045d3be60c0e4602068"
+    },
+    {
+      "path": "initialization-preserving-followup.md",
+      "sha256": "9953250580a70924dbde4fd5b089541631863707276206e532315be45cbfffa0"
+    },
+    {
+      "path": "qm9-study/summary.json",
+      "sha256": "025f2ea30ea5f27523585ed152b0b02f2b6da450e4713eade37fdab796add470"
+    },
+    {
+      "path": "qm9-study-v2.1/summary.json",
+      "sha256": "14455aacfb7156b1b62ad70de644463b24dab97f52ce3117da455c047dbfad4a"
+    },
+    {
+      "path": "pdbbind-study-v2.1.json",
+      "sha256": "6b8fe62f49245a3c0728957ba61ca64de2638ae6ee1da5fe6e6248b42cf2008a"
+    },
+    {
+      "path": "results-summary.json",
+      "sha256": "29a566a2ddce653a0901be0c1d0790944d22efc295fa55671c6dc951d808c683"
+    },
+    {
+      "path": "claim-register.json",
+      "sha256": "031a6164b1d42df30c3e05876186bbb1294fbba41e4c991fcb8b514c269cad7f"
+    },
+    {
+      "path": "verification-summary.json",
+      "sha256": "f7fdebd529d3322184f77397733b97735a707cfba2a969adb81d629702b365aa"
+    },
+    {
+      "path": "report.md",
+      "sha256": "7d1ce14c9c9d04167786f4d331954d85f8ff1fe0afbb98f4f154f8de6fa758fd"
+    }
+  ],
+  "findings": [],
+  "limitations": [
+    "This was an independent record and method review only. I did not rerun tests, training, CUDA execution, or benchmarks, so I make no reproduction claim. I verified every manifest-enumerated packet artifact and code SHA-256 against the local files; the source manifest itself matched review-task.json at SHA-256 52663be99bcb31a8756f8017a47b6256c17ab24137e1a1bc123343b4e79c3d3b. The three cached QM9 input files also matched their recorded SHA-256 values. Hash consistency does not authenticate that the recorded hardware, elapsed time, or execution occurred.",
+    "C1 is supported for the tested public/default construction path. The disabled configuration allocates no tensor-kernel query/key/scale parameters, and the exact-state/output and common-entry initialization tests match the source. As the packet states, common-initialization identity is not established for torch.set_default_device(cuda); the actual v2.1 PDB record stores whole-model initial hashes rather than an independent per-common-entry run receipt.",
+    "The original v2 and repaired v2.1 lineages are correctly kept separate. Original tensor-bearing arms used source SHA-256 42d568c5a264f1765714132f609d22c4db2900db3fc3dd81ec1199b48f5b1438, whereas v2.1 used ceacb3bccf09191f3979365c960f69ec25cce03af0fe8550c8021f23dfcffdc9. The original summary's screen_initialization_pairing_validated=true checks incumbent/bounded and tensor/combined same-schema pairs only; it does not cure the disclosed tensor-versus-persistent-only RNG confound. The final report interprets this correctly and does not pool the lineages.",
+    "C2 is supported for the implemented, fixed-width feature kernel and tested numerical ranges. The code uses full 3-by-3 symmetric-traceless matrices for the Frobenius dot product, a true Frobenius unit-ball map, a positive bounded eta, and segment summaries; the explicit dense reference agrees. The O(N) statement applies to factorized global attention after node features and graph membership are available at fixed width. It is not an end-to-end claim for local-edge discovery, arbitrary dense local graphs, data loading, or preprocessing, and it is neither softmax equivalence nor a universality result.",
+    "C3 is supported as a tested algebraic/software symmetry contract, not as a physical-model result. Finite property tests and the two-step strict-CUDA smoke support O(3), reflection, translation, permutation, batch isolation, and finite gradients for the registered path; they do not establish chirality sensitivity, conservative forces, energy conservation, molecular dynamics, relaxed geometry, or all possible numerical extremes.",
+    "C4 is correctly unsupported. In repaired v2.1 the incumbent validation MAE was 0.7092869794845581 eV; bounded, tensor-package, and combined arms were 0.7227425601959229, 0.811460802268982, and 0.7168109645843506 eV, respectively. Thus every candidate had negative improvement and none met the frozen 0.010 eV improvement requirement, although bounded and combined remained within the separate 0.020 eV regression guard. This is a single-seed, 500-update, random-row QM9 admission decision, not a general accuracy conclusion.",
+    "The repaired four-arm QM9 screen does not include a persistent-2e-without-tensor-kernel control. It can assess the complete tensor package but cannot causally separate persistent 2e state from the shifted tensor term or attribute the v2-to-v2.1 metric changes to a performance benefit of either component. The packet states this limit explicitly.",
+    "C5 is correctly unavailable: C4 admitted no candidate, confirmation_run_count is zero, and the conditional private EGNN comparison is null. Consequently the packet supports no five-seed QM9 improvement or EGNN-competitiveness claim; non-execution follows the frozen gate rather than constituting missing confirmatory evidence.",
+    "C6 is correctly unsupported. On the exact cached ATOM3D-LBA train rows 0-15, the repaired combined candidate's best recorded full-train MAE was 0.18400238454341888 pK at step 2850, above the 0.10 pK threshold, and its final MAE was 0.4205204099416733 pK. Validation and test flags are false. Sixteen train complexes cannot support PDBBind generalization, affinity ranking, docking, cold-target, or external-validity conclusions.",
+    "The PDB efficiency observations are single-run and harness-bound. The repaired candidate median measured train step was 0.04224155249539763 seconds versus 0.0053067760018166155 seconds for the private static EGNN, while peak CUDA allocations were 352636928 and 779085824 bytes. The attention arm is edge-free GGG whereas EGNN consumes 382530 directed radius candidates, so these figures do not establish general architectural efficiency, an official EGNN comparison, neighbor-construction cost, or equal equations."
+  ],
+  "status": "passed"
+}

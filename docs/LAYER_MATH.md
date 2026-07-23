@@ -44,6 +44,56 @@ Kernel initial values, maxima, floors, and init/max ratios must be normal
 float32 values. Accepted initial coefficients therefore round-trip through the
 inverse-logit parameterization instead of silently underflowing to zero.
 
+## Optional architecture-v2 feature maps
+
+The default scalar content above remains `scalar_content_mode="unit"`. The
+opt-in `bounded` mode retains one bounded signal from the positive feature
+magnitude. With `z=ELU(x)+1`, incumbent inward unit vector `u(z)`, and
+`r=||z||_2/sqrt(D)`, it uses
+
+```text
+phi_bounded(x) = u(z) * 2 r / (1 + r).
+```
+
+The amplitude is monotone in `r` and below two, so the scalar-content dot
+product remains nonnegative and is bounded above by four. This is a finite
+feature kernel, not exact softmax attention. Simply removing normalization
+would lose the declared finite kernel bound.
+
+When persistent `2e` channels exist, the separate opt-in tensor-product kernel
+lets that state influence attention weights. Channel-only maps form
+symmetric-traceless query/key matrices, followed by the true Frobenius
+unit-ball map
+
+```text
+U(T) = T / sqrt(1 + ||T||_F^2).
+```
+
+For a bounded positive per-head scale `eta_h`, the added pair term is
+
+```text
+K2_ijh = eta_h * (1 + <U(Q2_ih), U(K2_jh)>_F).
+```
+
+It lies in `[0, 2 eta_h]`. The implementation appends
+`sqrt(eta_h) * [1, vec(U(Q2))]` and
+`sqrt(eta_h) * [1, vec(U(K2))]` to the scalar feature maps, where `vec` is the
+full `3 x 3` flattening. A raw dot product of the five stored tensor
+coordinates would use the wrong Frobenius metric and is therefore not used.
+The existing scalar graph summaries then factorize this term exactly, so fixed
+width remains `O(N)` with no pair tensor. Since
+`T -> R T R^T`, the Frobenius contraction is invariant under all `R in O(3)`.
+
+With both options active, the finite pair-kernel bound becomes
+
+```text
+c <= K_ijh <= c + 4 + 2 beta_max + gamma_max + 2 eta_max.
+```
+
+The tensor-product option is invalid without persistent `2e` state and is not
+registered with interacting multi-memory transport. Disabled options allocate
+no tensor query/key/scale parameters and preserve the incumbent state schema.
+
 The linear term distinguishes alignment from anti-alignment. Disabling it
 removes only `beta_h q1_ih^T k1_jh`; the constant `beta_h` is retained in both
 arms. This isolates alignment from a simultaneous change to the constant mass.
@@ -180,6 +230,11 @@ For one channel, the bounded state used inside a block is
 ```text
 B(H) = H / sqrt(1 + ||T(H)||_F^2 / 5).
 ```
+
+This denominator is evaluated directly. Computing `sqrt(||T||_F^2)` first is
+forward-equivalent but has an undefined `sqrt(0)` derivative at the zero
+initial tensor state; the direct squared-norm form keeps repeated float32
+training updates finite.
 
 Channel-only linear maps commute with this transformation. Let `M_i` be the
 block's transient rank-2 head moment and `sbar_i` its invariant normalized

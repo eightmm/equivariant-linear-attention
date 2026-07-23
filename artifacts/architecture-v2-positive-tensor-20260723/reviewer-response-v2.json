@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "review_task_id": "review-task-b26867c59a334618cf30",
+  "packet_fingerprint": "b26867c59a334618cf305e804c6b7b150964b329400162fc955915ef39b9142b",
+  "reviewer": "codex-independent-scientific-rereviewer:/root/final_bundle_reviewer",
+  "independent": true,
+  "review_modes": [
+    "record",
+    "method"
+  ],
+  "reviewed_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "reviewed_artifacts": [
+    {
+      "path": "scope.md",
+      "sha256": "bdf9a14cda32103df4a311e109b67775e408596dfc8f6045d3be60c0e4602068"
+    },
+    {
+      "path": "cuda-smoke-v2.1.json",
+      "sha256": "9174f609fb221e9eb2c546077aeca4aa9ed42d167590e5341d1c7e79fb9d45f9"
+    },
+    {
+      "path": "qm9-study-v2.1/summary.json",
+      "sha256": "14455aacfb7156b1b62ad70de644463b24dab97f52ce3117da455c047dbfad4a"
+    },
+    {
+      "path": "pdbbind-study-v2.1.json",
+      "sha256": "6b8fe62f49245a3c0728957ba61ca64de2638ae6ee1da5fe6e6248b42cf2008a"
+    },
+    {
+      "path": "results-summary.json",
+      "sha256": "29a566a2ddce653a0901be0c1d0790944d22efc295fa55671c6dc951d808c683"
+    },
+    {
+      "path": "claim-register.json",
+      "sha256": "efa38d3443742b41701abad681fc5fe7de404b0e8a5a4b71964faf6cb3471a02"
+    },
+    {
+      "path": "evidence-graph.json",
+      "sha256": "4639644825409da4b6cf415d1e51c9a3a4fb69424566d65b5951c194d2ca7fa0"
+    },
+    {
+      "path": "verification-summary.json",
+      "sha256": "f7fdebd529d3322184f77397733b97735a707cfba2a969adb81d629702b365aa"
+    },
+    {
+      "path": "report.md",
+      "sha256": "7d1ce14c9c9d04167786f4d331954d85f8ff1fe0afbb98f4f154f8de6fa758fd"
+    },
+    {
+      "path": "review-task.json",
+      "sha256": "d38012ed6363b0cc5b52c08a1fc396da6d3804faa97e0246a1a727482a5dfc97"
+    },
+    {
+      "path": "reviewer-response.json",
+      "sha256": "3fa6f28b65d45c1bf1d4fadc44513c69bb9ee2cf6d014b661a98de998e742d63"
+    },
+    {
+      "path": "review-receipt-initial.json",
+      "sha256": "3f0b8c0bd071f7d798e456252129e217a971693c7d6460f01b3e56f59909e94b"
+    },
+    {
+      "path": "artifact-validation-finding.json",
+      "sha256": "f305e34a49dace8b735b3c81b3609d57f1d4d735ae0a4cea42d24bdcfadeaac6"
+    }
+  ],
+  "findings": [
+    {
+      "id": "ARTIFACT-001",
+      "severity": "major",
+      "code": "unsupported-conclusion",
+      "message": "Resolved. C2 initially declared required_support=3 although its evidence graph contained two direct supporting artifact edges. The repaired claim register sets required_support=2, exactly matching A-verification and A-cuda-smoke. This is an evidence-count sidecar correction, not a reduction of the scientific evidence contract: C2 still requires algebraic unit tests, a dense/factorized reference, and finite CUDA execution; verification-summary.json aggregates the first two classes together with symmetry and compatibility checks, while cuda-smoke-v2.1.json supplies the finite CUDA record. C2's scientific wording, status, dependencies, falsifier, uncertainty, and evidence references are unchanged, as are the evidence graph and all scientific result artifacts.",
+      "affected_claim_id": "C2",
+      "evidence": [
+        {
+          "artifact_path": "artifact-validation-finding.json",
+          "artifact_sha256": "f305e34a49dace8b735b3c81b3609d57f1d4d735ae0a4cea42d24bdcfadeaac6",
+          "json_pointer": "/finding"
+        },
+        {
+          "artifact_path": "claim-register.json",
+          "artifact_sha256": "efa38d3443742b41701abad681fc5fe7de404b0e8a5a4b71964faf6cb3471a02",
+          "json_pointer": "/claims/1"
+        },
+        {
+          "artifact_path": "evidence-graph.json",
+          "artifact_sha256": "4639644825409da4b6cf415d1e51c9a3a4fb69424566d65b5951c194d2ca7fa0",
+          "json_pointer": "/edges/3"
+        },
+        {
+          "artifact_path": "evidence-graph.json",
+          "artifact_sha256": "4639644825409da4b6cf415d1e51c9a3a4fb69424566d65b5951c194d2ca7fa0",
+          "json_pointer": "/edges/4"
+        },
+        {
+          "artifact_path": "verification-summary.json",
+          "artifact_sha256": "f7fdebd529d3322184f77397733b97735a707cfba2a969adb81d629702b365aa",
+          "json_pointer": "/contract_checks"
+        },
+        {
+          "artifact_path": "cuda-smoke-v2.1.json",
+          "artifact_sha256": "9174f609fb221e9eb2c546077aeca4aa9ed42d167590e5341d1c7e79fb9d45f9",
+          "json_pointer": "/steps"
+        }
+      ],
+      "required_action": "No further scientific action is required for ARTIFACT-001 in this frozen packet. Retain required_support=2 and the two direct supporting edges, and regenerate the downstream review receipt and manifest state during finalization.",
+      "resolution_status": "resolved"
+    }
+  ],
+  "limitations": [
+    "This was a narrow, hash-bound record and method rereview of the sidecar repair. I did not rerun tests, training, CUDA execution, benchmarks, or reproduction commands, and therefore make no new reproduction claim. The substantive C1-C6 assessment is inherited from the initial independent review and was checked against unchanged packet hashes.",
+    "Against the claims embedded in review-task.json, the current claim-register changes only C2 required_support from 3 to 2. The current manifest SHA-256 is 841b8f869671e5735dad6d14d75b5d44157eb38147aced7c64a8bf4e5fca43d6, exactly matching review-task-v2.json, and every manifest-enumerated artifact matched its recorded SHA-256. Hash agreement establishes byte identity, not the authenticity of recorded commands, timestamps, hardware, or execution.",
+    "The value required_support=2 counts direct artifact edges, not independent scientific replications. One edge points to an aggregate verification record that covers multiple required checks, and the other points to the finite CUDA execution record; this bookkeeping must not be interpreted as two independent empirical confirmations.",
+    "The unmanifested review-receipt-v2.json present beside the packet reflects the pre-repair deterministic validator condition requiring three supports. It is not hash-bound by review-task-v2.json and should be superseded by finalization; it does not constitute an unresolved finding in the current hash-pinned packet.",
+    "The scientific conclusions and their limits are unchanged: C1-C3 remain supported within their tested implementation scopes, C4 and C6 remain unsupported, and C5 remains unavailable because its admission gate did not open. C2 remains a fixed-width implemented-kernel result rather than softmax equivalence, universality, or end-to-end linear scaling; the single-seed QM9 and sixteen-train-complex PDB records do not support broad accuracy or external-validity claims."
+  ],
+  "status": "passed"
+}

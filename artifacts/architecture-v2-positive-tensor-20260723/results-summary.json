@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "run_id": "architecture-v2-positive-tensor-20260723",
+  "decision": {
+    "implementation": "retain_experimental_opt_in",
+    "default_change": false,
+    "performance_promotion": false,
+    "reason": "The mathematical and symmetry contracts passed, but neither the original nor initialization-repaired real-data screen admitted a candidate."
+  },
+  "lineage": {
+    "original_v2": {
+      "classification": "planned_but_tensor_component_confounded_by_rng_consumption",
+      "qm9_source_sha256": "42d568c5a264f1765714132f609d22c4db2900db3fc3dd81ec1199b48f5b1438",
+      "pdbbind_source_sha256": "65b54e79a1df48740d7f837d8490f5a5e1e73f4b08b772e40cc95eb2287b3e02"
+    },
+    "initialization_repaired_v2_1": {
+      "classification": "planned_follow_up_with_common_initialization_preserved",
+      "qm9_source_sha256": "ceacb3bccf09191f3979365c960f69ec25cce03af0fe8550c8021f23dfcffdc9",
+      "pdbbind_source_sha256": "28a85a768416d82d90da79d2cac651250214bd967921edb4bd9089bb95f6cfae"
+    },
+    "pooling_allowed": false
+  },
+  "qm9_v2_1": {
+    "dataset": "QM9 gap",
+    "unit": "eV",
+    "screen_seed": 42,
+    "steps": 500,
+    "split": {
+      "kind": "seeded_random_row_warm_start",
+      "seed": 42,
+      "train": 110000,
+      "validation": 10000,
+      "test_evaluated": false
+    },
+    "arms": [
+      {
+        "variant": "incumbent",
+        "val_mae": 0.7092869794845581,
+        "candidate_minus_incumbent": 0.0,
+        "parameters": 153285,
+        "train_elapsed_seconds": 16.235540891997516,
+        "peak_cuda_memory_bytes": 179929600
+      },
+      {
+        "variant": "bounded",
+        "val_mae": 0.7227425601959229,
+        "candidate_minus_incumbent": 0.013455580711364767,
+        "parameters": 153285,
+        "train_elapsed_seconds": 16.689791379962116,
+        "peak_cuda_memory_bytes": 186390016
+      },
+      {
+        "variant": "tensor",
+        "val_mae": 0.811460802268982,
+        "candidate_minus_incumbent": 0.10217382278442388,
+        "parameters": 158967,
+        "train_elapsed_seconds": 22.175281208998058,
+        "peak_cuda_memory_bytes": 210091008
+      },
+      {
+        "variant": "combined",
+        "val_mae": 0.7168109645843506,
+        "candidate_minus_incumbent": 0.007523985099792463,
+        "parameters": 158967,
+        "train_elapsed_seconds": 22.971403622999787,
+        "peak_cuda_memory_bytes": 216551424
+      }
+    ],
+    "screen_gate": {
+      "minimum_improvement_eV": 0.01,
+      "maximum_regression_eV": 0.02,
+      "passed": false,
+      "selected_variant": null
+    },
+    "confirmation": {
+      "admitted": false,
+      "run_count": 0,
+      "egnn_run": false
+    }
+  },
+  "atom3d_lba_v2_1": {
+    "dataset": "ATOM3D-LBA",
+    "revision": "f93dd2d150a47c270f624620f84e07451a158705",
+    "split": "train",
+    "row_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "sample_identity_sha256": "11b2858ef499b6748a97b068d42d5c41f8b081a5e2d86dfaac5fed1eb0cab6c1",
+    "unit": "pK",
+    "steps": 3000,
+    "threshold_train_mae": 0.1,
+    "best_observed_definition": "minimum full-train MAE among evaluations recorded every 50 updates",
+    "arms": [
+      {
+        "variant": "incumbent",
+        "parameters": 167115,
+        "final_train_mae": 0.20158089697360992,
+        "final_train_rmse": 0.302228777671349,
+        "best_observed_train_mae": 0.14362607896327972,
+        "best_observed_step": 2650,
+        "overfit_passed": false,
+        "elapsed_seconds": 120.2883302369737,
+        "median_train_step_seconds": 0.03698890798841603,
+        "peak_cuda_memory_bytes": 296663040
+      },
+      {
+        "variant": "combined_candidate",
+        "parameters": 167223,
+        "final_train_mae": 0.4205204099416733,
+        "final_train_rmse": 0.49423362964912687,
+        "best_observed_train_mae": 0.18400238454341888,
+        "best_observed_step": 2850,
+        "overfit_passed": false,
+        "elapsed_seconds": 136.01256331102923,
+        "median_train_step_seconds": 0.04224155249539763,
+        "peak_cuda_memory_bytes": 352636928
+      },
+      {
+        "variant": "private_static_egnn",
+        "parameters": 167260,
+        "final_train_mae": 0.2499222755432129,
+        "final_train_rmse": 0.396027932448152,
+        "best_observed_train_mae": 0.1914001703262329,
+        "best_observed_step": 2900,
+        "overfit_passed": false,
+        "elapsed_seconds": 20.08033697999781,
+        "median_train_step_seconds": 0.0053067760018166155,
+        "peak_cuda_memory_bytes": 779085824,
+        "directed_edge_candidates_with_self": 382530
+      }
+    ],
+    "capacity_claim_supported": false,
+    "validation_evaluated": false,
+    "test_evaluated": false
+  },
+  "interpretation": [
+    "Bounded scalar content is a clean same-initialization ablation and did not improve the registered QM9 screen.",
+    "The initialization-repaired combined package came closer to the incumbent than the original confounded package, but still regressed and was not admitted.",
+    "The four-arm screen does not isolate the tensor kernel from persistent 2e state, so no component-level tensor benefit is claimed.",
+    "The ATOM3D-LBA run is a train-only capacity and implementation comparison, not a generalization or affinity benchmark.",
+    "The candidate used less peak CUDA allocation than the private EGNN in this run, but was about eight times slower per measured train step and did not pass the capacity threshold."
+  ]
+}

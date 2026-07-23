@@ -2,6 +2,42 @@
 
 ## Status
 
+- Architecture-v2 packet confirmed on 2026-07-23 by the user's instruction to
+  implement substantial equivariant-linear-attention improvements and validate
+  them on real data. The two opt-in interventions are: (1) bounded-magnitude
+  positive scalar content, which retains a learned content-norm signal while
+  preserving a finite positive kernel bound, and (2) a shifted persistent-`2e`
+  Frobenius kernel
+  `eta_h * (1 + <Q2_ih, K2_jh>_F)`, factorized by augmenting the scalar feature
+  map with `sqrt(eta_h) * [1, vec(T)]`. The latter requires persistent `2e`
+  hidden channels. Neither intervention may allocate parameters or change
+  outputs/state when disabled; no `N x N` pair tensor, spherical harmonics,
+  parity-odd state, new dependency, or new public model family is admitted.
+  Persistent-`2e` bounding evaluates the mathematically identical denominator
+  `sqrt(1 + ||T||_F^2 / 5)` directly; this avoids the undefined `sqrt(0)`
+  backward derivative exposed by the new multi-update smoke.
+- The frozen QM9 screen reruns strict-CUDA, FP32, test-disabled, 500-update
+  static LGL arms on the pinned 110k/10k random-row split: the exact incumbent,
+  bounded scalar content alone, shifted `2e` kernel alone with `4x2e` hidden
+  state, and their combination. A candidate is screen-safe when finite and no
+  more than `0.020 eV` worse than the rerun incumbent; only a candidate at
+  least `0.010 eV` better advances. The lowest-MAE admitted candidate is then
+  compared with the incumbent and private static EGNN at seeds 41--45 for
+  2,000 updates. Architecture promotion requires at least `0.020 eV` mean
+  improvement over the incumbent, at least four improving attention pairs, and
+  worst attention regression no larger than `0.020 eV`. EGNN competitiveness
+  is reported separately and requires lower mean plus at least three paired
+  wins; no test labels are opened.
+- The independent large-graph capacity lane uses the cached immutable
+  ATOM3D-LBA/PDBBind train rows 0--15 only. It compares the existing edge-free
+  GGG spatial/persistent-`4x2e` incumbent, the combined architecture-v2
+  candidate, and the near-parameter private static EGNN under the same
+  deterministic batches, target normalization, constant AdamW settings,
+  3,000-update cap, and ligand-only readout. Reaching train MAE at most
+  `0.10 pK` is a wiring/capacity result, not validation or generalization
+  evidence. The complete packet uses cached data, one local GPU, no dependency
+  or network change, no validation/test labels, and at most 1,800 cumulative
+  GPU-wall seconds. Failures and null results remain authoritative.
 - Receiver-degree normalization packet confirmed on 2026-07-23. The only model
   intervention is an opt-in division of every edge-conditioned local scalar,
   vector, relative-vector, and symmetric-traceless receiver sum by the square

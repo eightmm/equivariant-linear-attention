@@ -233,10 +233,18 @@ def main() -> None:
             ]
         )
         metrics["kernel_parameters"] = kernel_parameter_summary(beta, gamma)
-    else:
-        coordinate_updates = (
-            args.benchmark_model == "internal_dynamic_egnn_baseline"
+        tensor_scales = [
+            layer.tensor_kernel_max * torch.sigmoid(layer.raw_tensor_kernel.detach())
+            for layer in model.layers
+            if layer.raw_tensor_kernel is not None
+        ]
+        metrics["tensor_kernel_parameters"] = (
+            _finite_parameter_summary(torch.cat(tensor_scales), name="eta")
+            if tensor_scales
+            else {"status": "not_applicable"}
         )
+    else:
+        coordinate_updates = args.benchmark_model == "internal_dynamic_egnn_baseline"
         metrics["baseline_details"] = {
             "name": args.benchmark_model,
             "official_reproduction": False,
@@ -270,8 +278,8 @@ def main() -> None:
         if pairwise_module is not None
         else "not_applicable"
     )
-    metrics["local_radial_gradient_parameters"] = (
-        _named_gradient_parameter_diagnostics(model, "local_radial")
+    metrics["local_radial_gradient_parameters"] = _named_gradient_parameter_diagnostics(
+        model, "local_radial"
     )
     metrics["node_count_strata"] = _node_count_strata_metrics(
         model,
@@ -335,9 +343,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument("--hidden-tensor-dim", type=_nonnegative_int, default=0)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--linear-kernel-init", type=float, default=0.05)
+    parser.add_argument(
+        "--scalar-content-mode",
+        choices=["unit", "bounded"],
+        default="unit",
+    )
+    parser.add_argument("--tensor-product-kernel", action="store_true")
+    parser.add_argument("--tensor-kernel-init", type=float, default=0.05)
+    parser.add_argument("--tensor-kernel-max", type=float, default=1.0)
     parser.add_argument("--no-alignment-linear-term", action="store_true")
     parser.add_argument(
         "--no-linear-kernel",
@@ -415,11 +432,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.set_defaults(evaluate_test=False)
     args = parser.parse_args(argv)
     if args.hidden_dim is None:
-        args.hidden_dim = (
-            91
-            if args.benchmark_model in _EGNN_BENCHMARK_MODELS
-            else 64
-        )
+        args.hidden_dim = 91 if args.benchmark_model in _EGNN_BENCHMARK_MODELS else 64
     return args
 
 
@@ -462,6 +475,11 @@ def _build_benchmark_model(
             "pairwise_residual_scale_init": 0.1,
             "edge_conditioned_local_transport": False,
             "edge_conditioned_local_sqrt_degree": False,
+            "hidden_tensor_dim": 0,
+            "scalar_content_mode": "unit",
+            "tensor_product_kernel": False,
+            "tensor_kernel_init": 0.05,
+            "tensor_kernel_max": 1.0,
             "no_alignment_linear_term": False,
             "no_key_balancing": False,
             "diagnostic_max_nodes": 128,
@@ -511,12 +529,15 @@ def _build_benchmark_model(
         learn_local_radial_gate=args.learn_local_radial_gate,
         use_pairwise_local_content=args.pairwise_local_content,
         pairwise_residual_scale_init=args.pairwise_residual_scale_init,
-        use_edge_conditioned_local_transport=(
-            args.edge_conditioned_local_transport
-        ),
+        use_edge_conditioned_local_transport=(args.edge_conditioned_local_transport),
         normalize_edge_conditioned_local_by_sqrt_degree=(
             args.edge_conditioned_local_sqrt_degree
         ),
+        hidden_tensor_dim=args.hidden_tensor_dim,
+        scalar_content_mode=args.scalar_content_mode,
+        use_tensor_product_kernel=args.tensor_product_kernel,
+        tensor_kernel_init=args.tensor_kernel_init,
+        tensor_kernel_max=args.tensor_kernel_max,
         global_memory_count=args.memory_count,
         use_memory_interaction=args.memory_interaction,
         memory_assignment_temperature=args.memory_assignment_temperature,
@@ -562,11 +583,33 @@ def _gradient_norms(model: torch.nn.Module) -> dict[str, float]:
         for layer in model.layers
         if hasattr(layer, "raw_vector_kernel")
     ]
+    tensor_parameters = [
+        layer.raw_tensor_kernel
+        for layer in model.layers
+        if getattr(layer, "raw_tensor_kernel", None) is not None
+    ]
     summary = {"all": float(norm(all_parameters))}
     if beta_parameters:
         summary["beta_raw"] = float(norm(beta_parameters))
         summary["gamma_raw"] = float(norm(gamma_parameters))
+    if tensor_parameters:
+        summary["eta_raw"] = float(norm(tensor_parameters))
     return summary
+
+
+def _finite_parameter_summary(
+    value: torch.Tensor,
+    *,
+    name: str,
+) -> dict[str, float]:
+    value = value.detach().float()
+    if value.numel() == 0 or not torch.isfinite(value).all():
+        raise ValueError(f"{name} must be a nonempty finite tensor")
+    return {
+        f"{name}.min": float(value.min().cpu()),
+        f"{name}.mean": float(value.mean().cpu()),
+        f"{name}.max": float(value.max().cpu()),
+    }
 
 
 def _gradient_parameter_diagnostics(model: torch.nn.Module) -> dict[str, int | str]:
@@ -643,9 +686,7 @@ def _gradient_clipping_summary(
         "step_count": step_count,
         "clipped_step_count": clipped_step_count,
         "clip_fraction": clipped_step_count / step_count,
-        "pre_clip_grad_norm_mean": float(
-            monitor["pre_clip_grad_norm_sum"]
-        )
+        "pre_clip_grad_norm_mean": float(monitor["pre_clip_grad_norm_sum"])
         / step_count,
         "pre_clip_grad_norm_max": float(monitor["pre_clip_grad_norm_max"]),
         "pre_clip_grad_norm_last": float(monitor["pre_clip_grad_norm_last"]),
@@ -673,7 +714,9 @@ def _coordinate_gradient_parameter_diagnostics(
         nonfinite_count += int(torch.count_nonzero(~finite).item())
     return {
         "count_unit": "scalar_parameter_elements",
-        "parameter_count": sum(parameter.numel() for parameter in coordinate_parameters),
+        "parameter_count": sum(
+            parameter.numel() for parameter in coordinate_parameters
+        ),
         "parameters_with_gradient_count": with_gradient_count,
         "nonzero_gradient_parameter_count": nonzero_count,
         "nonfinite_gradient_parameter_count": nonfinite_count,
@@ -920,9 +963,11 @@ def _bounded_model_diagnostics(
 
     from equivariant_attention.moment import (
         _bounded_irrep,
+        _bounded_kernel_scale,
         _memory_assignments_and_coupling,
-        _normalize_positive_features,
+        _positive_scalar_features,
         _stable_vector_norm,
+        _tensor_product_features,
         _unit_ball,
     )
 
@@ -1031,15 +1076,22 @@ def _bounded_model_diagnostics(
     def capture_layer_input(
         _module: torch.nn.Module,
         inputs: tuple[object, ...],
+        kwargs: dict[str, object],
     ) -> None:
         captured["scalars"] = inputs[0].detach()
         captured["vectors"] = inputs[1].detach()
         captured["global_pos"] = inputs[2].detach()
         captured["batch"] = inputs[4].detach()
         captured["num_graphs"] = int(inputs[5])
+        persistent_tensor = kwargs.get("persistent_tensor")
+        if isinstance(persistent_tensor, torch.Tensor):
+            captured["persistent_tensor"] = persistent_tensor.detach()
 
     training_states = [(module, module.training) for module in model.modules()]
-    handle = layer.register_forward_pre_hook(capture_layer_input)
+    handle = layer.register_forward_pre_hook(
+        capture_layer_input,
+        with_kwargs=True,
+    )
     if parameter.device.type == "cuda":
         torch.cuda.synchronize(parameter.device)
     started = time.perf_counter()
@@ -1065,24 +1117,40 @@ def _bounded_model_diagnostics(
         node_count = scalars.shape[0]
         normalized_scalars = layer.norm(scalars)
         bounded_vectors = _bounded_irrep(vectors, layer.eps)
-        query_scalar = _normalize_positive_features(
-            F.elu(
-                layer.query_scalar(normalized_scalars).reshape(
-                    node_count, layer.num_heads, layer.head_dim
-                )
-            )
-            + 1.0,
+        query_content = _positive_scalar_features(
+            layer.query_scalar(normalized_scalars).reshape(
+                node_count, layer.num_heads, layer.head_dim
+            ),
             layer.eps,
+            mode=layer.scalar_content_mode,
         )
-        key_scalar = _normalize_positive_features(
-            F.elu(
-                layer.key_scalar(normalized_scalars).reshape(
-                    node_count, layer.num_heads, layer.head_dim
-                )
-            )
-            + 1.0,
+        key_content = _positive_scalar_features(
+            layer.key_scalar(normalized_scalars).reshape(
+                node_count, layer.num_heads, layer.head_dim
+            ),
             layer.eps,
+            mode=layer.scalar_content_mode,
         )
+        query_scalar = query_content
+        key_scalar = key_content
+        if layer.tensor_kernel_query is not None:
+            persistent_tensor = captured.get("persistent_tensor")
+            if not isinstance(persistent_tensor, torch.Tensor):
+                raise RuntimeError(
+                    "tensor-kernel diagnostics require persistent tensor input"
+                )
+            tensor_scale = _bounded_kernel_scale(
+                layer.raw_tensor_kernel,
+                layer.tensor_kernel_max,
+            )
+            tensor_query, tensor_key = _tensor_product_features(
+                layer.tensor_kernel_query(persistent_tensor),
+                layer.tensor_kernel_key(persistent_tensor),
+                tensor_scale,
+                eps=layer.eps,
+            )
+            query_scalar = torch.cat([query_scalar, tensor_query], dim=-1)
+            key_scalar = torch.cat([key_scalar, tensor_key], dim=-1)
         query_vector = _unit_ball(
             layer.query_vector(bounded_vectors)
             * torch.tanh(layer.query_vector_gate(normalized_scalars)).unsqueeze(-1),
@@ -1107,14 +1175,14 @@ def _bounded_model_diagnostics(
         if layer.use_memory_interaction and layer.global_memory_count > 1:
             router_latent = torch.tanh(
                 layer.memory_router_out(
-                    F.silu(layer.memory_router_in(key_scalar[:, global_heads]))
+                    F.silu(layer.memory_router_in(key_content[:, global_heads]))
                 )
             )
             router_latent = router_latent / _stable_vector_norm(
                 router_latent
             ).clamp_min(torch.finfo(router_latent.dtype).tiny)
             assignment, coupling, centers = _memory_assignments_and_coupling(
-                key_scalar[:, global_heads],
+                key_content[:, global_heads],
                 global_pos,
                 batch,
                 num_graphs=num_graphs,
@@ -1157,8 +1225,8 @@ def _bounded_model_diagnostics(
             }
             assignment_source = "shared_invariant_router_exact_recompute"
         elif layer.use_memory_interaction:
-            assignment = key_scalar.new_ones((node_count, layer.global_head_count, 1))
-            analytic_pair_gate = key_scalar.new_ones((node_count, node_count))
+            assignment = key_content.new_ones((node_count, layer.global_head_count, 1))
+            analytic_pair_gate = key_content.new_ones((node_count, node_count))
             memory = {
                 "status": "exact_single_memory_bypass",
                 "transport_connected": False,
@@ -1309,6 +1377,7 @@ def _bounded_local_attention_diagnostics(
     def capture_layer_input(
         layer_index: int,
         inputs: tuple[object, ...],
+        kwargs: dict[str, object],
     ) -> None:
         captured[layer_index] = {
             "scalars": inputs[0].detach(),
@@ -1318,13 +1387,17 @@ def _bounded_local_attention_diagnostics(
             "num_graphs": int(inputs[5]),
             "local_geometry": tuple(value.detach() for value in inputs[7]),
         }
+        persistent_tensor = kwargs.get("persistent_tensor")
+        if isinstance(persistent_tensor, torch.Tensor):
+            captured[layer_index]["persistent_tensor"] = persistent_tensor.detach()
 
     training_states = [(module, module.training) for module in model.modules()]
     handles = [
         layer.register_forward_pre_hook(
-            lambda _module, inputs, index=layer_index: capture_layer_input(
-                index, inputs
-            )
+            lambda _module, inputs, kwargs, index=layer_index: capture_layer_input(
+                index, inputs, kwargs
+            ),
+            with_kwargs=True,
         )
         for layer_index, layer in local_layers
     ]
@@ -1373,7 +1446,8 @@ def _local_layer_attention_diagnostics(
         _bounded_irrep,
         _bounded_kernel_scale,
         _local_attention_weights,
-        _normalize_positive_features,
+        _positive_scalar_features,
+        _tensor_product_features,
         _unit_ball,
     )
 
@@ -1386,24 +1460,37 @@ def _local_layer_attention_diagnostics(
     node_count = scalars.shape[0]
     normalized_scalars = layer.norm(scalars)
     bounded_vectors = _bounded_irrep(vectors, layer.eps)
-    query_scalar = _normalize_positive_features(
-        F.elu(
-            layer.query_scalar(normalized_scalars).reshape(
-                node_count, layer.num_heads, layer.head_dim
-            )
-        )
-        + 1.0,
+    query_scalar = _positive_scalar_features(
+        layer.query_scalar(normalized_scalars).reshape(
+            node_count, layer.num_heads, layer.head_dim
+        ),
         layer.eps,
+        mode=layer.scalar_content_mode,
     )
-    key_scalar = _normalize_positive_features(
-        F.elu(
-            layer.key_scalar(normalized_scalars).reshape(
-                node_count, layer.num_heads, layer.head_dim
-            )
-        )
-        + 1.0,
+    key_scalar = _positive_scalar_features(
+        layer.key_scalar(normalized_scalars).reshape(
+            node_count, layer.num_heads, layer.head_dim
+        ),
         layer.eps,
+        mode=layer.scalar_content_mode,
     )
+    if layer.tensor_kernel_query is not None:
+        persistent_tensor = captured.get("persistent_tensor")
+        if not isinstance(persistent_tensor, torch.Tensor):
+            raise RuntimeError(
+                "tensor-kernel diagnostics require persistent tensor input"
+            )
+        tensor_query, tensor_key = _tensor_product_features(
+            layer.tensor_kernel_query(persistent_tensor),
+            layer.tensor_kernel_key(persistent_tensor),
+            _bounded_kernel_scale(
+                layer.raw_tensor_kernel,
+                layer.tensor_kernel_max,
+            ),
+            eps=layer.eps,
+        )
+        query_scalar = torch.cat([query_scalar, tensor_query], dim=-1)
+        key_scalar = torch.cat([key_scalar, tensor_key], dim=-1)
     query_vector = _unit_ball(
         layer.query_vector(bounded_vectors)
         * torch.tanh(layer.query_vector_gate(normalized_scalars)).unsqueeze(-1),
@@ -1593,6 +1680,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be a nonnegative integer")
+    return parsed
+
+
 def _hash_indices(indices: Sequence[int]) -> str:
     canonical = ",".join(str(index) for index in indices).encode("ascii")
     return hashlib.sha256(canonical).hexdigest()
@@ -1605,8 +1699,17 @@ def _source_hash() -> str:
         path
         for path in [
             root / "scripts" / "train_compare.py",
+            root / "scripts" / "run_architecture_v2_qm9.py",
             root / "scripts" / "run_registered_coordinate_study.py",
             root / "scripts" / "run_registered_egnn_parity_iteration.py",
+            root
+            / "artifacts"
+            / "architecture-v2-positive-tensor-20260723"
+            / "scope.md",
+            root
+            / "artifacts"
+            / "architecture-v2-positive-tensor-20260723"
+            / "initialization-preserving-followup.md",
             root / "artifacts" / "dynamic-coordinate-egnn-20260719" / "scope.md",
             root / "artifacts" / "egnn-parity-20260720" / "scope.md",
             root / "PROJECT.md",
@@ -1628,6 +1731,18 @@ def _source_hash() -> str:
     return digest.hexdigest()
 
 
+def _kernel_formula(
+    args: argparse.Namespace,
+    inverse_positive_baseline: bool,
+) -> str:
+    content = "a_dot_b"
+    if args.tensor_product_kernel:
+        content += " + eta*(1+u)"
+    if inverse_positive_baseline:
+        return f"{content} + (c + beta*(1 + delta*t))/N_g + gamma*t^2"
+    return f"{content} + c + beta*(1 + delta*t) + gamma*t^2"
+
+
 def _run_config(
     args: argparse.Namespace,
     *,
@@ -1635,9 +1750,7 @@ def _run_config(
     model_seed: int,
 ) -> dict[str, object]:
     if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
-        coordinate_updates = (
-            args.benchmark_model == "internal_dynamic_egnn_baseline"
-        )
+        coordinate_updates = args.benchmark_model == "internal_dynamic_egnn_baseline"
         return {
             "dataset": args.dataset,
             "data_root": str(args.data_root),
@@ -1770,26 +1883,41 @@ def _run_config(
         ),
         "geometry_recomputed_per_layer": args.coordinate_updates,
         "attention": "factorized_moment",
-        "kernel_version": 3,
+        "kernel_version": (
+            4 if args.scalar_content_mode != "unit" or args.tensor_product_kernel else 3
+        ),
         "balance_cycles": 0 if args.no_key_balancing else 1,
         "key_balancing": not args.no_key_balancing,
         "alignment_linear_term": not args.no_alignment_linear_term,
         "alignment_constant_retained": True,
         "linear_kernel_init": args.linear_kernel_init,
+        "hidden_tensor_dim": args.hidden_tensor_dim,
+        "scalar_content_mode": args.scalar_content_mode,
+        "scalar_content_norm_bound": (
+            2.0 if args.scalar_content_mode == "bounded" else 1.0
+        ),
+        "tensor_product_kernel": args.tensor_product_kernel,
+        "tensor_product_kernel_formula": (
+            "eta*(1+frobenius_dot(unit_ball_2e_query,unit_ball_2e_key))"
+            if args.tensor_product_kernel
+            else "not_applicable"
+        ),
+        "tensor_kernel_init": args.tensor_kernel_init,
+        "tensor_kernel_max": args.tensor_kernel_max,
         "kernel_floor_mode": args.kernel_floor_mode,
         "kernel_scaling_formula_version": "positive_baseline_v1",
         "graph_size_scaled_positive_baseline": inverse_positive_baseline,
-        "kernel_formula": (
-            "a_dot_b + (c + beta*(1 + delta*t))/N_g + gamma*t^2"
-            if inverse_positive_baseline
-            else "a_dot_b + c + beta*(1 + delta*t) + gamma*t^2"
-        ),
+        "kernel_formula": _kernel_formula(args, inverse_positive_baseline),
         "graph_size_scaled_terms": (
             ["kernel_floor", "alignment_constant", "alignment_linear"]
             if inverse_positive_baseline
             else []
         ),
-        "graph_size_unscaled_terms": ["content", "alignment_quadratic"],
+        "graph_size_unscaled_terms": [
+            "content",
+            "alignment_quadratic",
+            *(["shifted_tensor_product"] if args.tensor_product_kernel else []),
+        ],
         "routing": args.routing,
         "global_transport_mode": args.global_transport_mode,
         "global_transport_executed": global_transport_executed,
@@ -1800,9 +1928,7 @@ def _run_config(
         "local_cutoff": args.local_cutoff,
         "num_rbf": args.num_rbf,
         "learn_local_radial_gate": args.learn_local_radial_gate,
-        "edge_conditioned_local_transport": (
-            args.edge_conditioned_local_transport
-        ),
+        "edge_conditioned_local_transport": (args.edge_conditioned_local_transport),
         "edge_conditioned_local_aggregation": (
             "cutoff_sum_over_sqrt_receiver_degree"
             if args.edge_conditioned_local_sqrt_degree

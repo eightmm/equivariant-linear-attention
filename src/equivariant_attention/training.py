@@ -38,6 +38,10 @@ def build_regression_model(
     use_edge_conditioned_local_transport: bool = False,
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False,
     hidden_tensor_dim: int = 0,
+    scalar_content_mode: str = "unit",
+    use_tensor_product_kernel: bool = False,
+    tensor_kernel_init: float = 0.05,
+    tensor_kernel_max: float = 1.0,
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -45,17 +49,12 @@ def build_regression_model(
         or hidden_tensor_dim < 0
     ):
         raise ValueError("hidden_tensor_dim must be a nonnegative integer")
-    tensor_irreps = (
-        f" + {hidden_tensor_dim}x2e"
-        if hidden_tensor_dim
-        else ""
-    )
+    tensor_irreps = f" + {hidden_tensor_dim}x2e" if hidden_tensor_dim else ""
     model = EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=node_dim,
             hidden_irreps=(
-                f"{hidden_dim}x0e + {max(1, hidden_dim // 16)}x1o"
-                f"{tensor_irreps}"
+                f"{hidden_dim}x0e + {max(1, hidden_dim // 16)}x1o{tensor_irreps}"
             ),
             output_irreps="1x0e",
             num_layers=num_layers,
@@ -75,6 +74,10 @@ def build_regression_model(
             normalize_edge_conditioned_local_by_sqrt_degree=(
                 normalize_edge_conditioned_local_by_sqrt_degree
             ),
+            scalar_content_mode=scalar_content_mode,
+            use_tensor_product_kernel=use_tensor_product_kernel,
+            tensor_kernel_init=tensor_kernel_init,
+            tensor_kernel_max=tensor_kernel_max,
             global_memory_count=global_memory_count,
             use_memory_interaction=use_memory_interaction,
             memory_assignment_temperature=memory_assignment_temperature,
@@ -91,9 +94,7 @@ def build_regression_model(
 
 def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
     readout_kwargs = (
-        {}
-        if batch.readout_mask is None
-        else {"readout_mask": batch.readout_mask}
+        {} if batch.readout_mask is None else {"readout_mask": batch.readout_mask}
     )
     if batch.edge_index is None:
         out = model(
@@ -136,9 +137,7 @@ def train_regression_step(
     loss.backward()
     if grad_clip is not None:
         pre_clip_norm = float(
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            .detach()
-            .cpu()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip).detach().cpu()
         )
     else:
         pre_clip_norm = _gradient_l2_norm(model.parameters())
@@ -174,9 +173,9 @@ def _update_gradient_monitor(
         clipped
     )
     monitor["pre_clip_grad_norm_last"] = pre_clip_norm
-    monitor["pre_clip_grad_norm_sum"] = float(
-        monitor.get("pre_clip_grad_norm_sum", 0.0)
-    ) + pre_clip_norm
+    monitor["pre_clip_grad_norm_sum"] = (
+        float(monitor.get("pre_clip_grad_norm_sum", 0.0)) + pre_clip_norm
+    )
     monitor["pre_clip_grad_norm_max"] = max(
         float(monitor.get("pre_clip_grad_norm_max", 0.0)), pre_clip_norm
     )

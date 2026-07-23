@@ -1,0 +1,719 @@
+{
+  "artifacts": [
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "sha256": "bdf9a14cda32103df4a311e109b67775e408596dfc8f6045d3be60c0e4602068"
+    },
+    {
+      "kind": "protocol-amendment",
+      "path": "initialization-preserving-followup.md",
+      "sha256": "9953250580a70924dbde4fd5b089541631863707276206e532315be45cbfffa0"
+    },
+    {
+      "kind": "exploratory-record",
+      "path": "exploratory-followup.md",
+      "sha256": "34852c49963c5f61ca5bf2bae77d9f5caffef1fe30f33390144ef5a8bcf97386"
+    },
+    {
+      "kind": "verification-result",
+      "path": "cuda-smoke.json",
+      "sha256": "ffe694f0231fcceee0f8e8aa7c1d3923cfcf6131922a8598b88e2a884f1dda14"
+    },
+    {
+      "kind": "verification-result",
+      "path": "cuda-smoke-v2.1.json",
+      "sha256": "9174f609fb221e9eb2c546077aeca4aa9ed42d167590e5341d1c7e79fb9d45f9"
+    },
+    {
+      "kind": "execution-plan",
+      "path": "qm9-study/plan.json",
+      "sha256": "ce66b3316a38fef7de59479e880128847113a8a86a620967ae142e3d7f41d5ba"
+    },
+    {
+      "kind": "execution-progress",
+      "path": "qm9-study/progress.json",
+      "sha256": "a2f5a0ec537241922adb0c42bf3bcd9afc68eed79da89cd7a38a4cd766fdbed9"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study/registered-runs/screen/screen-incumbent.json",
+      "sha256": "7f7243b4c5fd0b8f3dc8898c95b4d0492dddbf1366b5d778dbe80a9352af301b"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study/registered-runs/screen/screen-bounded.json",
+      "sha256": "8c7f104ae817c4195dcd7bdbd9f9e16112edf491475295daa3b1c8db616d23a0"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study/registered-runs/screen/screen-tensor.json",
+      "sha256": "78dd5abbba6674eed1c4616ce24a8348222b37059ff964121c1d9e982f50520a"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study/registered-runs/screen/screen-combined.json",
+      "sha256": "a2856ab03a6281905dc6d8e6a11f6ca4a7ce1afadc6a87c0345af6e2df7265d5"
+    },
+    {
+      "kind": "metrics-summary",
+      "path": "qm9-study/summary.json",
+      "sha256": "025f2ea30ea5f27523585ed152b0b02f2b6da450e4713eade37fdab796add470"
+    },
+    {
+      "kind": "exploratory-metrics",
+      "path": "qm9-persistent-only-exploratory.json",
+      "sha256": "590f3107662e064782f8c8386b5b653007cfdb8ee2601bcd2152276d514b685c"
+    },
+    {
+      "kind": "exploratory-metrics",
+      "path": "qm9-tensor-eta0001-exploratory.json",
+      "sha256": "91936dd75c206d90c23c9d2e49ec72674acde73b324436447e3931d34ef2e650"
+    },
+    {
+      "kind": "metrics",
+      "path": "pdbbind-study.json",
+      "sha256": "07e00e27c4093ef8e8e510df3ef821455fb3b962694839a052fedf11c49d0436"
+    },
+    {
+      "kind": "execution-plan",
+      "path": "qm9-study-v2.1/plan.json",
+      "sha256": "4ac7922993043e07eed366e8f63cbc9feab700a5a40baf5da4c5fb3f1579e614"
+    },
+    {
+      "kind": "execution-progress",
+      "path": "qm9-study-v2.1/progress.json",
+      "sha256": "a1072d257355d56c935065239c7dc4ce274cf197b4ee0aea1a57bc36c88bd1a0"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study-v2.1/registered-runs/screen/screen-incumbent.json",
+      "sha256": "166cfbaf790ec433202d35dfdd13c4b465f0f201029e55d8ec301f2c625ef40c"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study-v2.1/registered-runs/screen/screen-bounded.json",
+      "sha256": "18a3a6355b37aa49f93cf461314438d9d4db18307cefd5c0298435af50ca236e"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study-v2.1/registered-runs/screen/screen-tensor.json",
+      "sha256": "5695c5b08d0aac3625cb106f15f4f6159b04f2e7d631fb43d9ba38a1894c2486"
+    },
+    {
+      "kind": "metrics",
+      "path": "qm9-study-v2.1/registered-runs/screen/screen-combined.json",
+      "sha256": "e49014689c62f14046d4683eedc2db0b03fcefee6e1f944abd4c6835f65aa327"
+    },
+    {
+      "kind": "metrics-summary",
+      "path": "qm9-study-v2.1/summary.json",
+      "sha256": "14455aacfb7156b1b62ad70de644463b24dab97f52ce3117da455c047dbfad4a"
+    },
+    {
+      "kind": "metrics",
+      "path": "pdbbind-study-v2.1.json",
+      "sha256": "6b8fe62f49245a3c0728957ba61ca64de2638ae6ee1da5fe6e6248b42cf2008a"
+    },
+    {
+      "kind": "analysis",
+      "path": "results-summary.json",
+      "sha256": "29a566a2ddce653a0901be0c1d0790944d22efc295fa55671c6dc951d808c683"
+    },
+    {
+      "kind": "claim-register",
+      "path": "claim-register.json",
+      "sha256": "efa38d3443742b41701abad681fc5fe7de404b0e8a5a4b71964faf6cb3471a02"
+    },
+    {
+      "kind": "evidence-graph",
+      "path": "evidence-graph.json",
+      "sha256": "4639644825409da4b6cf415d1e51c9a3a4fb69424566d65b5951c194d2ca7fa0"
+    },
+    {
+      "kind": "environment",
+      "path": "compute-environment.json",
+      "sha256": "7f672cbee61ce285c2453f8d1c136a1e58c33a5d304679df658e1bf9861b735b"
+    },
+    {
+      "kind": "execution-log",
+      "path": "execution-log.json",
+      "sha256": "17f591333c52b2542f4cd93bdc9f1f4043875d29d77c0d4ee48da53fdb101f13"
+    },
+    {
+      "kind": "reproduction-command-record",
+      "path": "reproduction-commands.json",
+      "sha256": "952f1e3a06ed7f95c9482b8b307532d45bf83b95a13488947ba8f8c0755a31e7"
+    },
+    {
+      "kind": "reference-use-ledger",
+      "path": "reference-use-ledger.json",
+      "sha256": "7b319204ba39168eaca9185854a98904ba6ecef39129f80587389b1a2b6dd5de"
+    },
+    {
+      "kind": "verification-summary",
+      "path": "verification-summary.json",
+      "sha256": "f7fdebd529d3322184f77397733b97735a707cfba2a969adb81d629702b365aa"
+    },
+    {
+      "kind": "report",
+      "path": "report.md",
+      "sha256": "7d1ce14c9c9d04167786f4d331954d85f8ff1fe0afbb98f4f154f8de6fa758fd"
+    },
+    {
+      "kind": "independent-review-task",
+      "path": "review-task.json",
+      "sha256": "d38012ed6363b0cc5b52c08a1fc396da6d3804faa97e0246a1a727482a5dfc97"
+    },
+    {
+      "kind": "independent-review-response",
+      "path": "reviewer-response.json",
+      "sha256": "3fa6f28b65d45c1bf1d4fadc44513c69bb9ee2cf6d014b661a98de998e742d63"
+    },
+    {
+      "kind": "independent-review-receipt",
+      "path": "review-receipt-initial.json",
+      "sha256": "3f0b8c0bd071f7d798e456252129e217a971693c7d6460f01b3e56f59909e94b"
+    },
+    {
+      "kind": "review-finding",
+      "path": "artifact-validation-finding.json",
+      "sha256": "f305e34a49dace8b735b3c81b3609d57f1d4d735ae0a4cea42d24bdcfadeaac6"
+    }
+  ],
+  "claims": [
+    {
+      "dependencies": [],
+      "evidence_refs": [
+        "scope.md",
+        "initialization-preserving-followup.md",
+        "verification-summary.json"
+      ],
+      "falsifier": "any disabled-path state key, tensor value, output, or shared parameter initialization differs under the registered seed and construction path",
+      "id": "C1",
+      "next_action": "keep both options disabled by default",
+      "permitted_inference": "software compatibility for the tested construction path and public configuration",
+      "required_evidence": [
+        "exact state/output compatibility tests",
+        "common-initialization pairing test"
+      ],
+      "required_support": 2,
+      "status": "supported",
+      "text": "Disabling bounded scalar content and the shifted persistent-2e kernel preserves the incumbent public behavior, state schema, and common initialization.",
+      "uncertainty": "common-initialization identity is established for CPU construction followed by device transfer, not torch.set_default_device(cuda)"
+    },
+    {
+      "dependencies": [
+        "C1"
+      ],
+      "evidence_refs": [
+        "scope.md",
+        "verification-summary.json",
+        "cuda-smoke-v2.1.json"
+      ],
+      "falsifier": "negative or nonfinite kernel values, a dense/factorized mismatch, or allocation of an N-by-N attention tensor",
+      "id": "C2",
+      "next_action": "retain as an experimental opt-in mechanism",
+      "permitted_inference": "implemented fixed-width mathematical kernel and tested numerical ranges",
+      "required_evidence": [
+        "algebraic unit tests",
+        "dense/factorized reference",
+        "finite CUDA execution"
+      ],
+      "required_support": 2,
+      "status": "supported",
+      "text": "The bounded positive feature and shifted persistent-2e kernel are finite, nonnegative, and agree with their explicit dense algebra while retaining exact fixed-width O(N) factorization.",
+      "uncertainty": "fixed-degree moment factorization is not a softmax approximation or universality result"
+    },
+    {
+      "dependencies": [
+        "C1",
+        "C2"
+      ],
+      "evidence_refs": [
+        "verification-summary.json",
+        "cuda-smoke-v2.1.json"
+      ],
+      "falsifier": "a registered transform or within-graph permutation exceeds the frozen tolerance, or another graph changes under batch composition",
+      "id": "C3",
+      "next_action": "preserve the symmetry tests on future kernel changes",
+      "permitted_inference": "tested public scalar output and registered equivariant intermediate/output paths",
+      "required_evidence": [
+        "symmetry/property tests",
+        "finite strict-CUDA smoke"
+      ],
+      "required_support": 2,
+      "status": "supported",
+      "text": "The opt-in architecture preserves the tested O(3), reflection, translation, permutation, and batch-isolation contracts.",
+      "uncertainty": "these tests do not establish chirality sensitivity, force consistency, or physical dynamics"
+    },
+    {
+      "dependencies": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "evidence_refs": [
+        "qm9-study/summary.json",
+        "qm9-study-v2.1/summary.json",
+        "results-summary.json"
+      ],
+      "falsifier": "no candidate reaches the frozen improvement threshold",
+      "id": "C4",
+      "next_action": "do not promote either option or change defaults",
+      "permitted_inference": "single-seed candidate-admission decision only",
+      "required_evidence": [
+        "frozen matched QM9 screen"
+      ],
+      "required_support": 1,
+      "status": "unsupported",
+      "text": "At least one architecture-v2 candidate improves the strict seed-42 500-update QM9 validation screen by at least 0.010 eV without exceeding the 0.020 eV regression guard.",
+      "uncertainty": "the original tensor arms had an initialization confound; the separate v2.1 follow-up repaired it and still admitted no candidate"
+    },
+    {
+      "dependencies": [
+        "C4"
+      ],
+      "evidence_refs": [
+        "qm9-study-v2.1/summary.json",
+        "results-summary.json"
+      ],
+      "falsifier": "C4 fails or any frozen confirmation threshold fails",
+      "id": "C5",
+      "next_action": "no confirmation budget should be spent on this package",
+      "permitted_inference": "five-seed QM9 confirmation if and only if C4 admits a candidate",
+      "required_evidence": [
+        "conditional five-seed confirmation"
+      ],
+      "required_support": 1,
+      "status": "unavailable",
+      "text": "An admitted candidate improves five-seed 2,000-update QM9 mean validation MAE by at least 0.020 eV, wins at least four pairs, and has worst regression no larger than 0.020 eV; EGNN competitiveness requires a separate lower-mean and three-win gate.",
+      "uncertainty": "confirmation and private EGNN comparison were correctly not run after the screen failed"
+    },
+    {
+      "dependencies": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "evidence_refs": [
+        "pdbbind-study.json",
+        "pdbbind-study-v2.1.json",
+        "results-summary.json"
+      ],
+      "falsifier": "the candidate does not reach 0.10 pK within 3,000 updates",
+      "id": "C6",
+      "next_action": "do not promote the candidate; redesign before another expensive confirmation",
+      "permitted_inference": "train-only capacity on the exact cached 16-complex subset",
+      "required_evidence": [
+        "frozen train-only capacity run"
+      ],
+      "required_support": 1,
+      "status": "unsupported",
+      "text": "The combined candidate reaches train MAE at most 0.10 pK within 3,000 updates on frozen ATOM3D-LBA train rows 0-15.",
+      "uncertainty": "sixteen train rows cannot support a PDBBind generalization, ranking, docking, or external-affinity claim"
+    }
+  ],
+  "created_at": "2026-07-23T11:27:41Z",
+  "decision_contract": {
+    "code": [
+      {
+        "path": "PROJECT.md",
+        "role": "project contract",
+        "sha256": "1d9269767f4739a39a8bf073c070f23eaa5b876d1f036743c34ba15a5808fba2"
+      },
+      {
+        "path": "docs/LAYER_MATH.md",
+        "role": "mathematical specification",
+        "sha256": "76fcb1959c2bcbce38f9e38edda3aca5863b0eedf5a32f762aff58c319b1e4be"
+      },
+      {
+        "path": "src/equivariant_attention/moment.py",
+        "role": "architecture implementation",
+        "sha256": "6f5473c1c612167bf1004a11437e1f14c4610469334551920e85edab52f6271d"
+      },
+      {
+        "path": "src/equivariant_attention/training.py",
+        "role": "model construction",
+        "sha256": "799d5e7fdd5cf045aa1d578951bb2fcff23c2518d1b395613cef737307630303"
+      },
+      {
+        "path": "scripts/train_compare.py",
+        "role": "matched training CLI",
+        "sha256": "324e80b61a330d0da5c9721ac3d04cd5377802aa6aa7b57a0042ce5b7c2c3ed1"
+      },
+      {
+        "path": "scripts/run_architecture_v2_qm9.py",
+        "role": "QM9 staged runner",
+        "sha256": "9b56a2e709f04045dc7831f0a6019cf4c729814586313fdd3ebf794ea3a24d42"
+      },
+      {
+        "path": "scripts/run_architecture_v2_pdbbind.py",
+        "role": "ATOM3D-LBA train-only runner",
+        "sha256": "7078883373d323016dfacaa4b0daf96ab85f7df98ed2650ee815f24d5899f61a"
+      },
+      {
+        "path": "tests/test_architecture_v2.py",
+        "role": "mathematical and symmetry contracts",
+        "sha256": "1215d2d8a5775dad495382cf78dc4e631ec29eb589551e20f479714a2df5047c"
+      },
+      {
+        "path": "tests/test_run_architecture_v2_qm9.py",
+        "role": "QM9 runner contracts",
+        "sha256": "bc68d6fb73292af14967240ebafeaf8f0cff0fc191bba2aa886f439688ec6970"
+      },
+      {
+        "path": "tests/test_architecture_v2_pdbbind.py",
+        "role": "ATOM3D-LBA runner contracts",
+        "sha256": "8224b516310f3964ac1a12151609dbba1c1c5c26aa59488241102718bbaa867d"
+      },
+      {
+        "path": "tests/test_train_compare.py",
+        "role": "CLI and diagnostic contracts",
+        "sha256": "e4df29d8f533e8e7c420aeec8a5c45905617c4edd12ad1b3ac0d691fe3fee61f"
+      }
+    ],
+    "environment": {
+      "base_git_sha": "ba0b38c0cd9e8ea3566fbf91bd9d33c86c6c623a",
+      "determinism": "strict",
+      "hardware": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+      "record": "compute-environment.json",
+      "reproducibility_level": "rerunnable",
+      "runtime": "Python 3.12.12; PyTorch 2.12.1+cu130; CUDA 13.0"
+    },
+    "executions": [
+      {
+        "command_ref": "execution-log.json",
+        "exit_code": 0,
+        "id": "E-QM9-V2",
+        "output": "qm9-study/summary.json"
+      },
+      {
+        "command_ref": "execution-log.json",
+        "exit_code": 0,
+        "id": "E-PDB-V2",
+        "output": "pdbbind-study.json"
+      },
+      {
+        "command_ref": "execution-log.json",
+        "exit_code": 0,
+        "id": "E-QM9-V2-1",
+        "output": "qm9-study-v2.1/summary.json"
+      },
+      {
+        "command_ref": "execution-log.json",
+        "exit_code": 0,
+        "id": "E-PDB-V2-1",
+        "output": "pdbbind-study-v2.1.json"
+      },
+      {
+        "command_ref": "execution-log.json",
+        "exit_code": 0,
+        "id": "E-FAST",
+        "output": "verification-summary.json"
+      }
+    ],
+    "inputs": [
+      {
+        "id": "I-QM9-PROCESSED",
+        "path": "data/qm9/processed/data_v3.pt",
+        "role": "model input",
+        "sha256": "9254af077d7bc651631bb56a3a689fb41004731b413bdd0ec8c6efa318229f83",
+        "source": "cached PyG QM9"
+      },
+      {
+        "id": "I-QM9-SDF",
+        "path": "data/qm9/raw/gdb9.sdf",
+        "role": "dataset identity",
+        "sha256": "98c4e97d50ac549b8c9f0b2114b348a9a944718e17e50d9a724b729f1deaa28e",
+        "source": "cached QM9 raw structure archive"
+      },
+      {
+        "id": "I-QM9-TARGETS",
+        "path": "data/qm9/raw/gdb9.sdf.csv",
+        "role": "dataset identity",
+        "sha256": "73a67793e3cfa9660f001278bd019c143f57e4785db537a01811cf2ce72aa7eb",
+        "source": "cached QM9 target table"
+      },
+      {
+        "id": "I-ATOM3D-LBA",
+        "path": "data/atom3d_lba",
+        "release": "f93dd2d150a47c270f624620f84e07451a158705",
+        "role": "train-only capacity input",
+        "sample_identity_sha256": "11b2858ef499b6748a97b068d42d5c41f8b081a5e2d86dfaac5fed1eb0cab6c1",
+        "selection": "train rows 0-15",
+        "source": "cached ATOM3D-LBA train split"
+      }
+    ],
+    "plan": [
+      {
+        "done_criteria": "A run-local scope records all arms, falsifiers, non-goals, and test-access rules.",
+        "id": "P1",
+        "status": "completed",
+        "text": "Freeze architecture, claims, data boundaries, thresholds, and compute budget."
+      },
+      {
+        "done_criteria": "Tests fail for the missing mechanism and cover the public mathematical boundary.",
+        "id": "P2",
+        "status": "completed",
+        "text": "Write narrow RED algebra, compatibility, symmetry, and integration contracts."
+      },
+      {
+        "done_criteria": "The default remains unchanged and the candidate is wired through public construction and the matched runner.",
+        "id": "P3",
+        "status": "completed",
+        "text": "Implement bounded scalar content and shifted persistent-2e attention as opt-in paths."
+      },
+      {
+        "done_criteria": "All registered software checks pass without nonfinite state.",
+        "id": "P4",
+        "status": "completed",
+        "text": "Run focused, full fast, and strict-CUDA finite-gradient gates."
+      },
+      {
+        "done_criteria": "The screen completes with hashes and no test labels; a failed screen stops confirmation.",
+        "id": "P5",
+        "status": "completed",
+        "text": "Run the frozen staged QM9 screen and only an admitted confirmation."
+      },
+      {
+        "done_criteria": "Incumbent, combined candidate, and private EGNN complete or record a bounded terminal failure without validation/test access.",
+        "id": "P6",
+        "status": "completed",
+        "text": "Run the frozen ATOM3D-LBA train-only capacity comparison."
+      },
+      {
+        "done_criteria": "A hash-valid bundle exposes both original and initialization-repaired null results without pooling them.",
+        "id": "P7",
+        "status": "completed",
+        "text": "Package claims, counterevidence, source lineage, commands, environment, and public documentation."
+      }
+    ],
+    "question": "Can bounded positive scalar magnitude and a shifted persistent-2e Frobenius feature improve real-data selectivity while preserving exact fixed-width O(N), O(3), positivity, permutation, batch-isolation, and disabled-path compatibility contracts?"
+  },
+  "evidence_boundary": "This packet exposes recorded run evidence while excluding producer-only rationale fields. It does not authenticate the reviewer, guarantee true independence, or include unrecorded evidence.",
+  "evidence_graph": {
+    "edges": [
+      {
+        "relation": "supports",
+        "source": "A-scope",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "A-init-repair",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "A-verification",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "A-verification",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "A-cuda-smoke",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "A-verification",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "A-cuda-smoke",
+        "target": "C3"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-qm9-v2",
+        "target": "C4"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-qm9-v2-1",
+        "target": "C4"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-results",
+        "target": "C4"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-qm9-v2-1",
+        "target": "C5"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-pdb-v2",
+        "target": "C6"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-pdb-v2-1",
+        "target": "C6"
+      },
+      {
+        "relation": "contradicts",
+        "source": "A-results",
+        "target": "C6"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C2",
+        "target": "C1"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C3",
+        "target": "C2"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C4",
+        "target": "C3"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C5",
+        "target": "C4"
+      },
+      {
+        "relation": "depends_on",
+        "source": "C6",
+        "target": "C3"
+      },
+      {
+        "relation": "derived_from",
+        "source": "A-qm9-v2",
+        "target": "A-init-repair"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "C1",
+        "type": "claim"
+      },
+      {
+        "id": "C2",
+        "type": "claim"
+      },
+      {
+        "id": "C3",
+        "type": "claim"
+      },
+      {
+        "id": "C4",
+        "type": "claim"
+      },
+      {
+        "id": "C5",
+        "type": "claim"
+      },
+      {
+        "id": "C6",
+        "type": "claim"
+      },
+      {
+        "id": "A-scope",
+        "path": "scope.md",
+        "type": "artifact"
+      },
+      {
+        "id": "A-init-repair",
+        "path": "initialization-preserving-followup.md",
+        "type": "artifact"
+      },
+      {
+        "id": "A-verification",
+        "path": "verification-summary.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-cuda-smoke",
+        "path": "cuda-smoke-v2.1.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-qm9-v2",
+        "path": "qm9-study/summary.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-qm9-v2-1",
+        "path": "qm9-study-v2.1/summary.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-pdb-v2",
+        "path": "pdbbind-study.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-pdb-v2-1",
+        "path": "pdbbind-study-v2.1.json",
+        "type": "artifact"
+      },
+      {
+        "id": "A-results",
+        "path": "results-summary.json",
+        "type": "artifact"
+      }
+    ],
+    "schema_version": 1
+  },
+  "fingerprint": "b26867c59a334618cf305e804c6b7b150964b329400162fc955915ef39b9142b",
+  "independent_required": true,
+  "lane_receipts": [],
+  "material_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "model_receipts": [],
+  "producer_context_excluded": [
+    "chain_of_thought",
+    "hidden_answer",
+    "intended_conclusion",
+    "private_scratchpad",
+    "producer_rationale",
+    "suspected_bug"
+  ],
+  "query_records": [],
+  "response_contract": {
+    "findings": "stable ID, severity, code, message, evidence, required action, and resolution status",
+    "independent": "boolean attestation",
+    "limitations": "required",
+    "review_modes": [
+      "method",
+      "record"
+    ],
+    "reviewed_artifacts": "path and SHA-256 pairs from this packet",
+    "reviewed_claim_ids": "all material claims unless an explicit blocked reason is supplied",
+    "reviewer": "required"
+  },
+  "review_modes": [
+    "method",
+    "record"
+  ],
+  "review_questions": [
+    "Does the C2 required_support=2 repair correctly match two direct supporting artifact edges without weakening the mathematical evidence requirement?",
+    "Is ARTIFACT-001 accurately preserved and resolved, with no changed scientific result or hidden open major finding?",
+    "Do C1-C6 and the report remain valid under the updated claim-register and manifest hashes?"
+  ],
+  "review_task_id": "review-task-b26867c59a334618cf30",
+  "schema_version": 1,
+  "source_manifest_path": "/home/jaemin/project/layer/equivariant-attention/artifacts/architecture-v2-positive-tensor-20260723/manifest.json",
+  "source_manifest_sha256": "841b8f869671e5735dad6d14d75b5d44157eb38147aced7c64a8bf4e5fca43d6",
+  "source_run_id": "architecture-v2-positive-tensor-20260723",
+  "study_table": null
+}

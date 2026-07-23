@@ -14,6 +14,7 @@ from .irreps import CartesianIrreps
 _MEMORY_ROUTER_DIM = 8
 _MEMORY_ROUTER_LOGIT_SCALE = 4.0
 _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
+_SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 
 
 def routing_head_counts(
@@ -82,6 +83,10 @@ class EquivariantAttentionConfig:
     pairwise_residual_scale_init: float = 0.1
     use_edge_conditioned_local_transport: bool = False
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False
+    scalar_content_mode: str = "unit"
+    use_tensor_product_kernel: bool = False
+    tensor_kernel_init: float = 0.05
+    tensor_kernel_max: float = 1.0
 
 
 class EquivariantAttention(nn.Module):
@@ -154,6 +159,10 @@ class EquivariantAttention(nn.Module):
                     normalize_edge_conditioned_local_by_sqrt_degree=(
                         config.normalize_edge_conditioned_local_by_sqrt_degree
                     ),
+                    scalar_content_mode=config.scalar_content_mode,
+                    use_tensor_product_kernel=config.use_tensor_product_kernel,
+                    tensor_kernel_init=config.tensor_kernel_init,
+                    tensor_kernel_max=config.tensor_kernel_max,
                     global_memory_count=config.global_memory_count,
                     use_memory_interaction=config.use_memory_interaction,
                     memory_assignment_temperature=config.memory_assignment_temperature,
@@ -294,7 +303,9 @@ class EquivariantAttention(nn.Module):
                 )
             if layer.has_active_global_transport and not global_geometry_injected:
                 if normalized_pos is None or global_scalar_input is None:
-                    raise RuntimeError("active global transport requires global geometry")
+                    raise RuntimeError(
+                        "active global transport requires global geometry"
+                    )
                 scalars = scalars + self.global_scalar_in(global_scalar_input)
                 vector_gate = torch.tanh(self.vector_in(scalars)).unsqueeze(-1)
                 geometry_vector = vector_gate.to(
@@ -340,22 +351,14 @@ class EquivariantAttention(nn.Module):
         node_scalars = self.scalar_out(self.scalar_out_norm(scalars))
         node_vectors = self.vector_out(vectors)
         tensor_state = (
-            persistent_tensor
-            if self.hidden_irreps.tensors
-            else transient_tensor
+            persistent_tensor if self.hidden_irreps.tensors else transient_tensor
         )
         if tensor_state is None:
             raise RuntimeError("tensor output state is missing")
         node_tensors = _st_features_to_matrix(self.tensor_out(tensor_state))
-        pooled_scalars = (
-            node_scalars if pool_mask is None else node_scalars[pool_mask]
-        )
-        pooled_vectors = (
-            node_vectors if pool_mask is None else node_vectors[pool_mask]
-        )
-        pooled_tensors = (
-            node_tensors if pool_mask is None else node_tensors[pool_mask]
-        )
+        pooled_scalars = node_scalars if pool_mask is None else node_scalars[pool_mask]
+        pooled_vectors = node_vectors if pool_mask is None else node_vectors[pool_mask]
+        pooled_tensors = node_tensors if pool_mask is None else node_tensors[pool_mask]
         output = {
             "node_scalars": node_scalars,
             "node_vectors": node_vectors,
@@ -441,6 +444,10 @@ class _EquivariantMomentLayer(nn.Module):
         learn_local_radial_gate: bool,
         use_edge_conditioned_local_transport: bool,
         normalize_edge_conditioned_local_by_sqrt_degree: bool,
+        scalar_content_mode: str,
+        use_tensor_product_kernel: bool,
+        tensor_kernel_init: float,
+        tensor_kernel_max: float,
         global_memory_count: int,
         use_memory_interaction: bool,
         memory_assignment_temperature: float,
@@ -487,6 +494,8 @@ class _EquivariantMomentLayer(nn.Module):
         self.memory_assignment_scale = memory_assignment_scale
         self.memory_interaction_cutoff = memory_interaction_cutoff
         self.use_radial_trace = use_radial_trace
+        self.scalar_content_mode = scalar_content_mode
+        self.tensor_kernel_max = tensor_kernel_max
         self.edge_conditioned_local = (
             _EdgeConditionedLocalTransport(
                 scalars=scalars,
@@ -510,6 +519,21 @@ class _EquivariantMomentLayer(nn.Module):
         self.value_vector = _ChannelMix(vectors, num_heads)
         self.query_vector_gate = nn.Linear(scalars, num_heads)
         self.key_vector_gate = nn.Linear(scalars, num_heads)
+        self.tensor_kernel_query = None
+        self.tensor_kernel_key = None
+        self.raw_tensor_kernel = None
+        if use_tensor_product_kernel:
+            # Candidate-only projections must not shift any incumbent
+            # initialization under a matched model seed.
+            with torch.random.fork_rng(devices=[]):
+                self.tensor_kernel_query = _ChannelMix(tensors, num_heads)
+                self.tensor_kernel_key = _ChannelMix(tensors, num_heads)
+                self.raw_tensor_kernel = nn.Parameter(
+                    torch.full(
+                        (num_heads,),
+                        _inverse_sigmoid(tensor_kernel_init / tensor_kernel_max),
+                    )
+                )
         self.relative_gate = nn.Linear(scalars, num_heads)
         self.tensor_gate = nn.Linear(scalars, num_heads)
         self.radial_trace_gate = nn.Linear(scalars, num_heads)
@@ -542,13 +566,9 @@ class _EquivariantMomentLayer(nn.Module):
         self.persistent_tensor_from_head = (
             _ChannelMix(num_heads, tensors) if tensors else None
         )
-        self.persistent_tensor_gate = (
-            nn.Linear(scalars, tensors) if tensors else None
-        )
+        self.persistent_tensor_gate = nn.Linear(scalars, tensors) if tensors else None
         self.persistent_tensor_residual_scale = (
-            nn.Parameter(torch.tensor(float(residual_scale_init)))
-            if tensors
-            else None
+            nn.Parameter(torch.tensor(float(residual_scale_init))) if tensors else None
         )
         invariant_dim = scalars + 6 * num_heads + tensors
         self.scalar_update_norm = nn.LayerNorm(invariant_dim)
@@ -582,9 +602,7 @@ class _EquivariantMomentLayer(nn.Module):
             torch.tensor(float(residual_scale_init))
         )
         self.persistent_tensor_ffn_residual_scale = (
-            nn.Parameter(torch.tensor(float(residual_scale_init)))
-            if tensors
-            else None
+            nn.Parameter(torch.tensor(float(residual_scale_init))) if tensors else None
         )
         # Allocated for every route and M so comparisons retain one state schema.
         self.memory_router_in = nn.Linear(self.head_dim, _MEMORY_ROUTER_DIM)
@@ -615,9 +633,7 @@ class _EquivariantMomentLayer(nn.Module):
                     f"({scalars.shape[0]}, {self.tensors}, 5)"
                 )
         elif persistent_tensor is not None:
-            raise ValueError(
-                "persistent_tensor requires positive hidden 2e channels"
-            )
+            raise ValueError("persistent_tensor requires positive hidden 2e channels")
         else:
             persistent_tensor = raw_pos.new_zeros((scalars.shape[0], 0, 5))
         if self.local_head_count == 0 and self.global_transport_mode == "none":
@@ -642,14 +658,33 @@ class _EquivariantMomentLayer(nn.Module):
         raw_key_scalar = self.key_scalar(s_norm).reshape(
             n_nodes, self.num_heads, self.head_dim
         )
-        q0 = _normalize_positive_features(
-            F.elu(raw_query_scalar) + 1.0,
+        query_content = _positive_scalar_features(
+            raw_query_scalar,
             self.eps,
+            mode=self.scalar_content_mode,
         )
-        k0 = _normalize_positive_features(
-            F.elu(raw_key_scalar) + 1.0,
+        key_content = _positive_scalar_features(
+            raw_key_scalar,
             self.eps,
+            mode=self.scalar_content_mode,
         )
+        q0 = query_content
+        k0 = key_content
+        if self.tensor_kernel_query is not None:
+            if self.tensor_kernel_key is None or self.raw_tensor_kernel is None:
+                raise RuntimeError("tensor-product kernel modules are incomplete")
+            tensor_kernel_scale = _bounded_kernel_scale(
+                self.raw_tensor_kernel,
+                self.tensor_kernel_max,
+            )
+            tensor_query_features, tensor_key_features = _tensor_product_features(
+                self.tensor_kernel_query(persistent_tensor),
+                self.tensor_kernel_key(persistent_tensor),
+                tensor_kernel_scale,
+                eps=self.eps,
+            )
+            q0 = torch.cat([q0, tensor_query_features], dim=-1)
+            k0 = torch.cat([k0, tensor_key_features], dim=-1)
         q1 = _unit_ball(
             self.query_vector(bounded_vectors)
             * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1),
@@ -774,7 +809,7 @@ class _EquivariantMomentLayer(nn.Module):
                 if self.use_memory_interaction and self.global_memory_count > 1:
                     memory_router_latent = torch.tanh(
                         self.memory_router_out(
-                            F.silu(self.memory_router_in(k0[:, global_heads]))
+                            F.silu(self.memory_router_in(key_content[:, global_heads]))
                         )
                     )
                     router_norm = _stable_vector_norm(memory_router_latent)
@@ -847,9 +882,7 @@ class _EquivariantMomentLayer(nn.Module):
             radial_trace,
         ]
         if self.tensors:
-            invariant_parts.append(
-                _st_frobenius_square(bounded_persistent_tensor)
-            )
+            invariant_parts.append(_st_frobenius_square(bounded_persistent_tensor))
         scalar_invariants = torch.cat(invariant_parts, dim=-1)
         normalized_invariants = _stable_layer_norm(
             self.scalar_update_norm, scalar_invariants
@@ -870,8 +903,7 @@ class _EquivariantMomentLayer(nn.Module):
                 self.persistent_tensor_gate(s_norm)
             ).to(dtype=tensor_delta.dtype).unsqueeze(-1)
             persistent_tensor = persistent_tensor + (
-                self.persistent_tensor_residual_scale
-                * _bounded_st_tensor(tensor_delta)
+                self.persistent_tensor_residual_scale * _bounded_st_tensor(tensor_delta)
             )
         scalars, vectors, persistent_tensor = self._apply_ffn(
             scalars,
@@ -909,9 +941,9 @@ class _EquivariantMomentLayer(nn.Module):
         ffn_parts = [ffn_scalars, ffn_vectors.square().sum(dim=-1)]
         if self.tensors:
             ffn_parts.append(
-                _st_frobenius_square(
-                    _bounded_st_tensor(persistent_tensor)
-                ).to(dtype=scalars.dtype)
+                _st_frobenius_square(_bounded_st_tensor(persistent_tensor)).to(
+                    dtype=scalars.dtype
+                )
             )
         ffn_invariants = torch.cat(ffn_parts, dim=-1)
         ffn_content, ffn_gate = self.ffn_in(ffn_invariants).chunk(2, dim=-1)
@@ -986,15 +1018,11 @@ class _EdgeConditionedLocalTransport(nn.Module):
             dim=-1,
         )
         dtype = _moment_dtype(scalars, vectors, displacement)
-        cutoff = _cosine_of_squared_distance_cutoff(
-            squared_distance.to(dtype=dtype)
-        )
+        cutoff = _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
         weights = cutoff.unsqueeze(-1).expand(-1, self.num_heads)
         scalar_message = _edge_sum(
             weights,
-            scalar_edge.to(dtype=dtype).reshape(
-                -1, self.num_heads, self.head_dim
-            ),
+            scalar_edge.to(dtype=dtype).reshape(-1, self.num_heads, self.head_dim),
             receiver,
             num_nodes,
         )
@@ -1015,9 +1043,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
         tensor = _edge_sum(
             weights,
             torch.tanh(tensor_gate).to(dtype=dtype).unsqueeze(-1)
-            * _symmetric_traceless_features(
-                displacement.to(dtype=dtype)
-            ).unsqueeze(1),
+            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1),
             receiver,
             num_nodes,
         )
@@ -1072,8 +1098,8 @@ class _LocalPairwiseContent(nn.Module):
         rbf = rbf[nonself]
 
         head_count = query_scalar.shape[1]
-        rbf_features = rbf.to(dtype=query_scalar.dtype).unsqueeze(1).expand(
-            -1, head_count, -1
+        rbf_features = (
+            rbf.to(dtype=query_scalar.dtype).unsqueeze(1).expand(-1, head_count, -1)
         )
         edge_features = torch.cat(
             [query_scalar[receiver], key_scalar[sender], rbf_features], dim=-1
@@ -1083,9 +1109,9 @@ class _LocalPairwiseContent(nn.Module):
         cutoff_weight = _cosine_of_squared_distance_cutoff(
             squared_distance.to(dtype=reduction_dtype)
         )
-        weighted_content = edge_content.to(dtype=reduction_dtype) * cutoff_weight[
-            :, None, None
-        ]
+        weighted_content = (
+            edge_content.to(dtype=reduction_dtype) * cutoff_weight[:, None, None]
+        )
 
         aggregated = weighted_content.new_zeros(
             (num_nodes, head_count, query_scalar.shape[-1])
@@ -1634,9 +1660,10 @@ def _batched_complete_graph_edges(
     receiver = sorted_nodes[receiver_positions]
 
     receiver_starts = torch.cumsum(counts_per_receiver, dim=0) - counts_per_receiver
-    sender_local = torch.arange(total_edges, device=batch.device) - receiver_starts[
-        receiver_positions
-    ]
+    sender_local = (
+        torch.arange(total_edges, device=batch.device)
+        - receiver_starts[receiver_positions]
+    )
     graph_starts = torch.cumsum(graph_counts, dim=0) - graph_counts
     sender_positions = graph_starts[batch[receiver]] + sender_local
     sender = sorted_nodes[sender_positions]
@@ -1697,9 +1724,7 @@ def _quadratic_gaussian_spatial_features(
         ],
         dim=-1,
     )
-    gaussian = torch.exp(
-        -pos.square().sum(dim=-1, keepdim=True) * scales[None, :]
-    )
+    gaussian = torch.exp(-pos.square().sum(dim=-1, keepdim=True) * scales[None, :])
     return gaussian.unsqueeze(-1) * polynomial
 
 
@@ -2344,7 +2369,10 @@ def _mix_memory_coupling(
     value = float(identity_mix)
     if not isfinite(value) or not 0.0 <= value <= 1.0:
         raise ValueError("identity_mix must be finite and lie in [0, 1]")
-    if radial_coupling.ndim < 2 or radial_coupling.shape[-1] != radial_coupling.shape[-2]:
+    if (
+        radial_coupling.ndim < 2
+        or radial_coupling.shape[-1] != radial_coupling.shape[-2]
+    ):
         raise ValueError("radial_coupling must contain square memory matrices")
     if value == 0.0:
         return radial_coupling
@@ -2639,8 +2667,7 @@ def _structured_numerator(
     )
     return (
         content
-        + (pair_floor + pair_alignment_scale).unsqueeze(-1)
-        * node_constant_summary
+        + (pair_floor + pair_alignment_scale).unsqueeze(-1) * node_constant_summary
         + pair_alignment_dot_scale.unsqueeze(-1) * linear
         + kernel_scale[None, :, None] * quadratic
     )
@@ -2806,8 +2833,7 @@ def _bounded_st_tensor(value: torch.Tensor) -> torch.Tensor:
         raise ValueError("symmetric-traceless features must have final dimension 5")
     output_dtype = value.dtype
     reduced = value.to(dtype=_moment_dtype(value))
-    rms = torch.sqrt(_st_frobenius_square(reduced) / 5.0)
-    scale = torch.hypot(rms, torch.ones_like(rms))
+    scale = torch.sqrt(1.0 + _st_frobenius_square(reduced) / 5.0)
     return (reduced / scale.unsqueeze(-1)).to(dtype=output_dtype)
 
 
@@ -2847,12 +2873,15 @@ def _bounded_centered_displacement(
     graph_counts: torch.Tensor,
     maximum: float,
 ) -> torch.Tensor:
-    centered = displacement - _scatter_mean(
-        displacement,
-        batch,
-        num_graphs,
-        graph_counts,
-    )[batch]
+    centered = (
+        displacement
+        - _scatter_mean(
+            displacement,
+            batch,
+            num_graphs,
+            graph_counts,
+        )[batch]
+    )
     norm = _stable_vector_norm(centered)
     graph_maximum = _segment_amax(norm, batch, num_graphs)
     limit = centered.new_full((), maximum)
@@ -2981,12 +3010,69 @@ def _unit_ball(value: torch.Tensor, eps: float) -> torch.Tensor:
     return normalized * _inward_unit_margin(normalized)
 
 
+def _positive_scalar_features(
+    value: torch.Tensor,
+    eps: float,
+    *,
+    mode: str,
+) -> torch.Tensor:
+    positive = F.elu(value) + 1.0
+    unit = _normalize_positive_features(positive, eps)
+    if mode == "unit":
+        return unit
+    if mode != "bounded":
+        raise ValueError(f"unknown scalar content mode: {mode}")
+    dimension = positive.shape[-1]
+    rms = _stable_vector_norm(positive.to(dtype=_moment_dtype(positive))) / sqrt(
+        dimension
+    )
+    amplitude = 2.0 * (rms / (1.0 + rms))
+    return unit * amplitude.to(dtype=unit.dtype)
+
+
 def _normalize_positive_features(value: torch.Tensor, eps: float) -> torch.Tensor:
     reduced = value.to(dtype=_moment_dtype(value))
     norm = _stable_vector_norm(reduced)
     floor = torch.full_like(norm, sqrt(eps))
     normalized = reduced / torch.hypot(norm, floor)
     return normalized * _inward_unit_margin(normalized)
+
+
+def _tensor_product_features(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    scale: torch.Tensor,
+    *,
+    eps: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if query.shape != key.shape or query.ndim != 3 or query.shape[-1] != 5:
+        raise ValueError("tensor query/key must share shape (nodes, heads, 5)")
+    if scale.shape != (query.shape[1],):
+        raise ValueError("tensor kernel scale must have one value per head")
+    dtype = _moment_dtype(query, key, scale)
+    query = _unit_frobenius_st(query.to(dtype=dtype), eps)
+    key = _unit_frobenius_st(key.to(dtype=dtype), eps)
+    query_matrix = _st_features_to_matrix(query).flatten(start_dim=-2)
+    key_matrix = _st_features_to_matrix(key).flatten(start_dim=-2)
+    root_scale = torch.sqrt(scale.to(dtype=dtype))[None, :, None]
+    query_features = root_scale * torch.cat(
+        [torch.ones_like(query_matrix[..., :1]), query_matrix],
+        dim=-1,
+    )
+    key_features = root_scale * torch.cat(
+        [torch.ones_like(key_matrix[..., :1]), key_matrix],
+        dim=-1,
+    )
+    return query_features, key_features
+
+
+def _unit_frobenius_st(value: torch.Tensor, eps: float) -> torch.Tensor:
+    del eps
+    reduced = value.to(dtype=_moment_dtype(value))
+    denominator = torch.sqrt(1.0 + _st_frobenius_square(reduced)).unsqueeze(-1)
+    normalized = reduced / denominator
+    matrix_features = _st_features_to_matrix(normalized).flatten(start_dim=-2)
+    return normalized * _inward_unit_margin(matrix_features)
 
 
 def _inward_unit_margin(value: torch.Tensor) -> float:
@@ -3055,6 +3141,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_pairwise_local_content",
         "use_edge_conditioned_local_transport",
         "normalize_edge_conditioned_local_by_sqrt_degree",
+        "use_tensor_product_kernel",
         "use_memory_interaction",
         "use_radial_trace",
         "coordinate_updates",
@@ -3067,6 +3154,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
         choices = ", ".join(sorted(_GLOBAL_TRANSPORT_MODES))
         raise ValueError(f"global_transport_mode must be one of: {choices}")
+    if not isinstance(config.scalar_content_mode, str):
+        raise TypeError("scalar_content_mode must be a string")
+    if config.scalar_content_mode not in _SCALAR_CONTENT_MODES:
+        choices = ", ".join(sorted(_SCALAR_CONTENT_MODES))
+        raise ValueError(f"scalar_content_mode must be one of: {choices}")
     if config.coordinate_updates and config.num_layers < 2:
         raise ValueError("coordinate_updates requires at least two layers")
     if config.local_head_counts is None:
@@ -3098,9 +3190,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                 "use_multiscale_spatial_kernel cannot use memory interaction"
             )
     if config.use_pairwise_local_content and not any(local_head_counts):
-        raise ValueError(
-            "use_pairwise_local_content requires at least one local head"
-        )
+        raise ValueError("use_pairwise_local_content requires at least one local head")
     if config.use_edge_conditioned_local_transport:
         if not any(local_head_counts):
             raise ValueError(
@@ -3128,9 +3218,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     )
     if config.use_memory_interaction:
         if config.global_transport_mode != "learned":
-            raise ValueError(
-                "memory interaction requires learned global transport"
-            )
+            raise ValueError("memory interaction requires learned global transport")
         registered_lgl = (
             config.num_heads,
             0,
@@ -3165,6 +3253,12 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     linear_max = _normal_float32_control(
         "linear_kernel_max", config.linear_kernel_max, positive=True
     )
+    tensor_init = _normal_float32_control(
+        "tensor_kernel_init", config.tensor_kernel_init, positive=True
+    )
+    tensor_max = _normal_float32_control(
+        "tensor_kernel_max", config.tensor_kernel_max, positive=True
+    )
     kernel_floor = _normal_float32_control(
         "kernel_floor", config.kernel_floor, positive=True
     )
@@ -3191,8 +3285,15 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "linear_kernel_init must be smaller than linear_kernel_max in float32"
         )
+    if tensor_init >= tensor_max:
+        raise ValueError(
+            "tensor_kernel_init must be smaller than tensor_kernel_max in float32"
+        )
     upper_bound = torch.tensor(kernel_floor, dtype=torch.float32)
-    upper_bound = upper_bound + 1.0 + 2.0 * linear_max + vector_max
+    content_upper_bound = 4.0 if config.scalar_content_mode == "bounded" else 1.0
+    upper_bound = upper_bound + content_upper_bound + 2.0 * linear_max + vector_max
+    if config.use_tensor_product_kernel:
+        upper_bound = upper_bound + 2.0 * tensor_max
     if not torch.isfinite(upper_bound):
         raise ValueError("kernel upper bound must be finite in float32")
     _normal_float32_ratio(
@@ -3205,14 +3306,28 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         linear_init,
         linear_max,
     )
+    _normal_float32_ratio(
+        "tensor_kernel_init/tensor_kernel_max",
+        tensor_init,
+        tensor_max,
+    )
     hidden = CartesianIrreps.parse(config.hidden_irreps)
     output = CartesianIrreps.parse(config.output_irreps)
     if hidden.scalars <= 0 or hidden.vectors <= 0:
-        raise ValueError(
-            "hidden_irreps requires positive scalar and vector channels"
-        )
+        raise ValueError("hidden_irreps requires positive scalar and vector channels")
     if hidden.scalars % config.num_heads:
         raise ValueError("hidden scalar channels must be divisible by num_heads")
+    if config.use_tensor_product_kernel and hidden.tensors <= 0:
+        raise ValueError("tensor-product kernel requires persistent 2e hidden channels")
+    if (
+        config.use_tensor_product_kernel
+        and config.use_memory_interaction
+        and config.global_memory_count > 1
+    ):
+        raise ValueError(
+            "tensor-product kernel is not registered with interacting "
+            "multi-memory transport"
+        )
     if output.scalars + output.vectors + output.tensors <= 0:
         raise ValueError("output_irreps must include at least one term")
 

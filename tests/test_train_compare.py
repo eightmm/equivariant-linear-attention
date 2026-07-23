@@ -66,9 +66,7 @@ def test_determinism_mode_is_explicit_and_recorded_in_run_config() -> None:
     assert default_args.determinism == "seeded"
     assert strict_args.determinism == "strict"
     assert (
-        symbols["_run_config"](strict_args, split_seed=42, model_seed=43)[
-            "determinism"
-        ]
+        symbols["_run_config"](strict_args, split_seed=42, model_seed=43)["determinism"]
         == "strict"
     )
 
@@ -192,9 +190,7 @@ def test_run_config_records_local_memory_and_trace_controls() -> None:
 
 def test_run_config_records_pairwise_local_content_and_mass_contract() -> None:
     symbols = _script_symbols()
-    args = symbols["parse_args"](
-        ["--routing", "lgl", "--pairwise-local-content"]
-    )
+    args = symbols["parse_args"](["--routing", "lgl", "--pairwise-local-content"])
 
     config = symbols["_run_config"](args, split_seed=42, model_seed=43)
     model = symbols["_build_benchmark_model"](args, node_dim=11)
@@ -242,6 +238,32 @@ def test_run_config_records_edge_conditioned_degree_normalization() -> None:
     assert model.config.normalize_edge_conditioned_local_by_sqrt_degree is True
 
 
+def test_run_config_records_architecture_v2_kernel_controls() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--scalar-content-mode",
+            "bounded",
+            "--hidden-tensor-dim",
+            "4",
+            "--tensor-product-kernel",
+        ]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["scalar_content_mode"] == "bounded"
+    assert config["hidden_tensor_dim"] == 4
+    assert config["tensor_product_kernel"] is True
+    assert config["tensor_product_kernel_formula"] == (
+        "eta*(1+frobenius_dot(unit_ball_2e_query,unit_ball_2e_key))"
+    )
+    assert model.config.scalar_content_mode == "bounded"
+    assert model.config.use_tensor_product_kernel is True
+    assert any("tensor_kernel" in name for name, _ in model.named_parameters())
+
+
 @pytest.mark.parametrize(
     ("mode", "formula", "balancing"),
     [
@@ -268,9 +290,7 @@ def test_run_config_records_actual_global_transport(
 @pytest.mark.parametrize("mode", ["learned", "uniform", "none"])
 def test_local_only_run_config_marks_global_transport_not_executed(mode: str) -> None:
     symbols = _script_symbols()
-    args = symbols["parse_args"](
-        ["--routing", "lll", "--global-transport-mode", mode]
-    )
+    args = symbols["parse_args"](["--routing", "lll", "--global-transport-mode", mode])
 
     config = symbols["_run_config"](args, split_seed=42, model_seed=43)
 
@@ -303,11 +323,11 @@ def test_internal_static_egnn_run_config_is_explicitly_nonofficial() -> None:
     assert sum(parameter.numel() for parameter in model.parameters()) == 152_065
 
 
-def test_dynamic_coordinate_models_record_the_exact_private_and_public_controls() -> None:
+def test_dynamic_coordinate_models_record_the_exact_private_and_public_controls() -> (
+    None
+):
     symbols = _script_symbols()
-    attention_args = symbols["parse_args"](
-        ["--routing", "lgl", "--coordinate-updates"]
-    )
+    attention_args = symbols["parse_args"](["--routing", "lgl", "--coordinate-updates"])
     egnn_args = symbols["parse_args"](
         ["--benchmark-model", "internal_dynamic_egnn_baseline"]
     )
@@ -315,9 +335,7 @@ def test_dynamic_coordinate_models_record_the_exact_private_and_public_controls(
     attention_config = symbols["_run_config"](
         attention_args, split_seed=42, model_seed=43
     )
-    egnn_config = symbols["_run_config"](
-        egnn_args, split_seed=42, model_seed=43
-    )
+    egnn_config = symbols["_run_config"](egnn_args, split_seed=42, model_seed=43)
     attention = symbols["_build_benchmark_model"](attention_args, node_dim=11)
     egnn = symbols["_build_benchmark_model"](egnn_args, node_dim=11)
 
@@ -333,19 +351,21 @@ def test_dynamic_coordinate_models_record_the_exact_private_and_public_controls(
         "centered_bounded_relative_vectors_times_invariant_edge_scalars"
     )
     assert egnn_args.hidden_dim == 91
-    assert abs(
-        sum(parameter.numel() for parameter in attention.parameters())
-        - sum(parameter.numel() for parameter in egnn.parameters())
-    ) / sum(parameter.numel() for parameter in attention.parameters()) < 0.01
+    assert (
+        abs(
+            sum(parameter.numel() for parameter in attention.parameters())
+            - sum(parameter.numel() for parameter in egnn.parameters())
+        )
+        / sum(parameter.numel() for parameter in attention.parameters())
+        < 0.01
+    )
 
 
 def test_model_specific_hidden_width_defaults_are_parameter_matched() -> None:
     symbols = _script_symbols()
 
     factorized = symbols["parse_args"]([])
-    egnn = symbols["parse_args"](
-        ["--benchmark-model", "internal_static_egnn_baseline"]
-    )
+    egnn = symbols["parse_args"](["--benchmark-model", "internal_static_egnn_baseline"])
     dynamic_egnn = symbols["parse_args"](
         ["--benchmark-model", "internal_dynamic_egnn_baseline"]
     )
@@ -490,9 +510,10 @@ def test_dynamic_egnn_runner_records_active_coordinate_diagnostics_without_test(
     assert coordinate["displacement_max_angstrom"] <= 0.25 + 1e-6
     assert coordinate["centroid_drift_max_angstrom"] < 1e-6
     assert len(coordinate["layers"]) == 1
-    assert metrics["coordinate_gradient_parameters"][
-        "nonzero_gradient_parameter_count"
-    ] > 0
+    assert (
+        metrics["coordinate_gradient_parameters"]["nonzero_gradient_parameter_count"]
+        > 0
+    )
     json.dumps(metrics, allow_nan=False)
 
 
@@ -917,12 +938,13 @@ def test_bounded_diagnostics_connects_one_trained_local_head() -> None:
     assert local["summary"]["attention.row_mass_max_abs_error"] < 1e-6
     assert local["summary"]["distance_over_cutoff.q100"] < 1.0
     assert diagnostics["batch"]["sample_id"] == dataset[0].sample_id
-    assert "selected_trained_local_attention_weights" in diagnostics[
-        "instrumentation"
-    ]["connected"]
-    assert "local_attention_weights" not in diagnostics["instrumentation"][
-        "unconnected"
-    ]
+    assert (
+        "selected_trained_local_attention_weights"
+        in diagnostics["instrumentation"]["connected"]
+    )
+    assert (
+        "local_attention_weights" not in diagnostics["instrumentation"]["unconnected"]
+    )
     json.dumps(diagnostics, allow_nan=False)
 
 
