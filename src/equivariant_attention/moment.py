@@ -2444,12 +2444,20 @@ def _structured_key_mass(
         batch,
         num_graphs,
     )
-    content = (key_scalar * scalar_sum[batch]).sum(dim=-1)
-    linear = (key_vector * linear_sum[batch]).sum(dim=-1)
-    quadratic = _positive_quadratic_form(key_vector, vector_outer_sum[batch])
+    node_scalar_sum = _graph_summary_for_nodes(scalar_sum, batch, num_graphs)
+    node_linear_sum = _graph_summary_for_nodes(linear_sum, batch, num_graphs)
+    node_vector_outer_sum = _graph_summary_for_nodes(
+        vector_outer_sum,
+        batch,
+        num_graphs,
+    )
+    node_constant_sum = _graph_summary_for_nodes(constant_sum, batch, num_graphs)
+    content = (key_scalar * node_scalar_sum).sum(dim=-1)
+    linear = (key_vector * node_linear_sum).sum(dim=-1)
+    quadratic = _positive_quadratic_form(key_vector, node_vector_outer_sum)
     return (
         content
-        + (pair_floor + pair_alignment_scale) * constant_sum[batch]
+        + (pair_floor + pair_alignment_scale) * node_constant_sum
         + pair_alignment_dot_scale * linear
         + kernel_scale[None, :] * quadratic
     )
@@ -2507,12 +2515,20 @@ def _structured_row_denominator(
         batch,
         num_graphs,
     )
-    content = (query_scalar * scalar_sum[batch]).sum(dim=-1)
-    linear = (query_vector * linear_sum[batch]).sum(dim=-1)
-    quadratic = _positive_quadratic_form(query_vector, vector_outer_sum[batch])
+    node_scalar_sum = _graph_summary_for_nodes(scalar_sum, batch, num_graphs)
+    node_linear_sum = _graph_summary_for_nodes(linear_sum, batch, num_graphs)
+    node_vector_outer_sum = _graph_summary_for_nodes(
+        vector_outer_sum,
+        batch,
+        num_graphs,
+    )
+    node_constant_sum = _graph_summary_for_nodes(constant_sum, batch, num_graphs)
+    content = (query_scalar * node_scalar_sum).sum(dim=-1)
+    linear = (query_vector * node_linear_sum).sum(dim=-1)
+    quadratic = _positive_quadratic_form(query_vector, node_vector_outer_sum)
     return (
         content
-        + (pair_floor + pair_alignment_scale) * constant_sum[batch]
+        + (pair_floor + pair_alignment_scale) * node_constant_sum
         + pair_alignment_dot_scale * linear
         + kernel_scale[None, :] * quadratic
     )
@@ -2572,17 +2588,38 @@ def _structured_numerator(
         batch,
         num_graphs,
     )
-    content = torch.einsum("nhd,nhdf->nhf", query_scalar, scalar_summary[batch])
-    linear = torch.einsum("nha,nhaf->nhf", query_vector, linear_summary[batch])
+    node_scalar_summary = _graph_summary_for_nodes(
+        scalar_summary,
+        batch,
+        num_graphs,
+    )
+    node_linear_summary = _graph_summary_for_nodes(
+        linear_summary,
+        batch,
+        num_graphs,
+    )
+    node_quadratic_summary = _graph_summary_for_nodes(
+        quadratic_summary,
+        batch,
+        num_graphs,
+    )
+    node_constant_summary = _graph_summary_for_nodes(
+        constant_summary,
+        batch,
+        num_graphs,
+    )
+    content = torch.einsum("nhd,nhdf->nhf", query_scalar, node_scalar_summary)
+    linear = torch.einsum("nha,nhaf->nhf", query_vector, node_linear_summary)
     quadratic = torch.einsum(
         "nha,nhabf,nhb->nhf",
         query_vector,
-        quadratic_summary[batch],
+        node_quadratic_summary,
         query_vector,
     )
     return (
         content
-        + (pair_floor + pair_alignment_scale).unsqueeze(-1) * constant_summary[batch]
+        + (pair_floor + pair_alignment_scale).unsqueeze(-1)
+        * node_constant_summary
         + pair_alignment_dot_scale.unsqueeze(-1) * linear
         + kernel_scale[None, :, None] * quadratic
     )
@@ -2758,6 +2795,19 @@ def _segment_sum(
 ) -> torch.Tensor:
     out = value.new_zeros((num_segments, *value.shape[1:]))
     return out.index_add(0, batch, value)
+
+
+def _graph_summary_for_nodes(
+    summary: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    """Broadcast graph summaries without duplicate-index backward for one graph."""
+    if summary.shape[0] != num_graphs:
+        raise ValueError("summary graph dimension must equal num_graphs")
+    if num_graphs == 1:
+        return summary[0].unsqueeze(0).expand(batch.shape[0], *summary.shape[1:])
+    return summary[batch]
 
 
 def _segment_amax(

@@ -1,0 +1,895 @@
+{
+  "benchmark": "edge_free_train_step_vs_edge_scaled_egnn",
+  "cells": [
+    {
+      "candidate_edges_including_self": 8192,
+      "cell_seed": 532263811,
+      "edge_index_bytes": 131072,
+      "edge_index_sha256": "f855d78beaf65a50c34916f5416646c6ab6ad36cca2926e92be815b56f51e7ae",
+      "edge_multiplier": 16,
+      "effective_nonself_edges": 7680,
+      "graph_construction": {
+        "cpu_build_ms": 1.0777409770525992,
+        "device_transfer_ms": 0.05565199535340071,
+        "total_once_ms": 1.133392972406
+      },
+      "model_execution_order": [
+        "spatial_static",
+        "spatial_dynamic",
+        "static_egnn"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69746688,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514307379722595,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 26.538886479102075,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 144346624,
+          "peak_cuda_bytes_delta": 74599936,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69726208,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514816999435425,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 22.214965982129797,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 142544896,
+          "peak_cuda_bytes_delta": 72818688,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 69739008,
+          "edge_index_supplied": true,
+          "final_loss": 0.36209434270858765,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 2.2722245194017887,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 135540224,
+          "peak_cuda_bytes_delta": 65801216,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 512,
+      "receiver_candidate_degree": {
+        "maximum": 16,
+        "mean": 16.0,
+        "minimum": 16,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 7.792679754241736,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 1.0649725944085795,
+      "spatial_dynamic_to_egnn_train_step_ratio": 11.679693732945458,
+      "spatial_static_to_egnn_first_step_system_ratio": 6.523036141189634,
+      "spatial_static_to_egnn_peak_memory_ratio": 1.0516796548897545,
+      "spatial_static_to_egnn_train_step_ratio": 9.776747760814745,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 32768,
+      "cell_seed": 532268467,
+      "edge_index_bytes": 524288,
+      "edge_index_sha256": "d9d435835466396ff9995585149f543c56d5cd651630fe1c1c3cac75400b1463",
+      "edge_multiplier": 64,
+      "effective_nonself_edges": 32256,
+      "graph_construction": {
+        "cpu_build_ms": 0.812848040368408,
+        "device_transfer_ms": 0.08601299487054348,
+        "total_once_ms": 0.8988610352389514
+      },
+      "model_execution_order": [
+        "spatial_dynamic",
+        "static_egnn",
+        "spatial_static"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69746688,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514307379722595,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 26.560696511296555,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 144346624,
+          "peak_cuda_bytes_delta": 74599936,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69726208,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514816999435425,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 22.201831481652334,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 142544896,
+          "peak_cuda_bytes_delta": 72818688,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 70132224,
+          "edge_index_supplied": true,
+          "final_loss": 0.29458028078079224,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 2.6164205046370625,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 357074432,
+          "peak_cuda_bytes_delta": 286942208,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 512,
+      "receiver_candidate_degree": {
+        "maximum": 64,
+        "mean": 64.0,
+        "minimum": 64,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 7.555780727660683,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.40424799723548954,
+      "spatial_dynamic_to_egnn_train_step_ratio": 10.151539656650462,
+      "spatial_static_to_egnn_first_step_system_ratio": 6.315804646029975,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.3992021921076668,
+      "spatial_static_to_egnn_train_step_ratio": 8.48557463997251,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 65536,
+      "cell_seed": 532274675,
+      "edge_index_bytes": 1048576,
+      "edge_index_sha256": "196618e98f7d0222ef2672802ce2242d67cbc0409e4e596946c40ddefbbfaa6f",
+      "edge_multiplier": 128,
+      "effective_nonself_edges": 65024,
+      "graph_construction": {
+        "cpu_build_ms": 1.5210239798761904,
+        "device_transfer_ms": 0.24949497310444713,
+        "total_once_ms": 1.7705189529806376
+      },
+      "model_execution_order": [
+        "static_egnn",
+        "spatial_static",
+        "spatial_dynamic"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69746688,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514307379722595,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 26.51087852427736,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 144346624,
+          "peak_cuda_bytes_delta": 74599936,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69726208,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514816999435425,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 22.115358529845253,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 142544896,
+          "peak_cuda_bytes_delta": 72818688,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 70656512,
+          "edge_index_supplied": true,
+          "final_loss": 0.28478097915649414,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 3.955980500904843,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 620975616,
+          "peak_cuda_bytes_delta": 550319104,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 512,
+      "receiver_candidate_degree": {
+        "maximum": 128,
+        "mean": 128.0,
+        "minimum": 128,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 4.629508609537978,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.23245135602876876,
+      "spatial_dynamic_to_egnn_train_step_ratio": 6.701468452186147,
+      "spatial_static_to_egnn_first_step_system_ratio": 3.8619332295299156,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.22954990876807632,
+      "spatial_static_to_egnn_train_step_ratio": 5.590360853595424,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 32768,
+      "cell_seed": 2068268419,
+      "edge_index_bytes": 524288,
+      "edge_index_sha256": "0d4ef860c8e74ab3bc01e8e18d7e5a5948eb134af2a71a44feffed0f923e6643",
+      "edge_multiplier": 16,
+      "effective_nonself_edges": 30720,
+      "graph_construction": {
+        "cpu_build_ms": 1.46624498302117,
+        "device_transfer_ms": 0.09223498636856675,
+        "total_once_ms": 1.5584799693897367
+      },
+      "model_execution_order": [
+        "spatial_dynamic",
+        "static_egnn",
+        "spatial_static"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69844992,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451431632041931,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 43.9453664876055,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 378297344,
+          "peak_cuda_bytes_delta": 308452352,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69824512,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451479911804199,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 38.62845152616501,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 371294208,
+          "peak_cuda_bytes_delta": 301469696,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 70230528,
+          "edge_index_supplied": true,
+          "final_loss": 0.3620762526988983,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 2.561419503763318,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 336713216,
+          "peak_cuda_bytes_delta": 266482688,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 2048,
+      "receiver_candidate_degree": {
+        "maximum": 16,
+        "mean": 16.0,
+        "minimum": 16,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 10.666611351556373,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 1.1235001360920742,
+      "spatial_dynamic_to_egnn_train_step_ratio": 17.15664553308803,
+      "spatial_static_to_egnn_first_step_system_ratio": 9.376066522468268,
+      "spatial_static_to_egnn_peak_memory_ratio": 1.1027016177470148,
+      "spatial_static_to_egnn_train_step_ratio": 15.080876626968317,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 131072,
+      "cell_seed": 2068273075,
+      "edge_index_bytes": 2097152,
+      "edge_index_sha256": "cfc11b8d83eb28b41132383eb094b42a2b4d62e059969ec136904e0c0de0fd4c",
+      "edge_multiplier": 64,
+      "effective_nonself_edges": 129024,
+      "graph_construction": {
+        "cpu_build_ms": 1.714697980787605,
+        "device_transfer_ms": 0.33607298973947763,
+        "total_once_ms": 2.0507709705270827
+      },
+      "model_execution_order": [
+        "static_egnn",
+        "spatial_static",
+        "spatial_dynamic"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69844992,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514307379722595,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 43.854862480657175,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 378297344,
+          "peak_cuda_bytes_delta": 308452352,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69824512,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451480805873871,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 38.59408348216675,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 371294208,
+          "peak_cuda_bytes_delta": 301469696,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 71803392,
+          "edge_index_supplied": true,
+          "final_loss": 0.2946070730686188,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 6.689782487228513,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 1164932608,
+          "peak_cuda_bytes_delta": 1093129216,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 2048,
+      "receiver_candidate_degree": {
+        "maximum": 64,
+        "mean": 64.0,
+        "minimum": 64,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 5.017401093948375,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.32473753537509353,
+      "spatial_dynamic_to_egnn_train_step_ratio": 6.555499011272885,
+      "spatial_static_to_egnn_first_step_system_ratio": 4.415519414039139,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.31872591208297607,
+      "spatial_static_to_egnn_train_step_ratio": 5.7691088695106085,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 262144,
+      "cell_seed": 2068279283,
+      "edge_index_bytes": 4194304,
+      "edge_index_sha256": "ddfced1c730c48ca57fb3e25286ef8b3231a0cb7075e8f059087831c72ddac65",
+      "edge_multiplier": 128,
+      "effective_nonself_edges": 260096,
+      "graph_construction": {
+        "cpu_build_ms": 2.3497450165450573,
+        "device_transfer_ms": 0.5699750036001205,
+        "total_once_ms": 2.919720020145178
+      },
+      "model_execution_order": [
+        "spatial_static",
+        "spatial_dynamic",
+        "static_egnn"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 69844992,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451431632041931,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 43.821470491820946,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 378297344,
+          "peak_cuda_bytes_delta": 308452352,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 69824512,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451480805873871,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 38.54377500829287,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 371294208,
+          "peak_cuda_bytes_delta": 301469696,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 73900544,
+          "edge_index_supplied": true,
+          "final_loss": 0.2850549519062042,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 13.975483481772244,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 2271024640,
+          "peak_cuda_bytes_delta": 2197124096,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 2048,
+      "receiver_candidate_degree": {
+        "maximum": 128,
+        "mean": 128.0,
+        "minimum": 128,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 2.593722560775766,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.1665756228871211,
+      "spatial_dynamic_to_egnn_train_step_ratio": 3.135596027785073,
+      "spatial_static_to_egnn_first_step_system_ratio": 2.2813442290836314,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.16349193287484542,
+      "spatial_static_to_egnn_train_step_ratio": 2.757956464158412,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 131072,
+      "cell_seed": 8212286851,
+      "edge_index_bytes": 2097152,
+      "edge_index_sha256": "11fdd4404ab2c5ec668fa2bfb8e681b7f4c813a7f1c03bdf7b1ba5bd417bc1f6",
+      "edge_multiplier": 16,
+      "effective_nonself_edges": 122880,
+      "graph_construction": {
+        "cpu_build_ms": 4.1501339874230325,
+        "device_transfer_ms": 0.3137270105071366,
+        "total_once_ms": 4.463860997930169
+      },
+      "model_execution_order": [
+        "static_egnn",
+        "spatial_static",
+        "spatial_dynamic"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 70238208,
+          "edge_index_supplied": false,
+          "final_loss": 0.4451434016227722,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 121.84450050699525,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 1279923200,
+          "peak_cuda_bytes_delta": 1209684992,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 70217728,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514793157577515,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 110.10991848888807,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 1251524608,
+          "peak_cuda_bytes_delta": 1181306880,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 72196608,
+          "edge_index_supplied": true,
+          "final_loss": 0.36209455132484436,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 6.515117012895644,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 1133368832,
+          "peak_cuda_bytes_delta": 1061172224,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 16,
+        "mean": 16.0,
+        "minimum": 16,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 11.097982014979042,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 1.129308627396593,
+      "spatial_dynamic_to_egnn_train_step_ratio": 18.701813070405848,
+      "spatial_static_to_egnn_first_step_system_ratio": 10.029159215030239,
+      "spatial_static_to_egnn_peak_memory_ratio": 1.104251831057941,
+      "spatial_static_to_egnn_train_step_ratio": 16.90068164101165,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 524288,
+      "cell_seed": 8212291507,
+      "edge_index_bytes": 8388608,
+      "edge_index_sha256": "b52ee83861ba2510742689852f9220d31cee9066d7992dc9897cff3245872ffa",
+      "edge_multiplier": 64,
+      "effective_nonself_edges": 516096,
+      "graph_construction": {
+        "cpu_build_ms": 5.3485900280065835,
+        "device_transfer_ms": 0.8746549719944596,
+        "total_once_ms": 6.223245000001043
+      },
+      "model_execution_order": [
+        "spatial_static",
+        "spatial_dynamic",
+        "static_egnn"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 70238208,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514331221580505,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 121.71265899087302,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 1279923200,
+          "peak_cuda_bytes_delta": 1209684992,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 70217728,
+          "edge_index_supplied": false,
+          "final_loss": 0.445147842168808,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 110.18552500172518,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 1251524608,
+          "peak_cuda_bytes_delta": 1181306880,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 78488064,
+          "edge_index_supplied": true,
+          "final_loss": 0.2945959270000458,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 29.956125479657203,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 4465350144,
+          "peak_cuda_bytes_delta": 4386862080,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 64,
+        "mean": 64.0,
+        "minimum": 64,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 3.364145295433088,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.2866344539005092,
+      "spatial_dynamic_to_egnn_train_step_ratio": 4.063030750539699,
+      "spatial_static_to_egnn_first_step_system_ratio": 3.0455346110479367,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.28027468566639685,
+      "spatial_static_to_egnn_train_step_ratio": 3.678230186228545,
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 1048576,
+      "cell_seed": 8212297715,
+      "edge_index_bytes": 16777216,
+      "edge_index_sha256": "efc04c1d59ce5ca81cf22859f186534be4122277a9f3f34f63c89fbd2bcf5f21",
+      "edge_multiplier": 128,
+      "effective_nonself_edges": 1040384,
+      "graph_construction": {
+        "cpu_build_ms": 8.421728969551623,
+        "device_transfer_ms": 1.5226610121317208,
+        "total_once_ms": 9.944389981683344
+      },
+      "model_execution_order": [
+        "spatial_dynamic",
+        "static_egnn",
+        "spatial_static"
+      ],
+      "models": {
+        "spatial_dynamic": {
+          "baseline_cuda_bytes": 70238208,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514331221580505,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151794
+          },
+          "initial_state_sha256": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+          "median_train_step_ms": 121.57433151151054,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 614716,
+          "peak_cuda_bytes": 1279923200,
+          "peak_cuda_bytes_delta": 1209684992,
+          "status": "completed",
+          "total_parameters": 153679,
+          "trainable_parameters": 153475
+        },
+        "spatial_static": {
+          "baseline_cuda_bytes": 70217728,
+          "edge_index_supplied": false,
+          "final_loss": 0.44514793157577515,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 151400
+          },
+          "initial_state_sha256": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+          "median_train_step_ms": 109.88430699217133,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 613140,
+          "peak_cuda_bytes": 1251524608,
+          "peak_cuda_bytes_delta": 1181306880,
+          "status": "completed",
+          "total_parameters": 153285,
+          "trainable_parameters": 153081
+        },
+        "static_egnn": {
+          "baseline_cuda_bytes": 86876672,
+          "edge_index_supplied": true,
+          "final_loss": 0.28496089577674866,
+          "gradient_validation": {
+            "all_finite": true,
+            "nonzero_elements": 152065
+          },
+          "initial_state_sha256": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666",
+          "median_train_step_ms": 62.60076750186272,
+          "optimizer": "AdamW",
+          "optimizer_lr": 0.0001,
+          "optimizer_weight_decay": 0.0,
+          "parameter_bytes": 608260,
+          "peak_cuda_bytes": 8884213248,
+          "peak_cuda_bytes_delta": 8797336576,
+          "status": "completed",
+          "total_parameters": 152065,
+          "trainable_parameters": 152065
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 128,
+        "mean": 128.0,
+        "minimum": 128,
+        "population_std": 0.0
+      },
+      "spatial_dynamic_to_egnn_first_step_system_ratio": 1.6758435122163013,
+      "spatial_dynamic_to_egnn_peak_memory_ratio": 0.14406714069905224,
+      "spatial_dynamic_to_egnn_train_step_ratio": 1.9420581625919047,
+      "spatial_static_to_egnn_first_step_system_ratio": 1.5147021635054572,
+      "spatial_static_to_egnn_peak_memory_ratio": 0.1408706176972667,
+      "spatial_static_to_egnn_train_step_ratio": 1.7553188463528289,
+      "status": "completed"
+    }
+  ],
+  "completed_cell_count": 9,
+  "device": "cuda",
+  "edge_multipliers": [
+    16,
+    64,
+    128
+  ],
+  "elapsed_wall_seconds": 33.46209424297558,
+  "failed_or_skipped_cell_count": 0,
+  "graph_seed": 20260723,
+  "inference_boundary": {
+    "candidate_edge_index": null,
+    "domain_generalization_inferred": false,
+    "egnn_receives_prebuilt_edges": true,
+    "graph_construction_timed_separately": true,
+    "loss": "synthetic single-graph MSE to constant 0.75",
+    "model_and_optimizer_construction_timed": false,
+    "model_step_excludes_graph_construction": true,
+    "task_accuracy_inferred": false
+  },
+  "max_wall_seconds": 1200.0,
+  "memory_accounting": {
+    "cpu_memory": "not measured; CUDA memory fields are null on CPU",
+    "peak_cuda_bytes": "absolute max allocated bytes with one model, its AdamW state, inputs, activations, gradients, and any supplied edge index resident",
+    "peak_cuda_bytes_delta": "peak allocated bytes minus the post-warmup allocated baseline"
+  },
+  "model_dtype": "float32",
+  "model_seed": 20260723,
+  "repeats": 20,
+  "schema_version": 1,
+  "seed": 20260723,
+  "sizes": [
+    512,
+    2048,
+    8192
+  ],
+  "timed_step": [
+    "optimizer.zero_grad(set_to_none=True)",
+    "forward",
+    "mse_loss",
+    "backward",
+    "adamw.step"
+  ],
+  "warmup": 5
+}
