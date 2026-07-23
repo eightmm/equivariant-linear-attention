@@ -2,6 +2,19 @@
 
 ## Status
 
+- Reproducibility hardening confirmed on 2026-07-23. Before another accuracy
+  architecture experiment, the matched harness must expose a legacy-compatible
+  `seeded` lane and an opt-in `strict` lane that requests deterministic PyTorch
+  algorithms, deterministic cuDNN behavior, disabled cuDNN benchmarking, and a
+  valid cuBLAS workspace configuration before model construction or CUDA work.
+  Every result records the effective runtime state. A same-source/config/data/
+  split/initial-state/model-seed gate consumes five independent process results,
+  reports validation-MAE mean/sample standard deviation/range, and admits a
+  near-`0.01 eV` effect only when the same-seed range is at most `0.005 eV`.
+  The strict lane additionally requires identical final-state hashes and metric
+  values. Unsupported deterministic CUDA operators are a recorded failure, not
+  permission to silently fall back. This packet implements and CPU-verifies the
+  gate only; it authorizes no CUDA training or architecture promotion.
 - PDBBind/ATOM3D-LBA extension confirmed on 2026-07-23 by the user's
   instruction to download and proceed:
   use the public `vector-institute/atom3d-lba` Parquet conversion of the

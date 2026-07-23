@@ -58,6 +58,76 @@ def test_run_config_records_single_architecture() -> None:
     assert config["global_attention_formula"] == "factorized_learned_kernel"
 
 
+def test_determinism_mode_is_explicit_and_recorded_in_run_config() -> None:
+    symbols = _script_symbols()
+    default_args = symbols["parse_args"]([])
+    strict_args = symbols["parse_args"](["--determinism", "strict"])
+
+    assert default_args.determinism == "seeded"
+    assert strict_args.determinism == "strict"
+    assert (
+        symbols["_run_config"](strict_args, split_seed=42, model_seed=43)[
+            "determinism"
+        ]
+        == "strict"
+    )
+
+
+def test_synthetic_runner_records_effective_reproducibility_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    symbols = _script_symbols()
+    previous_deterministic = torch.are_deterministic_algorithms_enabled()
+    previous_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    previous_cudnn_deterministic = torch.backends.cudnn.deterministic
+    previous_cudnn_benchmark = torch.backends.cudnn.benchmark
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    args = symbols["parse_args"](
+        [
+            "--determinism",
+            "strict",
+            "--num-samples",
+            "8",
+            "--train-size",
+            "4",
+            "--val-size",
+            "2",
+            "--batch-size",
+            "2",
+            "--steps",
+            "1",
+            "--hidden-dim",
+            "8",
+            "--num-layers",
+            "1",
+            "--num-heads",
+            "2",
+        ]
+    )
+    monkeypatch.setattr(
+        symbols["argparse"].ArgumentParser,
+        "parse_args",
+        lambda self, argv=None: args,
+    )
+
+    try:
+        symbols["main"]()
+        metrics = json.loads(capsys.readouterr().out)
+    finally:
+        torch.use_deterministic_algorithms(
+            previous_deterministic,
+            warn_only=previous_warn_only,
+        )
+        torch.backends.cudnn.deterministic = previous_cudnn_deterministic
+        torch.backends.cudnn.benchmark = previous_cudnn_benchmark
+
+    assert metrics["reproducibility"]["mode"] == "strict"
+    assert metrics["reproducibility"]["deterministic_algorithms"] is True
+    assert metrics["reproducibility"]["deterministic_warn_only"] is False
+    assert metrics["run_config"]["determinism"] == "strict"
+
+
 def test_test_evaluation_is_opt_in() -> None:
     symbols = _script_symbols()
     default_args = symbols["parse_args"]([])

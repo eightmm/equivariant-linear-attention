@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {
+      "id": "C1",
+      "type": "claim",
+      "label": "Explicit determinism modes and effective-state recording"
+    },
+    {
+      "id": "C2",
+      "type": "claim",
+      "label": "Identity-validating repeatability gate"
+    },
+    {
+      "id": "C3",
+      "type": "claim",
+      "label": "Five-run strict CPU repeatability result"
+    },
+    {
+      "id": "focused-green",
+      "type": "execution",
+      "label": "Focused reproducibility and harness tests"
+    },
+    {
+      "id": "strict-cpu-summary",
+      "type": "execution",
+      "label": "Five-process strict CPU summary execution"
+    }
+  ],
+  "edges": [
+    {
+      "source": "focused-green",
+      "target": "C1",
+      "relation": "supports"
+    },
+    {
+      "source": "focused-green",
+      "target": "C2",
+      "relation": "supports"
+    },
+    {
+      "source": "strict-cpu-summary",
+      "target": "C3",
+      "relation": "supports"
+    }
+  ]
+}

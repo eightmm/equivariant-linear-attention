@@ -1,0 +1,71 @@
+{
+  "platform": {
+    "machine": "x86_64",
+    "release": "7.0.0-28-generic",
+    "system": "Linux"
+  },
+  "resources": {
+    "cpu_count": 20,
+    "disk_free_bytes": 2019258331136,
+    "memory_bytes": 134887141376
+  },
+  "schema_version": 1,
+  "tools": {
+    "R": {
+      "available": false,
+      "version": null
+    },
+    "docker": {
+      "available": true,
+      "version": "Docker version 29.6.2, build dfc4efb"
+    },
+    "julia": {
+      "available": false,
+      "version": null
+    },
+    "jupyter": {
+      "available": false,
+      "version": null
+    },
+    "nvidia-smi": {
+      "available": true,
+      "version": "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running."
+    },
+    "podman": {
+      "available": false,
+      "version": null
+    },
+    "python": {
+      "available": true,
+      "version": "Python 3.12.12"
+    },
+    "rocm-smi": {
+      "available": false,
+      "version": null
+    },
+    "rsync": {
+      "available": true,
+      "version": "rsync  version 3.2.7  protocol version 31"
+    },
+    "sacct": {
+      "available": false,
+      "version": null
+    },
+    "sbatch": {
+      "available": false,
+      "version": null
+    },
+    "squeue": {
+      "available": false,
+      "version": null
+    },
+    "ssh": {
+      "available": true,
+      "version": "OpenSSH_9.6p1 Ubuntu-3ubuntu13.18, OpenSSL 3.0.13 30 Jan 2024"
+    },
+    "uv": {
+      "available": true,
+      "version": "uv 0.10.3"
+    }
+  }
+}

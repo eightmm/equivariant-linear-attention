@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "base_git_sha": "7ceee795e0cd4a694be460e195100d957fc96555",
+  "initial_working_diff_sha256_before_identity_completeness_fix": "a84dd2269ff7df0d3954c25b7f3d8a39b2b8da89e17c60728824c55f07069b53",
+  "executions": [
+    {
+      "id": "red-unit",
+      "command": "uv run pytest -q tests/test_reproducibility.py",
+      "exit": 2,
+      "status": "expected-red",
+      "result": "ModuleNotFoundError before implementation"
+    },
+    {
+      "id": "red-identity-completeness",
+      "command": "uv run pytest -q tests/test_reproducibility.py -k 'missing_required or requires_data'",
+      "exit": 1,
+      "status": "expected-red",
+      "result": "3 failed because missing identity fields were initially accepted"
+    },
+    {
+      "id": "focused-green",
+      "command": "uv run pytest -q tests/test_reproducibility.py tests/test_train_compare.py -k 'reproducibility or determinism'",
+      "exit": 0,
+      "status": "passed",
+      "result": "23 passed, 48 deselected after independent-review repairs"
+    },
+    {
+      "id": "independent-review-initial",
+      "command": "Hash-bound independent record and method review",
+      "exit": 0,
+      "status": "findings-resolved-pending-rereview",
+      "result": "2 major and 1 minor findings: identity value schema, strict-mode verdict binding, and negative CLI coverage"
+    },
+    {
+      "id": "strict-cpu-repeat-1-to-5",
+      "command": "uv run --locked python scripts/train_compare.py --dataset synthetic --num-samples 24 --train-size 14 --val-size 5 --batch-size 4 --steps 5 --hidden-dim 16 --num-layers 2 --num-heads 4 --model-seed 42 --split-seed 42 --determinism strict --skip-test-eval --metrics-out <per-run-path>",
+      "exit": 0,
+      "status": "passed",
+      "repeat_count": 5,
+      "execution_note": "The authoritative runs were rerun sequentially after the identity-completeness repair so every raw source hash covers the final implementation."
+    },
+    {
+      "id": "strict-cpu-summary",
+      "command": "uv run --locked python scripts/summarize_reproducibility_runs.py --metric-path val_mae --max-metric-span 0.005 --min-runs 5 --expected-mode strict --output artifacts/reproducibility-hardening-20260723/strict-cpu-repeat-summary.json <five metrics paths>",
+      "exit": 0,
+      "status": "passed",
+      "result": "metric span 0.0; unique final-state count 1"
+    },
+    {
+      "id": "fast-gate",
+      "command": "scripts/check.sh fast",
+      "exit": 0,
+      "status": "passed",
+      "result": "446 passed; total coverage 88.59%; CPU ml_smoke passed"
+    }
+  ]
+}

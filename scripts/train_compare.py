@@ -16,6 +16,7 @@ from equivariant_attention._egnn_baseline import (
     _StaticEGNNBaseline,
 )
 from equivariant_attention.moment import routing_head_counts as _routing_head_counts
+from equivariant_attention.reproducibility import configure_reproducibility
 
 from equivariant_attention.benchmarking import (
     GraphSample,
@@ -62,6 +63,10 @@ def main() -> None:
     args = parse_args()
     split_seed = args.seed if args.split_seed is None else args.split_seed
     model_seed = args.seed if args.model_seed is None else args.model_seed
+    reproducibility = configure_reproducibility(
+        seed=model_seed,
+        mode=args.determinism,
+    )
     device = torch.device(args.device)
     amp_dtype = _resolve_amp_dtype(args.amp_dtype)
 
@@ -86,7 +91,6 @@ def main() -> None:
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.synchronize(device)
     run_started = time.perf_counter()
-    torch.manual_seed(model_seed)
     model = _build_benchmark_model(args, node_dim=node_dim).to(device=device)
     initial_state_hashes = _model_state_hashes(model)
     paired_base_initial_state_hashes = _paired_base_state_hashes(model)
@@ -154,6 +158,7 @@ def main() -> None:
         "target_normalized": normalizer is not None,
         "test_evaluated": args.evaluate_test,
         "amp_dtype": args.amp_dtype,
+        "reproducibility": reproducibility,
         "elapsed_seconds": elapsed_seconds,
         "peak_cuda_memory_bytes": (
             int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
@@ -374,6 +379,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--split-seed", type=int, default=None)
     parser.add_argument("--model-seed", type=int, default=None)
+    parser.add_argument(
+        "--determinism",
+        choices=["seeded", "strict"],
+        default="seeded",
+        help=(
+            "seeded preserves the historical lane; strict requests deterministic "
+            "PyTorch algorithms and deterministic cuDNN controls"
+        ),
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--amp-dtype", choices=["none", "bf16"], default="none")
     parser.add_argument("--metrics-out", type=Path, default=None)
@@ -1633,6 +1647,7 @@ def _run_config(
             "split_seed": split_seed,
             "model_seed": model_seed,
             "dataset_seed": args.seed,
+            "determinism": args.determinism,
             "device": args.device,
             "amp_dtype": args.amp_dtype,
             "target_normalized": not args.no_target_normalize,
@@ -1724,6 +1739,7 @@ def _run_config(
         "split_seed": split_seed,
         "model_seed": model_seed,
         "dataset_seed": args.seed,
+        "determinism": args.determinism,
         "device": args.device,
         "amp_dtype": args.amp_dtype,
         "target_normalized": not args.no_target_normalize,
