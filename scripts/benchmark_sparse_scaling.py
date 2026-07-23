@@ -774,6 +774,429 @@ def _module_parameter_bytes(module: torch.nn.Module) -> int:
     )
 
 
+def _build_train_step_model(
+    name: str,
+    *,
+    device: torch.device,
+    model_seed: int,
+) -> torch.nn.Module:
+    torch.manual_seed(model_seed)
+    if name == "spatial_static":
+        model = build_regression_model(
+            node_dim=11,
+            hidden_dim=64,
+            num_layers=3,
+            num_heads=4,
+            local_head_counts=(0, 0, 0),
+            coordinate_updates=False,
+            use_multiscale_spatial_kernel=True,
+        )
+    elif name == "spatial_dynamic":
+        model = build_regression_model(
+            node_dim=11,
+            hidden_dim=64,
+            num_layers=3,
+            num_heads=4,
+            local_head_counts=(0, 0, 0),
+            coordinate_updates=True,
+            use_multiscale_spatial_kernel=True,
+        )
+    elif name == "static_egnn":
+        model = _StaticEGNNBaseline(
+            node_dim=11,
+            hidden_dim=91,
+            num_layers=3,
+        )
+    else:
+        raise ValueError(f"unknown train-step model: {name}")
+    return model.to(device=device, dtype=torch.float32).train()
+
+
+def _train_step_loss(
+    *,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    node_feats: torch.Tensor,
+    pos: torch.Tensor,
+    batch: torch.Tensor,
+    edge_index: torch.Tensor | None,
+    update: bool,
+) -> torch.Tensor:
+    optimizer.zero_grad(set_to_none=True)
+    if edge_index is None:
+        output = model(node_feats, pos, batch=batch)
+    else:
+        output = model(
+            node_feats,
+            pos,
+            batch=batch,
+            edge_index=edge_index,
+            edge_index_is_validated=True,
+        )
+    prediction = output["graph_scalars"]
+    target = torch.full_like(prediction, 0.75)
+    loss = torch.nn.functional.mse_loss(prediction, target)
+    loss.backward()
+    if update:
+        optimizer.step()
+    return loss.detach()
+
+
+def _timed_train_step_metrics(
+    *,
+    model: torch.nn.Module,
+    node_feats: torch.Tensor,
+    pos: torch.Tensor,
+    batch: torch.Tensor,
+    edge_index: torch.Tensor | None,
+    warmup: int,
+    repeats: int,
+) -> dict[str, Any]:
+    device = node_feats.device
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.0)
+    initial_state_sha256 = _module_state_sha256(model)
+    try:
+        for _ in range(warmup):
+            warmup_loss = _train_step_loss(
+                model=model,
+                optimizer=optimizer,
+                node_feats=node_feats,
+                pos=pos,
+                batch=batch,
+                edge_index=edge_index,
+                update=True,
+            )
+            if not bool(torch.isfinite(warmup_loss).item()):
+                return {
+                    "status": "failed",
+                    "failure_class": "nonfinite_warmup_loss",
+                }
+        _sync(device)
+        if device.type == "cuda":
+            baseline_memory = int(torch.cuda.memory_allocated(device))
+            torch.cuda.reset_peak_memory_stats(device)
+        else:
+            baseline_memory = None
+
+        timings: list[float] = []
+        final_loss = 0.0
+        for _ in range(repeats):
+            _sync(device)
+            started = time.perf_counter()
+            loss = _train_step_loss(
+                model=model,
+                optimizer=optimizer,
+                node_feats=node_feats,
+                pos=pos,
+                batch=batch,
+                edge_index=edge_index,
+                update=True,
+            )
+            _sync(device)
+            timings.append((time.perf_counter() - started) * 1000.0)
+            final_loss = float(loss.item())
+
+        if device.type == "cuda":
+            peak_memory = int(torch.cuda.max_memory_allocated(device))
+            peak_delta = max(0, peak_memory - int(baseline_memory))
+        else:
+            peak_memory = None
+            peak_delta = None
+
+        validation_loss = _train_step_loss(
+            model=model,
+            optimizer=optimizer,
+            node_feats=node_feats,
+            pos=pos,
+            batch=batch,
+            edge_index=edge_index,
+            update=False,
+        )
+        gradients = [
+            parameter.grad
+            for parameter in model.parameters()
+            if parameter.grad is not None
+        ]
+        all_finite = bool(
+            gradients
+            and all(bool(torch.isfinite(gradient).all().item()) for gradient in gradients)
+            and bool(torch.isfinite(validation_loss).item())
+        )
+        nonzero_elements = sum(
+            int(torch.count_nonzero(gradient).item()) for gradient in gradients
+        )
+    except torch.OutOfMemoryError as error:
+        optimizer.zero_grad(set_to_none=True)
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        return {
+            "status": "failed",
+            "failure_class": "out_of_memory",
+            "message": str(error).splitlines()[0],
+            "initial_state_sha256": initial_state_sha256,
+        }
+    return {
+        "status": "completed",
+        "median_train_step_ms": float(statistics.median(timings)),
+        "final_loss": final_loss,
+        "gradient_validation": {
+            "all_finite": all_finite,
+            "nonzero_elements": nonzero_elements,
+        },
+        "optimizer": "AdamW",
+        "optimizer_lr": 1e-4,
+        "optimizer_weight_decay": 0.0,
+        "initial_state_sha256": initial_state_sha256,
+        "trainable_parameters": sum(
+            parameter.numel()
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        ),
+        "total_parameters": sum(parameter.numel() for parameter in model.parameters()),
+        "parameter_bytes": _module_parameter_bytes(model),
+        "edge_index_supplied": edge_index is not None,
+        "baseline_cuda_bytes": baseline_memory,
+        "peak_cuda_bytes": peak_memory,
+        "peak_cuda_bytes_delta": peak_delta,
+    }
+
+
+def run_edge_free_train_step_benchmark(
+    *,
+    sizes: Sequence[int],
+    edge_multipliers: Sequence[int] = DEFAULT_EDGE_MULTIPLIERS,
+    device: str = "auto",
+    seed: int = 20260723,
+    model_seed: int = 20260723,
+    warmup: int = 5,
+    repeats: int = 20,
+    max_wall_seconds: float = 1200.0,
+) -> dict[str, Any]:
+    """Measure full eager training steps for edge-free attention and EGNN."""
+    validated_sizes = list(sizes)
+    validated_multipliers = list(edge_multipliers)
+    if not validated_sizes or any(
+        isinstance(size, bool) or not isinstance(size, int) or size < 2
+        for size in validated_sizes
+    ):
+        raise ValueError("sizes must contain unique integers at least two")
+    if len(set(validated_sizes)) != len(validated_sizes):
+        raise ValueError("sizes must be unique")
+    if not validated_multipliers or any(
+        isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        for value in validated_multipliers
+    ):
+        raise ValueError("edge_multipliers must contain positive integers")
+    if len(set(validated_multipliers)) != len(validated_multipliers):
+        raise ValueError("edge_multipliers must be unique")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a nonnegative integer")
+    if (
+        isinstance(model_seed, bool)
+        or not isinstance(model_seed, int)
+        or model_seed < 0
+    ):
+        raise ValueError("model_seed must be a nonnegative integer")
+    if warmup < 0 or repeats <= 0:
+        raise ValueError("warmup must be nonnegative and repeats must be positive")
+    if (
+        isinstance(max_wall_seconds, bool)
+        or not isinstance(max_wall_seconds, (int, float))
+        or not math.isfinite(float(max_wall_seconds))
+        or max_wall_seconds <= 0
+    ):
+        raise ValueError("max_wall_seconds must be finite and positive")
+
+    resolved_device = _resolve_device(device)
+    cells: list[dict[str, Any]] = []
+    benchmark_started = time.perf_counter()
+    model_names = ("spatial_static", "spatial_dynamic", "static_egnn")
+    for size_index, num_nodes in enumerate(validated_sizes):
+        for multiplier_index, edge_multiplier in enumerate(validated_multipliers):
+            if edge_multiplier > num_nodes:
+                cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "edge_multiplier_exceeds_num_nodes",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+            if time.perf_counter() - benchmark_started >= max_wall_seconds:
+                cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "wall_time_ceiling_reached",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+
+            cell_seed = seed + num_nodes * 1_000_003 + edge_multiplier * 97
+            graph_started = time.perf_counter()
+            cpu_edge_index = seeded_exact_edge_index(
+                num_nodes,
+                edge_multiplier=edge_multiplier,
+                seed=cell_seed,
+                device=torch.device("cpu"),
+            )
+            graph_cpu_ms = (time.perf_counter() - graph_started) * 1000.0
+            node_feats, pos, batch = _model_inputs(
+                num_nodes,
+                device=resolved_device,
+            )
+            execution_order = list(model_names)
+            rotation = (size_index + multiplier_index) % len(execution_order)
+            execution_order = execution_order[rotation:] + execution_order[:rotation]
+            model_metrics: dict[str, dict[str, Any]] = {}
+            device_transfer_ms = 0.0
+            for model_name in execution_order:
+                if time.perf_counter() - benchmark_started >= max_wall_seconds:
+                    model_metrics[model_name] = {
+                        "status": "skipped",
+                        "reason": "wall_time_ceiling_reached",
+                    }
+                    continue
+                edge_index: torch.Tensor | None = None
+                if model_name == "static_egnn":
+                    if resolved_device.type == "cuda":
+                        transfer_started = time.perf_counter()
+                        edge_index = cpu_edge_index.to(device=resolved_device)
+                        _sync(resolved_device)
+                        device_transfer_ms = (
+                            time.perf_counter() - transfer_started
+                        ) * 1000.0
+                    else:
+                        edge_index = cpu_edge_index
+                model = _build_train_step_model(
+                    model_name,
+                    device=resolved_device,
+                    model_seed=model_seed,
+                )
+                metrics = _timed_train_step_metrics(
+                    model=model,
+                    node_feats=node_feats,
+                    pos=pos,
+                    batch=batch,
+                    edge_index=edge_index,
+                    warmup=warmup,
+                    repeats=repeats,
+                )
+                model_metrics[model_name] = metrics
+                del model
+                if edge_index is not None:
+                    del edge_index
+                if resolved_device.type == "cuda":
+                    torch.cuda.empty_cache()
+
+            completed = all(
+                model_metrics.get(name, {}).get("status") == "completed"
+                for name in model_names
+            )
+            cell: dict[str, Any] = {
+                "status": "completed" if completed else "partial",
+                "nodes": num_nodes,
+                "edge_multiplier": edge_multiplier,
+                "cell_seed": cell_seed,
+                "candidate_edges_including_self": int(cpu_edge_index.shape[1]),
+                "effective_nonself_edges": int(cpu_edge_index.shape[1] - num_nodes),
+                "edge_index_sha256": _edge_index_sha256(cpu_edge_index),
+                "edge_index_bytes": (
+                    cpu_edge_index.numel() * cpu_edge_index.element_size()
+                ),
+                "receiver_candidate_degree": _receiver_degree_summary(
+                    cpu_edge_index,
+                    num_nodes=num_nodes,
+                ),
+                "graph_construction": {
+                    "cpu_build_ms": float(graph_cpu_ms),
+                    "device_transfer_ms": float(device_transfer_ms),
+                    "total_once_ms": float(graph_cpu_ms + device_transfer_ms),
+                },
+                "model_execution_order": execution_order,
+                "models": model_metrics,
+            }
+            if completed:
+                egnn_ms = model_metrics["static_egnn"]["median_train_step_ms"]
+                for candidate_name in ("spatial_static", "spatial_dynamic"):
+                    candidate_ms = model_metrics[candidate_name][
+                        "median_train_step_ms"
+                    ]
+                    cell[f"{candidate_name}_to_egnn_train_step_ratio"] = (
+                        candidate_ms / egnn_ms
+                    )
+                    candidate_peak = model_metrics[candidate_name]["peak_cuda_bytes"]
+                    egnn_peak = model_metrics["static_egnn"]["peak_cuda_bytes"]
+                    if candidate_peak is not None and egnn_peak:
+                        cell[f"{candidate_name}_to_egnn_peak_memory_ratio"] = (
+                            candidate_peak / egnn_peak
+                        )
+                graph_once_ms = cell["graph_construction"]["total_once_ms"]
+                cell["spatial_static_to_egnn_first_step_system_ratio"] = (
+                    model_metrics["spatial_static"]["median_train_step_ms"]
+                    / (egnn_ms + graph_once_ms)
+                )
+                cell["spatial_dynamic_to_egnn_first_step_system_ratio"] = (
+                    model_metrics["spatial_dynamic"]["median_train_step_ms"]
+                    / (egnn_ms + graph_once_ms)
+                )
+            cells.append(cell)
+            del node_feats, pos, batch, cpu_edge_index
+            if resolved_device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    elapsed = time.perf_counter() - benchmark_started
+    return {
+        "schema_version": 1,
+        "benchmark": "edge_free_train_step_vs_edge_scaled_egnn",
+        "device": str(resolved_device),
+        "model_dtype": "float32",
+        "seed": seed,
+        "graph_seed": seed,
+        "model_seed": model_seed,
+        "sizes": validated_sizes,
+        "edge_multipliers": validated_multipliers,
+        "warmup": warmup,
+        "repeats": repeats,
+        "max_wall_seconds": float(max_wall_seconds),
+        "elapsed_wall_seconds": float(elapsed),
+        "timed_step": [
+            "optimizer.zero_grad(set_to_none=True)",
+            "forward",
+            "mse_loss",
+            "backward",
+            "adamw.step",
+        ],
+        "cells": cells,
+        "completed_cell_count": sum(cell["status"] == "completed" for cell in cells),
+        "failed_or_skipped_cell_count": sum(
+            cell["status"] != "completed" for cell in cells
+        ),
+        "memory_accounting": {
+            "peak_cuda_bytes": (
+                "absolute max allocated bytes with one model, its AdamW state, "
+                "inputs, activations, gradients, and any supplied edge index resident"
+            ),
+            "peak_cuda_bytes_delta": (
+                "peak allocated bytes minus the post-warmup allocated baseline"
+            ),
+            "cpu_memory": "not measured; CUDA memory fields are null on CPU",
+        },
+        "inference_boundary": {
+            "graph_construction_timed_separately": True,
+            "model_step_excludes_graph_construction": True,
+            "model_and_optimizer_construction_timed": False,
+            "candidate_edge_index": None,
+            "egnn_receives_prebuilt_edges": True,
+            "loss": "synthetic single-graph MSE to constant 0.75",
+            "task_accuracy_inferred": False,
+            "domain_generalization_inferred": False,
+        },
+    }
+
+
 def run_edge_free_spatial_benchmark(
     *,
     sizes: Sequence[int],
@@ -1434,6 +1857,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-model-benchmarks", action="store_true")
     parser.add_argument("--edge-multiplier-grid", action="store_true")
     parser.add_argument("--edge-free-spatial-grid", action="store_true")
+    parser.add_argument("--edge-free-train-step-grid", action="store_true")
     parser.add_argument(
         "--edge-multipliers",
         nargs="+",
@@ -1449,11 +1873,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.edge_multiplier_grid and args.edge_free_spatial_grid:
-        raise ValueError(
-            "--edge-multiplier-grid and --edge-free-spatial-grid are exclusive"
+    selected_modes = sum(
+        (
+            args.edge_multiplier_grid,
+            args.edge_free_spatial_grid,
+            args.edge_free_train_step_grid,
         )
-    if args.edge_free_spatial_grid:
+    )
+    if selected_modes > 1:
+        raise ValueError(
+            "edge multiplier, edge-free spatial, and train-step grids are exclusive"
+        )
+    if args.edge_free_train_step_grid:
+        result = run_edge_free_train_step_benchmark(
+            sizes=args.sizes,
+            edge_multipliers=args.edge_multipliers,
+            device=args.device,
+            seed=args.seed,
+            model_seed=args.model_seed,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            max_wall_seconds=args.max_wall_seconds,
+        )
+    elif args.edge_free_spatial_grid:
         result = run_edge_free_spatial_benchmark(
             sizes=args.sizes,
             edge_multipliers=args.edge_multipliers,

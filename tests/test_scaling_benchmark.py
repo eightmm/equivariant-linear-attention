@@ -339,3 +339,90 @@ def test_edge_free_timer_rejects_nonfinite_output_before_timing() -> None:
         "status": "failed",
         "failure_class": "nonfinite_output",
     }
+
+
+def test_tiny_train_step_grid_records_full_step_and_memory_boundaries() -> None:
+    result = SCALING["run_edge_free_train_step_benchmark"](
+        sizes=(8,),
+        edge_multipliers=(2,),
+        device="cpu",
+        seed=20260723,
+        model_seed=20260723,
+        warmup=1,
+        repeats=1,
+        max_wall_seconds=30.0,
+    )
+
+    assert result["schema_version"] == 1
+    assert result["benchmark"] == "edge_free_train_step_vs_edge_scaled_egnn"
+    assert result["timed_step"] == [
+        "optimizer.zero_grad(set_to_none=True)",
+        "forward",
+        "mse_loss",
+        "backward",
+        "adamw.step",
+    ]
+    assert result["sizes"] == [8]
+    assert result["edge_multipliers"] == [2]
+    assert result["inference_boundary"]["graph_construction_timed_separately"] is True
+    assert result["inference_boundary"]["model_step_excludes_graph_construction"] is True
+    assert result["inference_boundary"]["task_accuracy_inferred"] is False
+
+    cell = result["cells"][0]
+    assert cell["status"] == "completed"
+    assert cell["candidate_edges_including_self"] == 16
+    assert cell["graph_construction"]["cpu_build_ms"] >= 0.0
+    assert cell["graph_construction"]["device_transfer_ms"] == 0.0
+    assert len(cell["edge_index_sha256"]) == 64
+    assert set(cell["models"]) == {
+        "spatial_static",
+        "spatial_dynamic",
+        "static_egnn",
+    }
+    for name, metrics in cell["models"].items():
+        assert metrics["status"] == "completed"
+        assert metrics["median_train_step_ms"] > 0.0
+        assert metrics["final_loss"] >= 0.0
+        assert metrics["gradient_validation"]["all_finite"] is True
+        assert metrics["gradient_validation"]["nonzero_elements"] > 0
+        assert len(metrics["initial_state_sha256"]) == 64
+        assert metrics["optimizer"] == "AdamW"
+        assert metrics["peak_cuda_bytes"] is None
+        assert metrics["peak_cuda_bytes_delta"] is None
+        assert metrics["edge_index_supplied"] is (name == "static_egnn")
+    assert cell["spatial_static_to_egnn_train_step_ratio"] > 0.0
+    assert cell["spatial_dynamic_to_egnn_train_step_ratio"] > 0.0
+    _assert_finite_json(result)
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("warmup", "repeats", "max_wall_seconds"),
+    [(-1, 1, 10.0), (0, 0, 10.0), (0, 1, 0.0)],
+)
+def test_train_step_grid_rejects_invalid_execution_controls(
+    warmup: int,
+    repeats: int,
+    max_wall_seconds: float,
+) -> None:
+    with pytest.raises(ValueError):
+        SCALING["run_edge_free_train_step_benchmark"](
+            sizes=(8,),
+            edge_multipliers=(2,),
+            device="cpu",
+            warmup=warmup,
+            repeats=repeats,
+            max_wall_seconds=max_wall_seconds,
+        )
+
+
+def test_train_step_cli_mode_is_exclusive() -> None:
+    args = SCALING["parse_args"](
+        [
+            "--edge-free-train-step-grid",
+            "--metrics-out",
+            "unused.json",
+        ]
+    )
+
+    assert args.edge_free_train_step_grid is True

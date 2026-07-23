@@ -2,6 +2,21 @@
 
 ## Status
 
+- Full train-step scaling packet confirmed on 2026-07-23. The registered
+  comparison measures eager FP32
+  `zero_grad -> forward -> synthetic MSE -> backward -> AdamW.step` for the
+  edge-free static/dynamic spatial-linear candidates and the private static
+  EGNN control at `N={512,2048,8192}` and exact receiver degree
+  `k={16,64,128}`. It uses one local GPU, five warmups, twenty synchronized
+  repeats, fixed model/topology seeds, and a 1,200-second cumulative wall
+  ceiling. Model/input/optimizer construction is excluded. Exact graph
+  construction and host-to-device transfer are reported separately from the
+  model step; absolute peak CUDA allocation includes the isolated model,
+  AdamW state, inputs, activations, gradients, and EGNN edge tensor. OOM,
+  nonfinite loss/gradient, or the wall ceiling is a recorded result. This is a
+  synthetic systems comparison only: no dataset, validation/test label,
+  accuracy, topology-preservation, or domain-generalization inference is
+  authorized.
 - Reproducibility hardening confirmed on 2026-07-23. Before another accuracy
   architecture experiment, the matched harness must expose a legacy-compatible
   `seeded` lane and an opt-in `strict` lane that requests deterministic PyTorch
