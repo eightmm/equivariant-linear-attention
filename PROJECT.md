@@ -2,6 +2,24 @@
 
 ## Status
 
+- Edge-free spatial-linear extension confirmed on 2026-07-23. The user
+  authorized an opt-in, no-edge global transport mode plus bounded local GPU
+  forward latency/peak-memory measurement. The registered intervention adds a
+  fixed-rank, head-wise multi-scale Euclidean feature kernel to the existing
+  factorized global attention; it materializes neither `edge_index` nor an
+  `N x N` pair tensor and retains the existing bounded centroid-preserving
+  coordinate updater. The default and state schema remain unchanged when the
+  option is off. Dense equivalence, rigid-transform/permutation/batch tests,
+  finite coordinate/train gradients, 396 fast tests, and bf16/fp32 CUDA smoke
+  pass. On the recorded RTX PRO 6000 at `N=8192`, 100-repeat static spatial
+  attention was 1.03x/2.24x faster and used 6.19x/12.39x less measured
+  working-plus-edge memory than private static EGNN at `k=64/128`. The dynamic
+  spatial path remained 3.6% slower at `k=64`, crossed by exploratory `k=80`,
+  and was 2.10x faster at `k=128`. Small/sparse EGNN remains faster. This is a
+  forward-only synthetic systems result, excludes neighbor construction and
+  training/accuracy, and cannot establish graph-topology, molecule, protein,
+  force, or point-cloud task superiority. The frozen contract and evidence
+  live under `artifacts/edge-free-spatial-linear-20260723/`.
 - Exact-edge-multiplier scaling extension completed on 2026-07-23. The
   benchmark now generates deterministic receiver-regular directed graphs with
   exactly `E=kN` candidates, one self edge and exactly `k` incoming candidates

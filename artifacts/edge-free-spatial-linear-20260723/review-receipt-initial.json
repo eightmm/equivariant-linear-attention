@@ -1,0 +1,216 @@
+{
+  "covered_artifacts": [
+    {
+      "path": "analysis.json",
+      "sha256": "98dada0427508cc4a9aaf9ad958601c999ad427bd6694a45e9caefbcc894fe11"
+    },
+    {
+      "path": "claim-register.json",
+      "sha256": "5f636481c2a7e2bccea06a4c8a008e13c24dffaa55e495204091a4b6fa890967"
+    },
+    {
+      "path": "compute-approval.json",
+      "sha256": "844a34e5e393c75c026a5a4514a37152902f616d9dd4db4bf81bdb265bc36549"
+    },
+    {
+      "path": "compute-environment.json",
+      "sha256": "89007c38cff0880a41e3070efb034204714373b2d12134299e1ebe61454960a9"
+    },
+    {
+      "path": "evidence-graph.json",
+      "sha256": "3d2db854fecb31f1c236836af96887475b191b440cc46c0dc7fd4c423a782d5e"
+    },
+    {
+      "path": "execution-log.json",
+      "sha256": "dd63cba54f9d2b28db4e0560b2d3674d8b3ccf32af7ade49ebac0d28b6b62981"
+    },
+    {
+      "path": "gpu-benchmark.json",
+      "sha256": "d7f9243bdd68073b3181f1eb13d606038c5a7f57392bc980bf6bdf1782abd54a"
+    },
+    {
+      "path": "gpu-benchmark-optimized.json",
+      "sha256": "9b32b868389be1733fa4cc1b9ad52635096d1aebe763af32cee0affb86779396"
+    },
+    {
+      "path": "gpu-crossover-confirmation.json",
+      "sha256": "de713f4cbc6a2ccfd219f4c62ab60e4db4f888f76bde926bc2755a5cddbc894d"
+    },
+    {
+      "path": "implementation-record.json",
+      "sha256": "707b1be999b1c459c879257d70900519ccdafe074ad012b55c4ab331a13ad048"
+    },
+    {
+      "path": "nonfinite-red-test.json",
+      "sha256": "7a3c537a54f4d6a201df196cf549a14f0c46d3629f91e2ba0186a578035ce095"
+    },
+    {
+      "path": "red-tests.json",
+      "sha256": "e752e8faa957f0ef114511ab59d8d3cb5afee29883b4f90eb7341cc7545149da"
+    },
+    {
+      "path": "reference-use-ledger.json",
+      "sha256": "2516935df462b1589455e2dab8155b06b24be15c4b393081fec7d3b91a58dce3"
+    },
+    {
+      "path": "report.md",
+      "sha256": "c44dfb2da018d8a6ec3fe4f06afb410cf92a1681fa4db42f8a012c667772848c"
+    },
+    {
+      "path": "reproduction-commands.json",
+      "sha256": "27e3f85a0b072e967654c59598a80d2083cc35a05579b3b2abdab3c4c3871b95"
+    },
+    {
+      "path": "scope.md",
+      "sha256": "cbed5f337efd06a13ae4ee3b7b212e1900c272bd7eb5e6d1ff8259034ccd9754"
+    },
+    {
+      "path": "source-changes.patch",
+      "sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23"
+    },
+    {
+      "path": "verification-summary.json",
+      "sha256": "4c553a385178bb6eabca51079ac3806f76de25888747d468d1526377acf2c043"
+    }
+  ],
+  "covered_claim_ids": [
+    "C-301",
+    "C-302",
+    "C-303",
+    "C-304",
+    "C-305",
+    "C-306"
+  ],
+  "findings": [
+    {
+      "affected_claim_id": "C-301",
+      "code": "incomplete-registered-symmetry-coverage",
+      "evidence": [
+        {
+          "artifact_path": "scope.md",
+          "artifact_sha256": "cbed5f337efd06a13ae4ee3b7b212e1900c272bd7eb5e6d1ff8259034ccd9754",
+          "line_end": 38,
+          "line_start": 35
+        },
+        {
+          "artifact_path": "source-changes.patch",
+          "artifact_sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23",
+          "line_end": 1121,
+          "line_start": 1067
+        },
+        {
+          "artifact_path": "verification-summary.json",
+          "artifact_sha256": "4c553a385178bb6eabca51079ac3806f76de25888747d468d1526377acf2c043",
+          "json_pointer": "/scientific_contracts/o3_translation_permutation_batch_error_below_1e-6"
+        },
+        {
+          "artifact_path": "report.md",
+          "artifact_sha256": "c44dfb2da018d8a6ec3fe4f06afb410cf92a1681fa4db42f8a012c667772848c",
+          "line_end": 63,
+          "line_start": 61
+        }
+      ],
+      "id": "EFSR-001",
+      "message": "The registered H2 requires scalar, vector, and tensor outputs and optional positions to satisfy O(3), translation, permutation, and batch-isolation error below 1e-6, and the verification record marks that combined contract true. The hash-pinned test checks transformed node scalars and vectors, permuted node scalars, node-output batch isolation, and optional-position transforms. It does not check O(3)/translation behavior of node tensors or any graph-level outputs, and it does not check permutation behavior of node vectors, node tensors, or graph-level outputs. The saved test execution therefore does not establish the full-model rigid-transform and permutation evidence required by C-301.",
+      "required_action": "Either add direct hash-bound checks for the registered O(3)/translation/permutation behavior of every claimed node and graph scalar/vector/tensor output, rerun the applicable focused and fast gates, and regenerate the packet, or narrow H2, the verification summary, the report, and C-301 to the output classes and transformations actually tested.",
+      "resolution_status": "open",
+      "severity": "major"
+    },
+    {
+      "affected_claim_id": "C-304",
+      "code": "inconsistent-dynamic-k64-percentage",
+      "evidence": [
+        {
+          "artifact_path": "gpu-crossover-confirmation.json",
+          "artifact_sha256": "de713f4cbc6a2ccfd219f4c62ab60e4db4f888f76bde926bc2755a5cddbc894d",
+          "json_pointer": "/rows/0/egnn/0/spatial_dynamic_to_egnn_latency_ratio"
+        },
+        {
+          "artifact_path": "report.md",
+          "artifact_sha256": "c44dfb2da018d8a6ec3fe4f06afb410cf92a1681fa4db42f8a012c667772848c",
+          "line_end": 21,
+          "line_start": 19
+        },
+        {
+          "artifact_path": "source-changes.patch",
+          "artifact_sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23",
+          "line_end": 58,
+          "line_start": 47
+        },
+        {
+          "artifact_path": "source-changes.patch",
+          "artifact_sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23",
+          "line_end": 127,
+          "line_start": 121
+        }
+      ],
+      "id": "EFSR-002",
+      "message": "The authoritative confirmation ratio for dynamic spatial versus EGNN at N=8192,k=64 is 1.033735897724807, which is 3.3736% higher latency using EGNN latency as the denominator and is reported as 3.4% in the claim record and report. The hash-pinned README and benchmark documentation instead state 3.2% without defining a different denominator. The direction and unsupported status of C-304 are unchanged, but the public numerical record is inconsistent.",
+      "required_action": "Use one explicit denominator throughout the public record; with EGNN as the denominator, change the README and benchmark documentation to 3.4% after rounding, then regenerate the affected hashes and packet.",
+      "resolution_status": "open",
+      "severity": "minor"
+    },
+    {
+      "affected_claim_id": "C-302",
+      "code": "ambiguous-parameter-count-accounting",
+      "evidence": [
+        {
+          "artifact_path": "source-changes.patch",
+          "artifact_sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23",
+          "line_end": 290,
+          "line_start": 286
+        },
+        {
+          "artifact_path": "source-changes.patch",
+          "artifact_sha256": "aa8640e666d546afc0b2256da333c68d547d9c917d32a5c60c5733f270983e23",
+          "line_end": 542,
+          "line_start": 532
+        },
+        {
+          "artifact_path": "gpu-benchmark-optimized.json",
+          "artifact_sha256": "9b32b868389be1733fa4cc1b9ad52635096d1aebe763af32cee0affb86779396",
+          "json_pointer": "/model_parameters/ggg"
+        },
+        {
+          "artifact_path": "gpu-benchmark-optimized.json",
+          "artifact_sha256": "9b32b868389be1733fa4cc1b9ad52635096d1aebe763af32cee0affb86779396",
+          "json_pointer": "/model_parameter_bytes/ggg"
+        },
+        {
+          "artifact_path": "report.md",
+          "artifact_sha256": "c44dfb2da018d8a6ec3fe4f06afb410cf92a1681fa4db42f8a012c667772848c",
+          "line_end": 54,
+          "line_start": 50
+        }
+      ],
+      "id": "EFSR-003",
+      "message": "The benchmark field model_parameters counts only parameters with requires_grad=true, while model_parameter_bytes counts every parameter. The report calls 153,081 a generic parameter count next to 613,140 bytes; in FP32 those bytes correspond to 153,285 total parameters, revealing 204 frozen parameters omitted from the count. Static GGG and static spatial remain matched, so C-302 is not contradicted, but the parameter-count boundary is not labeled consistently.",
+      "required_action": "Label model_parameters and every derived prose value as trainable-parameter count, and separately record total parameter count where parameter bytes are reported, or change the count to include all parameters consistently; regenerate the affected hashes and packet.",
+      "resolution_status": "open",
+      "severity": "minor"
+    }
+  ],
+  "fingerprint": "05566bbdc42386e3251ea45aead8ea9040fe8201c9692884f977a01f36af0b91",
+  "independent": true,
+  "limitations": [
+    "This was a blinded method, record, and source review only. No test, benchmark, GPU workload, model forward, or reproduction command was executed, so this response does not claim reproduction.",
+    "Reviewer identity and independence are self-attested by this response and are not authenticated by the packet runtime; the shared filesystem also does not prove organizational independence.",
+    "Matching SHA-256 values establish the exact bytes reviewed, not that the recorded commands ran as stated, that timestamps or hardware identity are authentic, or that unrecorded evidence does not exist.",
+    "C-303 is a descriptive result for one synthetic, one-graph, FP32 forward workload, one GPU/software state, one model seed, and one recorded input/topology seed. Timing is not bitwise deterministic, and the confirmed k=64 static advantage is only 2.8%.",
+    "The memory comparison is peak allocated working-memory delta above a post-warmup live baseline plus the prebuilt EGNN edge-index bytes. It excludes model parameters, common live inputs, CUDA reserved memory, graph construction, transfer, backward, gradients, and optimizer state and is not total end-to-end device memory.",
+    "The edge-free candidate and private EGNN execute different equations and do not receive matched topology. The candidate cannot distinguish arbitrary adjacency omitted from identical features and coordinates.",
+    "The initial grid preceded a disclosed spatial-only optimization, and k=80/k=96 were selected post outcome for exploratory crossover localization. Those records cannot support a preplanned threshold at k=80 or k=96.",
+    "No historical production checkpoint, domain labels or splits, task accuracy, forces, chirality, molecular or protein transfer, point-cloud quality, compiled execution, multi-graph throughput, backward throughput, or production behavior was reviewed."
+  ],
+  "packet_fingerprint": "a419b71db1af0259d9cdff0ab0cd20cde0dc601b4b1ed7a2de45775bdda6c1db",
+  "review_id": "review-a419b71db1af0259d9cd",
+  "review_modes": [
+    "method",
+    "record",
+    "source"
+  ],
+  "review_task_id": "review-task-a419b71db1af0259d9cd",
+  "reviewer": "codex-reviewer-root-review_receipt_agent",
+  "schema_version": 1,
+  "status": "findings"
+}

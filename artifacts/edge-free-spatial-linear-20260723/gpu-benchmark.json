@@ -1,0 +1,636 @@
+{
+  "benchmark": "edge_free_spatial_vs_edge_scaled_egnn",
+  "device": "cuda",
+  "edge_multipliers": [
+    4,
+    16,
+    64,
+    128
+  ],
+  "elapsed_wall_seconds": 3.4540502130403183,
+  "graph_generator": "seeded_exact_receiver_regular_directed",
+  "graph_seed": 20260723,
+  "inference_boundary": {
+    "candidate_edge_index": null,
+    "coordinate_updates_timed": true,
+    "edge_construction_timed": false,
+    "egnn_receives_prebuilt_edges": true,
+    "topology_matched": false
+  },
+  "kernel_contract": {
+    "candidate_complexity_at_fixed_width": "O(N)",
+    "egnn_complexity_at_fixed_width": "O(E)",
+    "head_scales": [
+      0.125,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "node_pair_tensor_materialized": false,
+    "spatial_feature_dimension_per_head": 10
+  },
+  "limitations": {
+    "backward_or_training_inferred": false,
+    "forward_only": true,
+    "same_computation_inferred": false,
+    "task_accuracy_inferred": false
+  },
+  "max_wall_seconds": 300.0,
+  "memory_accounting": {
+    "edge_index_bytes": "added separately because it exists at baseline",
+    "model_parameter_bytes": "reported separately from forward delta",
+    "peak_cuda_bytes_delta": "maximum allocated bytes during synchronized forwards minus the allocated baseline after inputs, models, and edges exist"
+  },
+  "model_dtype": "float32",
+  "model_parameter_bytes": {
+    "ggg": 613140,
+    "spatial_dynamic": 614716,
+    "spatial_static": 613140,
+    "static_egnn": 608260
+  },
+  "model_parameters": {
+    "ggg": 153081,
+    "spatial_dynamic": 153475,
+    "spatial_static": 153081,
+    "static_egnn": 152065
+  },
+  "model_seed": 20260723,
+  "model_state_sha256": {
+    "ggg": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+    "spatial_dynamic": "efab301f5feee31a40047aa2f8b492192087a14de73dcc96564d52467d70aa83",
+    "spatial_static": "dc4987e9e345acc34f2bc649bb5c7aeaa26a3eaba48d8baa6b6aacd6b5458511",
+    "static_egnn": "7f060920bd0a6d1f1d8279e1fecd31e6a848398380d47500006d27c6146f7666"
+  },
+  "repeats": 15,
+  "rows": [
+    {
+      "edge_free_execution_order": [
+        "ggg",
+        "spatial_static",
+        "spatial_dynamic"
+      ],
+      "edge_free_models": {
+        "ggg": {
+          "edge_index_bytes": 0,
+          "median_ms": 5.780580977443606,
+          "peak_cuda_bytes_delta": 1988096,
+          "peak_cuda_bytes_delta_plus_edge_index": 1988096,
+          "status": "completed"
+        },
+        "spatial_dynamic": {
+          "edge_index_bytes": 0,
+          "median_ms": 7.670122024137527,
+          "peak_cuda_bytes_delta": 2010112,
+          "peak_cuda_bytes_delta_plus_edge_index": 2010112,
+          "status": "completed"
+        },
+        "spatial_static": {
+          "edge_index_bytes": 0,
+          "median_ms": 6.584975984878838,
+          "peak_cuda_bytes_delta": 2008576,
+          "peak_cuda_bytes_delta_plus_edge_index": 2008576,
+          "status": "completed"
+        }
+      },
+      "egnn": [
+        {
+          "candidate_edges_including_self": 512,
+          "cell_seed": 148261495,
+          "edge_index_bytes": 8192,
+          "edge_index_sha256": "c581b39b2e96787274105ed49b35ac07879c90d474ebceb98f1740895a6e4492",
+          "edge_multiplier": 4,
+          "effective_nonself_edges": 384,
+          "ggg_to_egnn_latency_ratio": 9.732535564902763,
+          "ggg_to_egnn_memory_ratio_including_edges": 2.7558552164655783,
+          "median_ms": 0.5939439870417118,
+          "nodes": 128,
+          "peak_cuda_bytes_delta": 713216,
+          "peak_cuda_bytes_delta_plus_edge_index": 721408,
+          "receiver_candidate_degree": {
+            "maximum": 4,
+            "mean": 4.0,
+            "minimum": 4,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 12.913881092290383,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 2.7863733144073812,
+          "spatial_static_to_egnn_latency_ratio": 11.086863624425218,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 2.784244144783534,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 2048,
+          "cell_seed": 148262659,
+          "edge_index_bytes": 32768,
+          "edge_index_sha256": "f1f52d609f928488c8ed471f42c5d64ee43d989a9c0df93ffd0497846170c3fc",
+          "edge_multiplier": 16,
+          "effective_nonself_edges": 1920,
+          "ggg_to_egnn_latency_ratio": 9.59571137428962,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.6544749705039609,
+          "median_ms": 0.6024129688739777,
+          "nodes": 128,
+          "peak_cuda_bytes_delta": 3004928,
+          "peak_cuda_bytes_delta_plus_edge_index": 3037696,
+          "receiver_candidate_degree": {
+            "maximum": 16,
+            "mean": 16.0,
+            "minimum": 16,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 12.732332171524158,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.6617225686836339,
+          "spatial_static_to_egnn_latency_ratio": 10.930999704716497,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.6612169222990055,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 8192,
+          "cell_seed": 148267315,
+          "edge_index_bytes": 131072,
+          "edge_index_sha256": "4f28ac3f08b7c6f8cd7cdba9d451846d9f57de68928ea6daa31e68fb7ddf5368",
+          "edge_multiplier": 64,
+          "effective_nonself_edges": 8064,
+          "ggg_to_egnn_latency_ratio": 9.35260137218465,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.1615964043447501,
+          "median_ms": 0.6180719938129187,
+          "nodes": 128,
+          "peak_cuda_bytes_delta": 12171776,
+          "peak_cuda_bytes_delta_plus_edge_index": 12302848,
+          "receiver_candidate_degree": {
+            "maximum": 64,
+            "mean": 64.0,
+            "minimum": 64,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 12.409755013845782,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.16338590869366182,
+          "spatial_static_to_egnn_latency_ratio": 10.654059803382733,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.16326105955304007,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 16384,
+          "cell_seed": 148273523,
+          "edge_index_bytes": 262144,
+          "edge_index_sha256": "e81b749662e5ad4764b240502350f5d7f127f8105604754b2e8bf6a942c74188",
+          "edge_multiplier": 128,
+          "effective_nonself_edges": 16256,
+          "ggg_to_egnn_latency_ratio": 8.099852365339547,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.0782563131058667,
+          "median_ms": 0.7136649801395833,
+          "nodes": 128,
+          "peak_cuda_bytes_delta": 25142784,
+          "peak_cuda_bytes_delta_plus_edge_index": 25404928,
+          "receiver_candidate_degree": {
+            "maximum": 128,
+            "mean": 128.0,
+            "minimum": 128,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 10.747510719437786,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.07912291662468006,
+          "spatial_static_to_egnn_latency_ratio": 9.226984885248124,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.07906245591406517,
+          "status": "completed"
+        }
+      ],
+      "egnn_execution_order": [
+        4,
+        16,
+        64,
+        128
+      ],
+      "nodes": 128,
+      "status": "completed"
+    },
+    {
+      "edge_free_execution_order": [
+        "spatial_dynamic",
+        "spatial_static",
+        "ggg"
+      ],
+      "edge_free_models": {
+        "ggg": {
+          "edge_index_bytes": 0,
+          "median_ms": 5.818291974719614,
+          "peak_cuda_bytes_delta": 7901696,
+          "peak_cuda_bytes_delta_plus_edge_index": 7901696,
+          "status": "completed"
+        },
+        "spatial_dynamic": {
+          "edge_index_bytes": 0,
+          "median_ms": 7.746142044197768,
+          "peak_cuda_bytes_delta": 7989760,
+          "peak_cuda_bytes_delta_plus_edge_index": 7989760,
+          "status": "completed"
+        },
+        "spatial_static": {
+          "edge_index_bytes": 0,
+          "median_ms": 6.623054970987141,
+          "peak_cuda_bytes_delta": 7983616,
+          "peak_cuda_bytes_delta_plus_edge_index": 7983616,
+          "status": "completed"
+        }
+      },
+      "egnn": [
+        {
+          "candidate_edges_including_self": 2048,
+          "cell_seed": 532262647,
+          "edge_index_bytes": 32768,
+          "edge_index_sha256": "8565f76b8f4ae32f6788ec78cb801af7379e3dd394c7c71a2fa9e8906787f90f",
+          "edge_multiplier": 4,
+          "effective_nonself_edges": 1536,
+          "ggg_to_egnn_latency_ratio": 9.372972643005413,
+          "ggg_to_egnn_memory_ratio_including_edges": 2.739747914077756,
+          "median_ms": 0.6207520491443574,
+          "nodes": 512,
+          "peak_cuda_bytes_delta": 2851328,
+          "peak_cuda_bytes_delta_plus_edge_index": 2884096,
+          "receiver_candidate_degree": {
+            "maximum": 4,
+            "mean": 4.0,
+            "minimum": 4,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 12.478641117455874,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 2.7702822652227943,
+          "spatial_static_to_egnn_latency_ratio": 10.669404926035021,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 2.7681519616545356,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 8192,
+          "cell_seed": 532263811,
+          "edge_index_bytes": 131072,
+          "edge_index_sha256": "f855d78beaf65a50c34916f5416646c6ab6ad36cca2926e92be815b56f51e7ae",
+          "edge_multiplier": 16,
+          "effective_nonself_edges": 7680,
+          "ggg_to_egnn_latency_ratio": 9.148790184958283,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.6503856041131105,
+          "median_ms": 0.6359629915095866,
+          "nodes": 512,
+          "peak_cuda_bytes_delta": 12018176,
+          "peak_cuda_bytes_delta_plus_edge_index": 12149248,
+          "receiver_candidate_degree": {
+            "maximum": 16,
+            "mean": 16.0,
+            "minimum": 16,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 12.180177380779243,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.6576341185890683,
+          "spatial_static_to_egnn_latency_ratio": 10.414214442362413,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.6571284082767921,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 32768,
+          "cell_seed": 532268467,
+          "edge_index_bytes": 524288,
+          "edge_index_sha256": "d9d435835466396ff9995585149f543c56d5cd651630fe1c1c3cac75400b1463",
+          "edge_multiplier": 64,
+          "effective_nonself_edges": 32256,
+          "ggg_to_egnn_latency_ratio": 6.272279669360501,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.15526000744459312,
+          "median_ms": 0.9276199853047729,
+          "nodes": 512,
+          "peak_cuda_bytes_delta": 50369024,
+          "peak_cuda_bytes_delta_plus_edge_index": 50893312,
+          "receiver_candidate_degree": {
+            "maximum": 64,
+            "mean": 64.0,
+            "minimum": 64,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 8.350555364169677,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.15699037233025825,
+          "spatial_static_to_egnn_latency_ratio": 7.139836437235785,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.15686964919870022,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 65536,
+          "cell_seed": 532274675,
+          "edge_index_bytes": 1048576,
+          "edge_index_sha256": "196618e98f7d0222ef2672802ce2242d67cbc0409e4e596946c40ddefbbfaa6f",
+          "edge_multiplier": 128,
+          "effective_nonself_edges": 65024,
+          "ggg_to_egnn_latency_ratio": 4.268025708539485,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.07960530048641093,
+          "median_ms": 1.363227958790958,
+          "nodes": 512,
+          "peak_cuda_bytes_delta": 98212352,
+          "peak_cuda_bytes_delta_plus_edge_index": 99260928,
+          "receiver_candidate_degree": {
+            "maximum": 128,
+            "mean": 128.0,
+            "minimum": 128,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 5.682205968741863,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.08049249751120602,
+          "spatial_static_to_egnn_latency_ratio": 4.858362043029916,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.08043060004435985,
+          "status": "completed"
+        }
+      ],
+      "egnn_execution_order": [
+        128,
+        64,
+        16,
+        4
+      ],
+      "nodes": 512,
+      "status": "completed"
+    },
+    {
+      "edge_free_execution_order": [
+        "ggg",
+        "spatial_static",
+        "spatial_dynamic"
+      ],
+      "edge_free_models": {
+        "ggg": {
+          "edge_index_bytes": 0,
+          "median_ms": 5.806872039102018,
+          "peak_cuda_bytes_delta": 31556096,
+          "peak_cuda_bytes_delta_plus_edge_index": 31556096,
+          "status": "completed"
+        },
+        "spatial_dynamic": {
+          "edge_index_bytes": 0,
+          "median_ms": 7.6388949528336525,
+          "peak_cuda_bytes_delta": 31908352,
+          "peak_cuda_bytes_delta_plus_edge_index": 31908352,
+          "status": "completed"
+        },
+        "spatial_static": {
+          "edge_index_bytes": 0,
+          "median_ms": 6.567873992025852,
+          "peak_cuda_bytes_delta": 31883776,
+          "peak_cuda_bytes_delta_plus_edge_index": 31883776,
+          "status": "completed"
+        }
+      },
+      "egnn": [
+        {
+          "candidate_edges_including_self": 8192,
+          "cell_seed": 2068267255,
+          "edge_index_bytes": 131072,
+          "edge_index_sha256": "113d28eefe91ed00876e50df753d7c8bc6b205cfb8967f65d8c761057fb16bb3",
+          "edge_multiplier": 4,
+          "effective_nonself_edges": 6144,
+          "ggg_to_egnn_latency_ratio": 8.93136821922964,
+          "ggg_to_egnn_memory_ratio_including_edges": 2.735718407386036,
+          "median_ms": 0.6501660100184381,
+          "nodes": 2048,
+          "peak_cuda_bytes_delta": 11403776,
+          "peak_cuda_bytes_delta_plus_edge_index": 11534848,
+          "receiver_candidate_degree": {
+            "maximum": 4,
+            "mean": 4.0,
+            "minimum": 4,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 11.749145349227069,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 2.766256824537263,
+          "spatial_static_to_egnn_latency_ratio": 10.101841515583986,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 2.764126237294154,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 32768,
+          "cell_seed": 2068268419,
+          "edge_index_bytes": 524288,
+          "edge_index_sha256": "0d4ef860c8e74ab3bc01e8e18d7e5a5948eb134af2a71a44feffed0f923e6643",
+          "edge_multiplier": 16,
+          "effective_nonself_edges": 30720,
+          "ggg_to_egnn_latency_ratio": 6.240009812750233,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.6416828910243729,
+          "median_ms": 0.930587004404515,
+          "nodes": 2048,
+          "peak_cuda_bytes_delta": 48652800,
+          "peak_cuda_bytes_delta_plus_edge_index": 49177088,
+          "receiver_candidate_degree": {
+            "maximum": 16,
+            "mean": 16.0,
+            "minimum": 16,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 8.208684321485663,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.6488459015710731,
+          "spatial_static_to_egnn_latency_ratio": 7.057775319169272,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.6483461566492102,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 131072,
+          "cell_seed": 2068273075,
+          "edge_index_bytes": 2097152,
+          "edge_index_sha256": "cfc11b8d83eb28b41132383eb094b42a2b4d62e059969ec136904e0c0de0fd4c",
+          "edge_multiplier": 64,
+          "effective_nonself_edges": 129024,
+          "ggg_to_egnn_latency_ratio": 2.3349559692407738,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.16031515233490007,
+          "median_ms": 2.4869299959391356,
+          "nodes": 2048,
+          "peak_cuda_bytes_delta": 194740736,
+          "peak_cuda_bytes_delta_plus_edge_index": 196837888,
+          "receiver_candidate_degree": {
+            "maximum": 64,
+            "mean": 64.0,
+            "minimum": 64,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 3.0716163966444854,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.16210472650468594,
+          "spatial_static_to_egnn_latency_ratio": 2.6409565217961175,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.1619798724928404,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 262144,
+          "cell_seed": 2068279283,
+          "edge_index_bytes": 4194304,
+          "edge_index_sha256": "ddfced1c730c48ca57fb3e25286ef8b3231a0cb7075e8f059087831c72ddac65",
+          "edge_multiplier": 128,
+          "effective_nonself_edges": 260096,
+          "ggg_to_egnn_latency_ratio": 1.0653403608571252,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.07988008849500175,
+          "median_ms": 5.450720025692135,
+          "nodes": 2048,
+          "peak_cuda_bytes_delta": 390849024,
+          "peak_cuda_bytes_delta_plus_edge_index": 395043328,
+          "receiver_candidate_degree": {
+            "maximum": 128,
+            "mean": 128.0,
+            "minimum": 128,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 1.401446949545654,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.08077177802633335,
+          "spatial_static_to_egnn_latency_ratio": 1.2049553015139243,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.08070956712879859,
+          "status": "completed"
+        }
+      ],
+      "egnn_execution_order": [
+        4,
+        16,
+        64,
+        128
+      ],
+      "nodes": 2048,
+      "status": "completed"
+    },
+    {
+      "edge_free_execution_order": [
+        "spatial_dynamic",
+        "spatial_static",
+        "ggg"
+      ],
+      "edge_free_models": {
+        "ggg": {
+          "edge_index_bytes": 0,
+          "median_ms": 9.959958028048277,
+          "peak_cuda_bytes_delta": 126173696,
+          "peak_cuda_bytes_delta_plus_edge_index": 126173696,
+          "status": "completed"
+        },
+        "spatial_dynamic": {
+          "edge_index_bytes": 0,
+          "median_ms": 13.166589953470975,
+          "peak_cuda_bytes_delta": 127713792,
+          "peak_cuda_bytes_delta_plus_edge_index": 127713792,
+          "status": "completed"
+        },
+        "spatial_static": {
+          "edge_index_bytes": 0,
+          "median_ms": 12.373631005175412,
+          "peak_cuda_bytes_delta": 127615488,
+          "peak_cuda_bytes_delta_plus_edge_index": 127615488,
+          "status": "completed"
+        }
+      },
+      "egnn": [
+        {
+          "candidate_edges_including_self": 32768,
+          "cell_seed": 8212285687,
+          "edge_index_bytes": 524288,
+          "edge_index_sha256": "88e8a957600ec935e6138317bd72cfc8c7ace74b3c27b50264c1fa6b57c391ca",
+          "edge_multiplier": 4,
+          "effective_nonself_edges": 24576,
+          "ggg_to_egnn_latency_ratio": 10.43538400618009,
+          "ggg_to_egnn_memory_ratio_including_edges": 2.6776591005400237,
+          "median_ms": 0.9544409695081413,
+          "nodes": 8192,
+          "peak_cuda_bytes_delta": 46596608,
+          "peak_cuda_bytes_delta_plus_edge_index": 47120896,
+          "receiver_candidate_degree": {
+            "maximum": 4,
+            "mean": 4.0,
+            "minimum": 4,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 13.795080444059527,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 2.7103430291308555,
+          "spatial_static_to_egnn_latency_ratio": 12.964270604972041,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 2.7082568209229296,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 131072,
+          "cell_seed": 8212286851,
+          "edge_index_bytes": 2097152,
+          "edge_index_sha256": "11fdd4404ab2c5ec668fa2bfb8e681b7f4c813a7f1c03bdf7b1ba5bd417bc1f6",
+          "edge_multiplier": 16,
+          "effective_nonself_edges": 122880,
+          "ggg_to_egnn_latency_ratio": 4.063802767833514,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.6448677857881171,
+          "median_ms": 2.4508960195817053,
+          "nodes": 8192,
+          "peak_cuda_bytes_delta": 193561088,
+          "peak_cuda_bytes_delta_plus_edge_index": 195658240,
+          "receiver_candidate_degree": {
+            "maximum": 16,
+            "mean": 16.0,
+            "minimum": 16,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 5.372153632090079,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.6527391435188213,
+          "spatial_static_to_egnn_latency_ratio": 5.048615243696556,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.6522367164296275,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 524288,
+          "cell_seed": 8212291507,
+          "edge_index_bytes": 8388608,
+          "edge_index_sha256": "b52ee83861ba2510742689852f9220d31cee9066d7992dc9897cff3245872ffa",
+          "edge_multiplier": 64,
+          "effective_nonself_edges": 516096,
+          "ggg_to_egnn_latency_ratio": 0.8758411685341971,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.15979885159955776,
+          "median_ms": 11.371876986231655,
+          "nodes": 8192,
+          "peak_cuda_bytes_delta": 781189632,
+          "peak_cuda_bytes_delta_plus_edge_index": 789578240,
+          "receiver_candidate_degree": {
+            "maximum": 64,
+            "mean": 64.0,
+            "minimum": 64,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 1.157820293818887,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.1617493815432401,
+          "spatial_static_to_egnn_latency_ratio": 1.088090472677168,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.16162487963194122,
+          "status": "completed"
+        },
+        {
+          "candidate_edges_including_self": 1048576,
+          "cell_seed": 8212297715,
+          "edge_index_bytes": 16777216,
+          "edge_index_sha256": "efc04c1d59ce5ca81cf22859f186534be4122277a9f3f34f63c89fbd2bcf5f21",
+          "edge_multiplier": 128,
+          "effective_nonself_edges": 1040384,
+          "ggg_to_egnn_latency_ratio": 0.4016922616556358,
+          "ggg_to_egnn_memory_ratio_including_edges": 0.07982491402317139,
+          "median_ms": 24.794996017590165,
+          "nodes": 8192,
+          "peak_cuda_bytes_delta": 1563853312,
+          "peak_cuda_bytes_delta_plus_edge_index": 1580630528,
+          "receiver_candidate_degree": {
+            "maximum": 128,
+            "mean": 128.0,
+            "minimum": 128,
+            "population_std": 0.0
+          },
+          "spatial_dynamic_to_egnn_latency_ratio": 0.5310180305788426,
+          "spatial_dynamic_to_egnn_memory_ratio_including_edges": 0.08079926949253508,
+          "spatial_static_to_egnn_latency_ratio": 0.49903742659999867,
+          "spatial_static_to_egnn_memory_ratio_including_edges": 0.08073707659023525,
+          "status": "completed"
+        }
+      ],
+      "egnn_execution_order": [
+        128,
+        64,
+        16,
+        4
+      ],
+      "nodes": 8192,
+      "status": "completed"
+    }
+  ],
+  "schema_version": 1,
+  "seed": 20260723,
+  "sizes": [
+    128,
+    512,
+    2048,
+    8192
+  ],
+  "warmup": 5
+}

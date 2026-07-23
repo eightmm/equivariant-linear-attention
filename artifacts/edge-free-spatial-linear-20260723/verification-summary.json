@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-free-spatial-linear-20260723",
+  "intentional_red": {
+    "command": ".venv/bin/python -m pytest -q tests/test_edge_free_spatial.py tests/test_scaling_benchmark.py::test_tiny_edge_free_grid_records_exact_boundaries_and_model_identity",
+    "exit_code": 1,
+    "result": "9 expected failures, 0 unexpected failures"
+  },
+  "late_quality_red": {
+    "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py::test_edge_free_timer_rejects_nonfinite_output_before_timing",
+    "exit_code": 1,
+    "result": "1 expected failure before nonfinite-output preflight repair"
+  },
+  "focused_final": {
+    "command": ".venv/bin/python -m pytest -q tests/test_edge_free_spatial.py tests/test_scaling_benchmark.py",
+    "exit_code": 0,
+    "result": "28 passed after direct node/graph scalar/vector/tensor O(3), translation, permutation, batch-isolation, and optional-position coverage was added"
+  },
+  "broader_regression": {
+    "command": ".venv/bin/python -m pytest -q tests/test_moment_attention.py tests/test_coordinate_updates.py tests/test_transport_controls.py tests/test_hardening_contract.py tests/test_train_compare.py tests/test_scaling_benchmark.py",
+    "exit_code": 0,
+    "result": "162 passed, 4 expected experimental-memory warnings"
+  },
+  "fast_gate": {
+    "command": "scripts/check.sh fast",
+    "exit_code": 0,
+    "tests_passed": 396,
+    "coverage_percent": 89.35,
+    "ruff": "passed",
+    "compileall": "passed",
+    "cpu_float64_smoke": "passed"
+  },
+  "gpu_gate": {
+    "command": "scripts/check.sh gpu",
+    "exit_code": 0,
+    "cuda_bfloat16_smoke": "passed",
+    "cuda_float32_smoke": "passed"
+  },
+  "independent_review_repair": {
+    "initial_review": "findings: 1 major and 2 minor",
+    "EFSR-001": "resolved by direct full-model checks for every claimed node/graph scalar/vector/tensor output plus optional updated positions",
+    "EFSR-002": "resolved by using EGNN latency as the explicit denominator and reporting the rerun dynamic k64 result as 3.6% slower",
+    "EFSR-003": "resolved by labeling model_parameters as trainable and separately recording total parameters and all-parameter bytes",
+    "focused_tests_after_repair": "28 passed",
+    "fast_gate_after_repair": "396 passed at 89.35% coverage",
+    "gpu_gate_after_repair": "CUDA bfloat16 and float32 passed",
+    "status": "pending_hash_bound_rereview"
+  },
+  "scientific_contracts": {
+    "dense_factorized_max_abs_error_below_1e-10": true,
+    "o3_translation_permutation_batch_error_below_1e-6": true,
+    "coordinate_update_equivariance": true,
+    "finite_training_gradients": true,
+    "default_state_and_output_identity": true,
+    "no_edge_index_on_candidate": true,
+    "no_node_pair_tensor": true,
+    "all_registered_gpu_cells_have_explicit_status": true,
+    "registered_gpu_cells_completed": 16,
+    "registered_gpu_cells_failed_or_skipped": 0
+  },
+  "resource_accounting": {
+    "approved_gpu_wall_seconds_maximum": 300,
+    "conservative_observed_gpu_process_wall_seconds": 80.0,
+    "approved_disk_bytes_maximum": 10485760,
+    "bundle_bytes_before_final_manifest_and_rereview": 224680
+  },
+  "not_verified": [
+    "QM9 or other domain accuracy",
+    "backward or optimizer throughput",
+    "neighbor construction time",
+    "multi-graph throughput",
+    "compiled execution",
+    "molecule, protein, force, chirality, or point-cloud generalization"
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C-301",
+      "text": "The opt-in ten-feature/head spatial kernel is positive, O(3)-invariant, translation-invariant after graph normalization, permutation-equivariant, and exactly factorized without an edge list or node-pair tensor.",
+      "permitted_inference": "the implemented feature map, source inspection, dense-reference tests, and full-model symmetry tests",
+      "status": "supported",
+      "evidence_refs": [
+        "implementation-record.json",
+        "verification-summary.json",
+        "report.md"
+      ],
+      "required_support": 3,
+      "required_evidence": [
+        "kernel derivation",
+        "dense factorized equivalence",
+        "full-model rigid-transform and permutation tests"
+      ],
+      "dependencies": [],
+      "falsifier": "a materialized same-kernel reference differs by at least 1e-10, any registered symmetry error reaches 1e-6, or the candidate materializes edge or node-pair state",
+      "uncertainty": "the finite degree-two feature map is a soft truncated spatial kernel, not an exact Gaussian or hard neighborhood cutoff",
+      "next_action": "retain the fixed-rank map until a separate accuracy packet compares ranks or learned scales"
+    },
+    {
+      "id": "C-302",
+      "text": "The spatial option is backward-compatible when disabled, adds no learned or persistent state when enabled, and supports the existing coordinate updater with finite gradients.",
+      "permitted_inference": "matched initialization and train-path tests for the public model",
+      "status": "supported",
+      "evidence_refs": [
+        "implementation-record.json",
+        "verification-summary.json",
+        "gpu-benchmark-optimized.json"
+      ],
+      "required_support": 3,
+      "required_evidence": [
+        "state/output identity test",
+        "parameter/state hashes",
+        "coordinate and gradient tests"
+      ],
+      "dependencies": ["C-301"],
+      "falsifier": "the explicit-off output or state differs from default, static spatial changes the persistent state hash, or coordinate/train gradients become nonfinite",
+      "uncertainty": "checkpoint interoperability was tested through state schema and tensors, not a historical production checkpoint archive",
+      "next_action": "keep the option false by default"
+    },
+    {
+      "id": "C-303",
+      "text": "On the recorded RTX PRO 6000 FP32 one-graph forward workload at N=8192, static edge-free spatial attention is faster and uses less measured working-plus-edge memory than private static EGNN at k=64 and k=128.",
+      "permitted_inference": "this hardware, software state, model shapes, synthetic input, forward-only protocol, and confirmed edge multipliers",
+      "status": "supported",
+      "evidence_refs": [
+        "gpu-benchmark-optimized.json",
+        "gpu-crossover-confirmation.json",
+        "analysis.json",
+        "report.md"
+      ],
+      "required_support": 3,
+      "required_evidence": [
+        "complete registered grid",
+        "synchronized high-repeat confirmation",
+        "explicit memory and topology boundary"
+      ],
+      "dependencies": ["C-301", "C-302"],
+      "falsifier": "the 100-repeat static/EGNN latency ratio is at least one or memory ratio is at least one at either registered k=64 or k=128 point",
+      "uncertainty": "the k=64 speed advantage is 2.7% and is hardware, dtype, shape, implementation, and timing-protocol dependent",
+      "next_action": "treat k=128 as the robust systems win and remeasure k=64 after any environment or kernel change"
+    },
+    {
+      "id": "C-304",
+      "text": "Coordinate-updating edge-free spatial attention is faster than private static EGNN at N=8192,k=64.",
+      "permitted_inference": "none; this registered prediction was tested and failed",
+      "status": "unsupported",
+      "evidence_refs": [
+        "gpu-crossover-confirmation.json",
+        "analysis.json",
+        "report.md"
+      ],
+      "required_support": 2,
+      "required_evidence": [
+        "synchronized high-repeat timing",
+        "coordinate update included in timed forward"
+      ],
+      "dependencies": ["C-302", "C-303"],
+      "falsifier": "not applicable to the retained unsupported claim",
+      "uncertainty": "dynamic attention was 3.6% slower at k=64 using EGNN latency as the denominator, but faster at exploratory k=80 and registered k=128",
+      "next_action": "do not promote a dynamic k=64 crossover; optimize coordinate work only if accuracy later justifies it"
+    },
+    {
+      "id": "C-305",
+      "text": "Edge-free spatial attention is universally faster or lower-memory than EGNN across small, sparse, and dense 3D workloads.",
+      "permitted_inference": "none; the universal systems claim is contradicted by the registered grid",
+      "status": "unsupported",
+      "evidence_refs": [
+        "gpu-benchmark-optimized.json",
+        "analysis.json",
+        "report.md"
+      ],
+      "required_support": 2,
+      "required_evidence": [
+        "registered N-by-k grid",
+        "explicit low-density results"
+      ],
+      "dependencies": ["C-303"],
+      "falsifier": "not applicable to an unsupported universal claim",
+      "uncertainty": "different hardware, batching, compilation, precision, width, and graph construction can shift the crossover",
+      "next_action": "select the edge-free path only for workloads whose measured N and density justify it"
+    },
+    {
+      "id": "C-306",
+      "text": "The synthetic forward crossover establishes better molecular, protein, force, or point-cloud accuracy or preserves arbitrary omitted graph topology.",
+      "permitted_inference": "none; external-validity and representation boundary",
+      "status": "unsupported",
+      "evidence_refs": [
+        "scope.md",
+        "report.md",
+        "verification-summary.json"
+      ],
+      "required_support": 2,
+      "required_evidence": [
+        "domain-specific split-aware task evaluation",
+        "topology-sensitive comparison"
+      ],
+      "dependencies": ["C-303"],
+      "falsifier": "not applicable because no domain superiority claim is admitted",
+      "uncertainty": "no labels, task split, forces, chirality, graph-builder, backward pass, or domain data were evaluated",
+      "next_action": "run a separate accuracy packet before any scientific-model promotion"
+    }
+  ]
+}

@@ -77,6 +77,7 @@ class EquivariantAttentionConfig:
     eps: float = 1e-12
     global_transport_mode: str = "learned"
     coordinate_updates: bool = False
+    use_multiscale_spatial_kernel: bool = False
     use_pairwise_local_content: bool = False
     pairwise_residual_scale_init: float = 0.1
     use_edge_conditioned_local_transport: bool = False
@@ -139,6 +140,9 @@ class EquivariantAttention(nn.Module):
                     use_key_balancing=config.use_key_balancing,
                     local_head_count=local_head_counts[layer_index],
                     global_transport_mode=config.global_transport_mode,
+                    use_multiscale_spatial_kernel=(
+                        config.use_multiscale_spatial_kernel
+                    ),
                     local_cutoff=config.local_cutoff,
                     num_rbf=config.num_rbf,
                     learn_local_radial_gate=config.learn_local_radial_gate,
@@ -379,6 +383,7 @@ class _EquivariantMomentLayer(nn.Module):
         use_key_balancing: bool,
         local_head_count: int,
         global_transport_mode: str,
+        use_multiscale_spatial_kernel: bool,
         local_cutoff: float,
         num_rbf: int,
         learn_local_radial_gate: bool,
@@ -409,6 +414,16 @@ class _EquivariantMomentLayer(nn.Module):
         self.global_transport_mode = global_transport_mode
         self.has_active_global_transport = (
             self.global_head_count > 0 and global_transport_mode != "none"
+        )
+        spatial_scales = (
+            torch.logspace(-3.0, 0.0, num_heads, base=2.0)
+            if use_multiscale_spatial_kernel
+            else None
+        )
+        self.register_buffer(
+            "_spatial_scales",
+            spatial_scales,
+            persistent=False,
         )
         self.local_cutoff = local_cutoff
         self.num_rbf = num_rbf
@@ -640,6 +655,14 @@ class _EquivariantMomentLayer(nn.Module):
             else:
                 if global_pos is None:
                     raise RuntimeError("active global transport requires global_pos")
+                spatial_features = (
+                    _quadratic_gaussian_spatial_features(
+                        global_pos,
+                        self._spatial_scales,
+                    )
+                    if self._spatial_scales is not None
+                    else None
+                )
                 memory_router_latent = None
                 if self.use_memory_interaction and self.global_memory_count > 1:
                     memory_router_latent = torch.tanh(
@@ -680,6 +703,7 @@ class _EquivariantMomentLayer(nn.Module):
                         use_memory_interaction=self.use_memory_interaction,
                         use_radial_trace=self.use_radial_trace,
                         global_transport_mode=self.global_transport_mode,
+                        spatial_features=spatial_features,
                     )
                 )
 
@@ -992,11 +1016,16 @@ def _global_moment_messages(
     use_memory_interaction: bool,
     use_radial_trace: bool,
     global_transport_mode: str = "learned",
+    spatial_features: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if global_transport_mode not in {"learned", "uniform"}:
         raise ValueError(
             "_global_moment_messages supports only learned or uniform transport"
         )
+    if spatial_features is not None and global_transport_mode != "learned":
+        raise ValueError("spatial features require learned global transport")
+    if spatial_features is not None and use_memory_interaction:
+        raise ValueError("spatial features cannot use memory interaction")
     moment_dtype = _moment_dtype(
         query_scalar,
         key_scalar,
@@ -1088,6 +1117,7 @@ def _global_moment_messages(
             kernel_floor=kernel_floor,
             kernel_floor_mode=kernel_floor_mode,
             graph_counts=graph_counts,
+            spatial_features=spatial_features,
         )
 
     offset = scalar_value.shape[-1]
@@ -1469,6 +1499,41 @@ def _relative_radial_trace(
     )
 
 
+def _quadratic_gaussian_spatial_features(
+    pos: torch.Tensor,
+    scales: torch.Tensor,
+) -> torch.Tensor:
+    """O(3)-compatible positive degree-two Gaussian-Taylor features."""
+    if pos.ndim != 2 or pos.shape[-1] != 3:
+        raise ValueError("pos must have shape (nodes, 3)")
+    if scales.ndim != 1 or scales.numel() == 0:
+        raise ValueError("scales must be a nonempty one-dimensional tensor")
+    scales = scales.to(device=pos.device, dtype=pos.dtype)
+
+    scaled = pos[:, None, :] * torch.sqrt(2.0 * scales)[None, :, None]
+    x, y, z = scaled.unbind(dim=-1)
+    inverse_sqrt_two = pos.new_tensor(2.0).rsqrt()
+    polynomial = torch.stack(
+        [
+            torch.ones_like(x),
+            x,
+            y,
+            z,
+            inverse_sqrt_two * x.square(),
+            inverse_sqrt_two * y.square(),
+            inverse_sqrt_two * z.square(),
+            x * y,
+            x * z,
+            y * z,
+        ],
+        dim=-1,
+    )
+    gaussian = torch.exp(
+        -pos.square().sum(dim=-1, keepdim=True) * scales[None, :]
+    )
+    return gaussian.unsqueeze(-1) * polynomial
+
+
 def _factorized_moment_attention(
     query_scalar: torch.Tensor,
     key_scalar: torch.Tensor,
@@ -1485,6 +1550,7 @@ def _factorized_moment_attention(
     kernel_floor: float = 1.0,
     kernel_floor_mode: str = "fixed",
     graph_counts: torch.Tensor | None = None,
+    spatial_features: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if balanced and kernel_floor_mode == "inverse_graph_size":
         raise ValueError(
@@ -1497,6 +1563,7 @@ def _factorized_moment_attention(
         query_vector,
         key_vector,
         value,
+        *(() if spatial_features is None else (spatial_features,)),
     )
     query_scalar = query_scalar.to(dtype=reduction_dtype)
     key_scalar = key_scalar.to(dtype=reduction_dtype)
@@ -1510,6 +1577,15 @@ def _factorized_moment_attention(
         alignment_dot_scale = alignment_scale
     alignment_dot_scale = alignment_dot_scale.to(dtype=reduction_dtype)
     value = value.to(dtype=reduction_dtype)
+    if spatial_features is not None:
+        if spatial_features.ndim != 3 or spatial_features.shape[:2] != (
+            query_scalar.shape[0],
+            query_scalar.shape[1],
+        ):
+            raise ValueError(
+                "spatial_features must have shape (nodes, heads, features)"
+            )
+        spatial_features = spatial_features.to(dtype=reduction_dtype)
     if balanced:
         row_scale = query_scalar.new_ones(query_scalar.shape[:2])
         key_mass = _structured_key_mass(
@@ -1527,6 +1603,13 @@ def _factorized_moment_attention(
             kernel_floor_mode=kernel_floor_mode,
             graph_counts=graph_counts,
         )
+        if spatial_features is not None:
+            key_mass = key_mass + _spatial_key_mass(
+                spatial_features,
+                row_scale,
+                batch,
+                num_graphs,
+            )
         key_scale = key_mass.reciprocal()
         denominator = _structured_row_denominator(
             query_scalar,
@@ -1576,6 +1659,19 @@ def _factorized_moment_attention(
         kernel_floor_mode=kernel_floor_mode,
         graph_counts=graph_counts,
     )
+    if spatial_features is not None:
+        transported = _spatial_transport(
+            spatial_features,
+            key_scale,
+            torch.cat(
+                [value, value.new_ones((*value.shape[:-1], 1))],
+                dim=-1,
+            ),
+            batch,
+            num_graphs,
+        )
+        numerator = numerator + transported[..., :-1]
+        denominator = denominator + transported[..., -1]
     return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
 
 
@@ -2105,6 +2201,47 @@ def _bounded_square_fraction(distance: torch.Tensor, scale: float) -> torch.Tens
     scale_ratio = scale_tensor / normalizer
     distance_square = distance_ratio.square()
     return distance_square / (distance_square + scale_ratio.square())
+
+
+def _spatial_key_mass(
+    features: torch.Tensor,
+    row_scale: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    weighted_features = features * row_scale.unsqueeze(-1)
+    if num_graphs == 1:
+        summary = weighted_features.sum(dim=0)
+        return torch.einsum("nhf,hf->nh", features, summary)
+    summary = _segment_sum(
+        weighted_features,
+        batch,
+        num_graphs,
+    )
+    return torch.einsum("nhf,nhf->nh", features, summary[batch])
+
+
+def _spatial_transport(
+    features: torch.Tensor,
+    key_scale: torch.Tensor,
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+) -> torch.Tensor:
+    weighted_value = key_scale.unsqueeze(-1) * value
+    if num_graphs == 1:
+        summary = torch.einsum(
+            "nhf,nhv->hfv",
+            features,
+            weighted_value,
+        )
+        return torch.einsum("nhf,hfv->nhv", features, summary)
+    summary = _segment_sum(
+        features.unsqueeze(-1) * weighted_value.unsqueeze(-2),
+        batch,
+        num_graphs,
+    )
+    return torch.einsum("nhf,nhfv->nhv", features, summary[batch])
 
 
 def _structured_key_mass(
@@ -2664,6 +2801,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_memory_interaction",
         "use_radial_trace",
         "coordinate_updates",
+        "use_multiscale_spatial_kernel",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
@@ -2689,6 +2827,19 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                     "each local_head_counts value must lie between zero and num_heads"
                 )
         local_head_counts = config.local_head_counts
+    if config.use_multiscale_spatial_kernel:
+        if any(local_head_counts):
+            raise ValueError(
+                "use_multiscale_spatial_kernel requires an all-global route"
+            )
+        if config.global_transport_mode != "learned":
+            raise ValueError(
+                "use_multiscale_spatial_kernel requires learned global transport"
+            )
+        if config.use_memory_interaction:
+            raise ValueError(
+                "use_multiscale_spatial_kernel cannot use memory interaction"
+            )
     if config.use_pairwise_local_content and not any(local_head_counts):
         raise ValueError(
             "use_pairwise_local_content requires at least one local head"

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-free-spatial-linear-20260723",
+  "authorization_basis": "The user explicitly requested implementation followed by memory and speed measurement.",
+  "target": "one local CUDA GPU",
+  "environment": "repository .venv and existing lockfile",
+  "source_paths": [
+    "src/equivariant_attention/moment.py",
+    "src/equivariant_attention/training.py",
+    "scripts/benchmark_sparse_scaling.py"
+  ],
+  "inputs": "deterministic synthetic typed 3D point sets; no private or external data",
+  "network_or_download_change": false,
+  "dependency_change": false,
+  "expected_gpu_wall_seconds_maximum": 300,
+  "expected_disk_bytes_maximum": 10485760,
+  "output_path": "artifacts/edge-free-spatial-linear-20260723/",
+  "smoke": "focused CPU dense-reference and symmetry tests, then project CUDA smoke",
+  "full": "registered N-by-k forward latency and peak allocated CUDA memory benchmark",
+  "validation": "dense error below 1e-10, symmetry error below 1e-6, explicit status for every admitted benchmark cell",
+  "cancellation": "interrupt only the benchmark process launched by this run; preserve completed JSON and checkpoint state"
+}

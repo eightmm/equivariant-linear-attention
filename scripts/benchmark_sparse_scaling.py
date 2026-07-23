@@ -676,6 +676,20 @@ def _timed_model_metrics(
     repeats: int,
 ) -> dict[str, Any]:
     try:
+        with torch.inference_mode():
+            output = model(
+                node_feats,
+                pos,
+                batch=batch,
+                edge_index=edge_index,
+                edge_index_is_validated=True,
+            )
+        if not _model_output_is_finite(output):
+            return {
+                "status": "failed",
+                "failure_class": "nonfinite_output",
+            }
+        del output
         row = _model_row(
             model=model,
             model_name="model",
@@ -699,6 +713,359 @@ def _timed_model_metrics(
         "status": "completed",
         "median_ms": row["median_ms"],
         "peak_cuda_bytes_delta": row["peak_cuda_bytes_delta"],
+    }
+
+
+def _model_output_is_finite(value: Any) -> bool:
+    if isinstance(value, torch.Tensor):
+        return bool(torch.isfinite(value).all().item())
+    if isinstance(value, dict):
+        return all(_model_output_is_finite(child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return all(_model_output_is_finite(child) for child in value)
+    return True
+
+
+def _timed_edge_free_metrics(
+    *,
+    model: torch.nn.Module,
+    node_feats: torch.Tensor,
+    pos: torch.Tensor,
+    batch: torch.Tensor,
+    warmup: int,
+    repeats: int,
+) -> dict[str, Any]:
+    try:
+        with torch.inference_mode():
+            output = model(node_feats, pos, batch=batch)
+        if not _model_output_is_finite(output):
+            return {
+                "status": "failed",
+                "failure_class": "nonfinite_output",
+            }
+        del output
+        elapsed, peak = _measure(
+            lambda: model(node_feats, pos, batch=batch),
+            device=node_feats.device,
+            warmup=warmup,
+            repeats=repeats,
+        )
+    except torch.OutOfMemoryError as error:
+        if node_feats.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return {
+            "status": "failed",
+            "failure_class": "out_of_memory",
+            "message": str(error).splitlines()[0],
+        }
+    return {
+        "status": "completed",
+        "median_ms": elapsed,
+        "peak_cuda_bytes_delta": peak,
+        "edge_index_bytes": 0,
+        "peak_cuda_bytes_delta_plus_edge_index": peak,
+    }
+
+
+def _module_parameter_bytes(module: torch.nn.Module) -> int:
+    return sum(
+        parameter.numel() * parameter.element_size()
+        for parameter in module.parameters()
+    )
+
+
+def run_edge_free_spatial_benchmark(
+    *,
+    sizes: Sequence[int],
+    edge_multipliers: Sequence[int] = DEFAULT_EDGE_MULTIPLIERS,
+    device: str = "auto",
+    seed: int = 20260723,
+    model_seed: int = 20260723,
+    warmup: int = 3,
+    repeats: int = 7,
+    max_wall_seconds: float = 120.0,
+) -> dict[str, Any]:
+    """Compare edge-free global variants with EGNN over exact E=kN graphs."""
+    validated_sizes = list(sizes)
+    validated_multipliers = list(edge_multipliers)
+    if not validated_sizes or any(
+        isinstance(size, bool) or not isinstance(size, int) or size < 2
+        for size in validated_sizes
+    ):
+        raise ValueError("sizes must contain positive integers at least two")
+    if len(set(validated_sizes)) != len(validated_sizes):
+        raise ValueError("sizes must be unique")
+    if not validated_multipliers or any(
+        isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        for value in validated_multipliers
+    ):
+        raise ValueError("edge_multipliers must contain positive integers")
+    if len(set(validated_multipliers)) != len(validated_multipliers):
+        raise ValueError("edge_multipliers must be unique")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a nonnegative integer")
+    if (
+        isinstance(model_seed, bool)
+        or not isinstance(model_seed, int)
+        or model_seed < 0
+    ):
+        raise ValueError("model_seed must be a nonnegative integer")
+    if warmup < 0 or repeats <= 0:
+        raise ValueError("warmup must be nonnegative and repeats must be positive")
+    if (
+        isinstance(max_wall_seconds, bool)
+        or not isinstance(max_wall_seconds, (int, float))
+        or not math.isfinite(float(max_wall_seconds))
+        or max_wall_seconds <= 0
+    ):
+        raise ValueError("max_wall_seconds must be finite and positive")
+
+    resolved_device = _resolve_device(device)
+
+    def build_edge_free(
+        *,
+        spatial: bool,
+        coordinate_updates: bool,
+    ) -> torch.nn.Module:
+        torch.manual_seed(model_seed)
+        return (
+            build_regression_model(
+                node_dim=11,
+                hidden_dim=64,
+                num_layers=3,
+                num_heads=4,
+                local_head_counts=(0, 0, 0),
+                coordinate_updates=coordinate_updates,
+                use_multiscale_spatial_kernel=spatial,
+            )
+            .to(device=resolved_device, dtype=torch.float32)
+            .eval()
+        )
+
+    ggg = build_edge_free(spatial=False, coordinate_updates=False)
+    spatial_static = build_edge_free(spatial=True, coordinate_updates=False)
+    spatial_dynamic = build_edge_free(spatial=True, coordinate_updates=True)
+    torch.manual_seed(model_seed)
+    egnn = (
+        _StaticEGNNBaseline(
+            node_dim=11,
+            hidden_dim=91,
+            num_layers=3,
+        )
+        .to(device=resolved_device, dtype=torch.float32)
+        .eval()
+    )
+    models = {
+        "ggg": ggg,
+        "spatial_static": spatial_static,
+        "spatial_dynamic": spatial_dynamic,
+        "static_egnn": egnn,
+    }
+
+    rows: list[dict[str, Any]] = []
+    started = time.perf_counter()
+    for size_index, num_nodes in enumerate(validated_sizes):
+        if time.perf_counter() - started >= max_wall_seconds:
+            rows.append(
+                {
+                    "status": "skipped",
+                    "reason": "wall_time_ceiling_reached",
+                    "nodes": num_nodes,
+                    "edge_free_models": {},
+                    "egnn": [],
+                }
+            )
+            continue
+        node_feats, pos, batch = _model_inputs(
+            num_nodes,
+            device=resolved_device,
+        )
+        edge_free_order = [
+            ("ggg", ggg),
+            ("spatial_static", spatial_static),
+            ("spatial_dynamic", spatial_dynamic),
+        ]
+        if size_index % 2:
+            edge_free_order.reverse()
+        edge_free_metrics = {
+            name: _timed_edge_free_metrics(
+                model=model,
+                node_feats=node_feats,
+                pos=pos,
+                batch=batch,
+                warmup=warmup,
+                repeats=repeats,
+            )
+            for name, model in edge_free_order
+        }
+
+        multiplier_order = list(validated_multipliers)
+        if size_index % 2:
+            multiplier_order.reverse()
+        egnn_cells: list[dict[str, Any]] = []
+        for edge_multiplier in multiplier_order:
+            if edge_multiplier > num_nodes:
+                egnn_cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "edge_multiplier_exceeds_num_nodes",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+            if time.perf_counter() - started >= max_wall_seconds:
+                egnn_cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "wall_time_ceiling_reached",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+            cell_seed = seed + num_nodes * 1_000_003 + edge_multiplier * 97
+            edge_index = seeded_exact_edge_index(
+                num_nodes,
+                edge_multiplier=edge_multiplier,
+                seed=cell_seed,
+                device=resolved_device,
+            )
+            metrics = _timed_model_metrics(
+                model=egnn,
+                node_feats=node_feats,
+                pos=pos,
+                batch=batch,
+                edge_index=edge_index,
+                warmup=warmup,
+                repeats=repeats,
+            )
+            edge_bytes = edge_index.numel() * edge_index.element_size()
+            cell: dict[str, Any] = {
+                **metrics,
+                "nodes": num_nodes,
+                "edge_multiplier": edge_multiplier,
+                "cell_seed": cell_seed,
+                "candidate_edges_including_self": edge_index.shape[1],
+                "effective_nonself_edges": edge_index.shape[1] - num_nodes,
+                "edge_index_sha256": _edge_index_sha256(edge_index),
+                "edge_index_bytes": edge_bytes,
+                "receiver_candidate_degree": _receiver_degree_summary(
+                    edge_index,
+                    num_nodes=num_nodes,
+                ),
+            }
+            if metrics["status"] == "completed":
+                cell["peak_cuda_bytes_delta_plus_edge_index"] = (
+                    metrics["peak_cuda_bytes_delta"] + edge_bytes
+                )
+                for candidate_name, candidate_metrics in edge_free_metrics.items():
+                    if candidate_metrics["status"] != "completed":
+                        continue
+                    cell[f"{candidate_name}_to_egnn_latency_ratio"] = (
+                        candidate_metrics["median_ms"] / metrics["median_ms"]
+                    )
+                    cell[f"{candidate_name}_to_egnn_memory_ratio_including_edges"] = (
+                        candidate_metrics[
+                            "peak_cuda_bytes_delta_plus_edge_index"
+                        ]
+                        / cell["peak_cuda_bytes_delta_plus_edge_index"]
+                    )
+            egnn_cells.append(cell)
+            del edge_index
+            if resolved_device.type == "cuda":
+                torch.cuda.empty_cache()
+
+        egnn_cells.sort(key=lambda cell: cell["edge_multiplier"])
+        all_completed = all(
+            metrics["status"] == "completed"
+            for metrics in edge_free_metrics.values()
+        ) and all(cell["status"] == "completed" for cell in egnn_cells)
+        rows.append(
+            {
+                "status": "completed" if all_completed else "partial",
+                "nodes": num_nodes,
+                "edge_free_execution_order": [
+                    name for name, _model in edge_free_order
+                ],
+                "egnn_execution_order": multiplier_order,
+                "edge_free_models": edge_free_metrics,
+                "egnn": egnn_cells,
+            }
+        )
+        del node_feats, pos, batch
+        if resolved_device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    elapsed = time.perf_counter() - started
+    return {
+        "schema_version": 1,
+        "benchmark": "edge_free_spatial_vs_edge_scaled_egnn",
+        "graph_generator": "seeded_exact_receiver_regular_directed",
+        "device": str(resolved_device),
+        "model_dtype": "float32",
+        "seed": seed,
+        "graph_seed": seed,
+        "model_seed": model_seed,
+        "sizes": validated_sizes,
+        "edge_multipliers": validated_multipliers,
+        "warmup": warmup,
+        "repeats": repeats,
+        "max_wall_seconds": float(max_wall_seconds),
+        "elapsed_wall_seconds": float(elapsed),
+        "model_parameters_semantics": "trainable_parameters",
+        "model_parameters": {
+            name: sum(
+                parameter.numel()
+                for parameter in model.parameters()
+                if parameter.requires_grad
+            )
+            for name, model in models.items()
+        },
+        "model_total_parameters": {
+            name: sum(parameter.numel() for parameter in model.parameters())
+            for name, model in models.items()
+        },
+        "model_parameter_bytes": {
+            name: _module_parameter_bytes(model)
+            for name, model in models.items()
+        },
+        "model_state_sha256": {
+            name: _module_state_sha256(model)
+            for name, model in models.items()
+        },
+        "rows": rows,
+        "kernel_contract": {
+            "spatial_feature_dimension_per_head": 10,
+            "head_scales": [0.125, 0.25, 0.5, 1.0],
+            "node_pair_tensor_materialized": False,
+            "candidate_complexity_at_fixed_width": "O(N)",
+            "egnn_complexity_at_fixed_width": "O(E)",
+        },
+        "memory_accounting": {
+            "peak_cuda_bytes_delta": (
+                "maximum allocated bytes during synchronized forwards minus "
+                "the allocated baseline after inputs, models, and edges exist"
+            ),
+            "edge_index_bytes": "added separately because it exists at baseline",
+            "model_parameter_bytes": (
+                "all parameter tensors, trainable and frozen, reported "
+                "separately from forward delta"
+            ),
+        },
+        "inference_boundary": {
+            "edge_construction_timed": False,
+            "coordinate_updates_timed": True,
+            "candidate_edge_index": None,
+            "egnn_receives_prebuilt_edges": True,
+            "topology_matched": False,
+        },
+        "limitations": {
+            "forward_only": True,
+            "backward_or_training_inferred": False,
+            "task_accuracy_inferred": False,
+            "same_computation_inferred": False,
+        },
     }
 
 
@@ -1066,6 +1433,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--skip-model-benchmarks", action="store_true")
     parser.add_argument("--edge-multiplier-grid", action="store_true")
+    parser.add_argument("--edge-free-spatial-grid", action="store_true")
     parser.add_argument(
         "--edge-multipliers",
         nargs="+",
@@ -1081,7 +1449,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.edge_multiplier_grid:
+    if args.edge_multiplier_grid and args.edge_free_spatial_grid:
+        raise ValueError(
+            "--edge-multiplier-grid and --edge-free-spatial-grid are exclusive"
+        )
+    if args.edge_free_spatial_grid:
+        result = run_edge_free_spatial_benchmark(
+            sizes=args.sizes,
+            edge_multipliers=args.edge_multipliers,
+            device=args.device,
+            seed=args.seed,
+            model_seed=args.model_seed,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            max_wall_seconds=args.max_wall_seconds,
+        )
+    elif args.edge_multiplier_grid:
         result = run_edge_multiplier_benchmark(
             sizes=args.sizes,
             edge_multipliers=args.edge_multipliers,

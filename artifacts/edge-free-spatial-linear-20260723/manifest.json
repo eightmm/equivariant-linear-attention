@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-free-spatial-linear-20260723",
+  "question": "Can the existing all-global equivariant factorized attention add a fixed-rank multi-scale Euclidean spatial kernel without edges or pair tensors, preserve symmetry and coordinate updates, and improve forward latency and peak memory against private static EGNN as E=kN grows?",
+  "plan": [
+    {
+      "id": "S1",
+      "status": "completed",
+      "description": "Freeze the edge-free kernel, models, grid, resource ceiling, falsifiers, and inference boundaries."
+    },
+    {
+      "id": "S2",
+      "status": "completed",
+      "description": "Write and retain intentional RED tests for the feature map, dense equivalence, symmetry, coordinates, benchmark schema, and nonfinite output."
+    },
+    {
+      "id": "S3",
+      "status": "completed",
+      "description": "Implement the opt-in spatial sufficient statistics, public configuration, coordinate-compatible plumbing, and benchmark entrypoint."
+    },
+    {
+      "id": "S4",
+      "status": "completed",
+      "description": "Pass focused regressions, the 396-test fast gate, and CUDA bf16/fp32 smoke."
+    },
+    {
+      "id": "S5",
+      "status": "completed",
+      "description": "Run and retain the initial grid, optimize disclosed spatial-only overhead, rerun the authoritative grid, and confirm the high-density crossover."
+    },
+    {
+      "id": "S6",
+      "status": "completed",
+      "description": "Validate the hash-bound provenance bundle, obtain independent record/method/source review, resolve findings, and publish the reviewed record."
+    }
+  ],
+  "inputs": [
+    {
+      "kind": "repository",
+      "path": "../..",
+      "base_commit": "6f596ed6cb5df1f7c2f9a0da692cd0836e2eaa82",
+      "source_state": "base commit plus source-changes.patch"
+    },
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "evidence_cutoff": "2026-07-23 Asia/Seoul",
+      "post_outcome_optimization_disclosed": true
+    },
+    {
+      "kind": "synthetic_input",
+      "name": "deterministic typed 3D point sets and receiver-regular EGNN control graphs",
+      "nodes": [128, 512, 2048, 8192],
+      "edge_multipliers": [4, 16, 64, 128],
+      "confirmation_edge_multipliers": [64, 80, 96, 128],
+      "model_seed": 20260723,
+      "graph_seed": 20260723,
+      "external_data": false,
+      "test_evaluated": false
+    }
+  ],
+  "code": [
+    {
+      "path": "../../PROJECT.md",
+      "role": "project status and result boundary",
+      "sha256": "04cc135829f64894aab8966cabc38cfe210a2eb975c44a2f63f86895a1e65ea5"
+    },
+    {
+      "path": "../../README.md",
+      "role": "public usage and result summary",
+      "sha256": "dfbc50704a7fd147c1fd4beb81fe386640f2de2023b55b51b0e77d23fd057ca6"
+    },
+    {
+      "path": "../../docs/BENCHMARKS.md",
+      "role": "benchmark interpretation record",
+      "sha256": "ed8dc5853da9fdd4391416fa62d28eb0d23ec4e16f35acb4e0c5e95c9411f086"
+    },
+    {
+      "path": "../../docs/CONFIGS.md",
+      "role": "public configuration and benchmark contract",
+      "sha256": "d0e5bbfe4d6acea23aa5ac3077b7efa03f53075ba5268763a24d3641b7c574ec"
+    },
+    {
+      "path": "../../docs/EXPERIMENTS.jsonl",
+      "role": "append-only experiment ledger",
+      "sha256": "754cf511150e46f5a3d7faa94c3ce4682cd786ca0d7d4615a873820cbc1fd93d"
+    },
+    {
+      "path": "../../src/equivariant_attention/moment.py",
+      "role": "spatial feature map and exact sufficient-statistic transport",
+      "sha256": "87540bb4d2434dc793f13a78d12b0167288b4fc0260cca484323fd3be116ec51"
+    },
+    {
+      "path": "../../src/equivariant_attention/training.py",
+      "role": "regression model builder plumbing",
+      "sha256": "56df01b35e8a84072083eb993671883f6719b94a0e4230df5b3352fab0f398a3"
+    },
+    {
+      "path": "../../scripts/benchmark_sparse_scaling.py",
+      "role": "edge-free spatial versus E=kN EGNN benchmark",
+      "sha256": "5f23ecb8e05918b6c8d48a062f08cfcbbc4e003957c0bbf8e7dc05c24815f5d2"
+    },
+    {
+      "path": "../../tests/test_edge_free_spatial.py",
+      "role": "feature, dense-equivalence, symmetry, coordinate, default, and gradient tests",
+      "sha256": "e41685bda982eaa0966dc3e2f4f0b6d39caede01c2650b8564a0abf76e91ff2a"
+    },
+    {
+      "path": "../../tests/test_scaling_benchmark.py",
+      "role": "benchmark schema, exact edge, state identity, and nonfinite tests",
+      "sha256": "40e2e8ece8b6e85b9702dcc9b6a2234ca5124744d791398692c1e8479cc25bc5"
+    },
+    {
+      "path": "source-changes.patch",
+      "role": "self-contained base-to-task source, test, documentation, and ledger diff",
+      "base_commit": "6f596ed6cb5df1f7c2f9a0da692cd0836e2eaa82",
+      "sha256": "30afa9840add9c43460f1b275257de9946b878c4ff14b71c80a6fd54368a9d63"
+    }
+  ],
+  "executions": [
+    {
+      "id": "E-GRID-INITIAL",
+      "command": "registered edge-free grid before spatial-only optimization",
+      "exit_code": 0,
+      "result": "16 completed cells",
+      "evidence": "gpu-benchmark.json"
+    },
+    {
+      "id": "E-GRID-FINAL",
+      "command": ".venv/bin/python scripts/benchmark_sparse_scaling.py --edge-free-spatial-grid --sizes 128 512 2048 8192 --edge-multipliers 4 16 64 128 --device cuda --seed 20260723 --model-seed 20260723 --warmup 5 --repeats 15 --max-wall-seconds 300 --metrics-out artifacts/edge-free-spatial-linear-20260723/gpu-benchmark-optimized.json",
+      "exit_code": 0,
+      "result": "16 completed cells, 0 failed or skipped after review repair",
+      "evidence": "gpu-benchmark-optimized.json"
+    },
+    {
+      "id": "E-CROSSOVER-CONFIRM",
+      "command": ".venv/bin/python scripts/benchmark_sparse_scaling.py --edge-free-spatial-grid --sizes 8192 --edge-multipliers 64 80 96 128 --device cuda --seed 20260723 --model-seed 20260723 --warmup 20 --repeats 100 --max-wall-seconds 300 --metrics-out artifacts/edge-free-spatial-linear-20260723/gpu-crossover-confirmation.json",
+      "exit_code": 0,
+      "result": "4 completed cells after review repair",
+      "evidence": "gpu-crossover-confirmation.json"
+    },
+    {
+      "id": "E-FAST",
+      "command": "scripts/check.sh fast",
+      "exit_code": 0,
+      "result": "396 passed; 89.35% coverage; Ruff, compileall and CPU smoke passed"
+    },
+    {
+      "id": "E-GPU",
+      "command": "scripts/check.sh gpu",
+      "exit_code": 0,
+      "result": "CUDA bfloat16 and float32 smoke passed"
+    },
+    {
+      "id": "E-INITIAL-REVIEW",
+      "command": "blinded hash-bound method, record, and source review",
+      "exit_code": 0,
+      "result": "findings: 1 major and 2 minor; all repaired before rereview",
+      "evidence": "reviewer-response.json"
+    }
+  ],
+  "environment": {
+    "python": "3.12.12",
+    "torch": "2.12.1+cu130",
+    "cuda_runtime": "13.0",
+    "cuda_available_for_approved_host_execution": true,
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "driver": "580.159.03",
+    "gpu_memory_mib": 97887,
+    "gpu_count": 1,
+    "base_commit": "6f596ed6cb5df1f7c2f9a0da692cd0836e2eaa82",
+    "details": "compute-environment.json",
+    "compute_approval": "compute-approval.json",
+    "resource_ceiling_gpu_wall_seconds": 300,
+    "conservative_observed_gpu_process_wall_seconds": 80.0
+  },
+  "artifacts": [
+    {"path": "analysis.json", "kind": "analysis", "sha256": "7f436d7b71035a043acf015a0de8f05bdf5c83c663e48ccf284e35639a3f673a"},
+    {"path": "claim-register.json", "kind": "claim-register", "sha256": "5ec094349dc48a1618ec9994c5f1b6ae51247832926ff97e96b2dacdf2474391"},
+    {"path": "compute-approval.json", "kind": "compute-approval", "sha256": "844a34e5e393c75c026a5a4514a37152902f616d9dd4db4bf81bdb265bc36549"},
+    {"path": "compute-environment.json", "kind": "environment", "sha256": "89007c38cff0880a41e3070efb034204714373b2d12134299e1ebe61454960a9"},
+    {"path": "evidence-graph.json", "kind": "evidence-graph", "sha256": "3d2db854fecb31f1c236836af96887475b191b440cc46c0dc7fd4c423a782d5e"},
+    {"path": "execution-log.json", "kind": "execution-log", "sha256": "427e440ef368ceb0ed616c6cdec1029f826fdfc17079ff30519074b83187dd93"},
+    {"path": "gpu-benchmark.json", "kind": "exploratory-benchmark-result", "sha256": "d7f9243bdd68073b3181f1eb13d606038c5a7f57392bc980bf6bdf1782abd54a"},
+    {"path": "gpu-benchmark-optimized.json", "kind": "benchmark-result", "sha256": "1fbd92a15594d072a906a7a953fc069a7a178dd6ab3217b1c5f54ca2486afc71"},
+    {"path": "gpu-crossover-confirmation.json", "kind": "benchmark-confirmation", "sha256": "aab43e25532fa1446860a294f329a448f199d8e64c47119611b943f570940e04"},
+    {"path": "implementation-record.json", "kind": "implementation-record", "sha256": "fff8115eee136c2f2f025ce9800e769b272ff3dada2567d29174030b1d758d32"},
+    {"path": "nonfinite-red-test.json", "kind": "test-first-record", "sha256": "7a3c537a54f4d6a201df196cf549a14f0c46d3629f91e2ba0186a578035ce095"},
+    {"path": "red-tests.json", "kind": "test-first-record", "sha256": "e752e8faa957f0ef114511ab59d8d3cb5afee29883b4f90eb7341cc7545149da"},
+    {"path": "reference-use-ledger.json", "kind": "reference-use-ledger", "sha256": "2516935df462b1589455e2dab8155b06b24be15c4b393081fec7d3b91a58dce3"},
+    {"path": "report.md", "kind": "report", "sha256": "d5a1f93fcb64a71e9653a709ce4af203481d6ebab7012d995e7497950c908be3"},
+    {"path": "reproduction-commands.json", "kind": "reproduction-command-record", "sha256": "27e3f85a0b072e967654c59598a80d2083cc35a05579b3b2abdab3c4c3871b95"},
+    {"path": "review-resolution.json", "kind": "review-resolution", "sha256": "69fa2e7f12409b74032a70ed6ce3f61dcda0f51d53dae7af8709f00c4e23787a"},
+    {"path": "review-task.json", "kind": "initial-review-task", "sha256": "d6cc55e9ffdcf20be8d30fe4904f8e3bfa61c3e527972f39f490df492d3052f8"},
+    {"path": "reviewer-response.json", "kind": "initial-review-response", "sha256": "48081a67b0a5483630017340662f332208d426f63941028771854686a09203ef"},
+    {"path": "review-receipt-initial.json", "kind": "initial-review-receipt", "sha256": "471367a3389a6fba234383181b73c08eb0d1d8192dd2cd2901d30945b9be38f8"},
+    {"path": "review-task-rereview.json", "kind": "final-review-task", "sha256": "a08f1eda83c7e3479325e3e2774a7b16a058863b2b24d6e0f18598fa433dd9ee"},
+    {"path": "reviewer-response-rereview.json", "kind": "final-review-response", "sha256": "523186c9a383e8c47c1e3d36c0f35922376edcd966d4436a74cce138eb9959b5"},
+    {"path": "review-receipt-v2.json", "kind": "final-review-receipt", "sha256": "a1e75faad3fd5c30b67d97843d8267226f264f4d80e103f6c7508e55f2779317"},
+    {"path": "review-checkpoint.json", "kind": "checkpoint-compatible-review-receipt", "sha256": "b308f5a6ed781051b11971e5261b8fa1bec681ea40a5a15a24b4df1450bdd84b"},
+    {"path": "record-review.json", "kind": "deterministic-record-review", "sha256": "901c63d7d00aa05be77f85b488662475ee888b1ce79414f4d60f515898faa0df"},
+    {"path": "scope.md", "kind": "protocol", "sha256": "cbed5f337efd06a13ae4ee3b7b212e1900c272bd7eb5e6d1ff8259034ccd9754"},
+    {"path": "source-changes.patch", "kind": "source-diff", "sha256": "30afa9840add9c43460f1b275257de9946b878c4ff14b71c80a6fd54368a9d63"},
+    {"path": "verification-summary.json", "kind": "verification-summary", "sha256": "eba1adb363dce6615c9cdcc61617233cee59da23a6b009de6032f850cd6ddc77"}
+  ],
+  "claims": [
+    {
+      "id": "C-301",
+      "text": "The opt-in fixed-rank spatial kernel is positive, symmetry-safe, and factorized without edges or node-pair state.",
+      "status": "supported",
+      "evidence": ["implementation-record.json", "verification-summary.json", "report.md"]
+    },
+    {
+      "id": "C-302",
+      "text": "The option preserves default state/output behavior and supports finite coordinate/train gradients.",
+      "status": "supported",
+      "evidence": ["implementation-record.json", "verification-summary.json", "gpu-benchmark-optimized.json"]
+    },
+    {
+      "id": "C-303",
+      "text": "Static spatial attention beats private static EGNN latency and measured working-plus-edge memory at N=8192,k=64 and k=128 on the recorded workload.",
+      "status": "supported",
+      "evidence": ["gpu-crossover-confirmation.json", "analysis.json", "report.md"]
+    },
+    {
+      "id": "C-304",
+      "text": "Coordinate-updating spatial attention beats private static EGNN latency at N=8192,k=64.",
+      "status": "unsupported",
+      "evidence": ["gpu-crossover-confirmation.json", "analysis.json", "report.md"]
+    },
+    {
+      "id": "C-305",
+      "text": "Edge-free spatial attention is universally faster or lower-memory across sparse and dense workloads.",
+      "status": "unsupported",
+      "evidence": ["gpu-benchmark-optimized.json", "analysis.json", "report.md"]
+    },
+    {
+      "id": "C-306",
+      "text": "The synthetic systems crossover establishes domain accuracy or arbitrary topology preservation.",
+      "status": "unsupported",
+      "evidence": ["scope.md", "report.md", "verification-summary.json"]
+    }
+  ],
+  "limitations": [
+    "The candidate and EGNN execute different equations and do not receive matched topology; the candidate receives no adjacency.",
+    "The k=64 static advantage is only 2.7% and should be remeasured after any environment or kernel change.",
+    "The first measured grid motivated a disclosed post-outcome implementation optimization; the initial output is retained as exploratory.",
+    "The k=80 and k=96 confirmation points were selected post hoc to localize dynamic crossover and are exploratory.",
+    "Graph construction, transfer, backward, optimizer, compiled execution, and multi-graph batching are excluded.",
+    "No task accuracy, molecule/protein transfer, force, chirality, or point-cloud quality is evaluated."
+  ],
+  "review": {
+    "status": "passed",
+    "independent_required": true,
+    "independent": true,
+    "reviewer": "codex-reviewer-root-review_receipt_agent",
+    "initial_response": "reviewer-response.json",
+    "initial_receipt": "review-receipt-initial.json",
+    "resolution_record": "review-resolution.json",
+    "final_response": "reviewer-response-rereview.json",
+    "artifact": "review-receipt-v2.json",
+    "checkpoint_artifact": "review-checkpoint.json",
+    "record_review": "record-review.json",
+    "findings": [
+      {"id": "EFSR-001", "severity": "major", "resolution_status": "resolved", "resolution": "direct coverage added for every claimed output class and transformation"},
+      {"id": "EFSR-002", "severity": "minor", "resolution_status": "resolved", "resolution": "percentage denominator and rerun values made consistent"},
+      {"id": "EFSR-003", "severity": "minor", "resolution_status": "resolved", "resolution": "trainable, total, and byte parameter accounting separated"}
+    ]
+  }
+}

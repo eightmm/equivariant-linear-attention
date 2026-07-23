@@ -19,6 +19,7 @@
 | `use_key_balancing` | true | exactly one key-balancing cycle when true |
 | `local_head_counts` | `None` | `None` means all-global; otherwise a length-`num_layers` tuple with each entry in `[0, num_heads]` |
 | `global_transport_mode` | `learned` | `learned`, exact graph-mean `uniform`, or attention-residual `none` |
+| `use_multiscale_spatial_kernel` | false | opt-in ten-feature/head spatial kernel; requires all-global learned transport and no memory interaction |
 | `local_cutoff` | 2.5 | positive raw-coordinate local cutoff |
 | `num_rbf` | 16 | positive number of local Gaussian RBFs |
 | `learn_local_radial_gate` | false | frozen radial gate for registered routing studies |
@@ -39,6 +40,16 @@ presets map `ggg` to `(0,0,0)`, `lgg` to `(H,0,0)`, `ggl` to `(0,0,H)`,
 broadcasts the exact graph mean of the same moment sufficient statistics.
 `none` bypasses the attention updater in all-global blocks and keeps only the
 pointwise FFN; it does not execute global geometry preprocessing.
+
+`use_multiscale_spatial_kernel=True` adds a fixed-rank positive spatial
+dot-product kernel to each global head. The four-head default uses log-spaced
+scales `[0.125, 0.25, 0.5, 1.0]` and ten degree-two Gaussian-Taylor features
+per head. The features are built from graph-centered/RMS-normalized positions
+and enter the exact graph-segmented sufficient statistics; no edge list,
+node-pair tensor, or new learned parameter is created. Coordinate-updating
+models recompute the spatial features after every coordinate step. This first
+route is rejected with local heads, uniform/disabled global transport, or
+memory interaction. The option remains off by default.
 
 `inverse_graph_size` keeps the compatibility-oriented option name but scales
 the full shifted positive global baseline `(c + beta + delta*beta*t)` by
@@ -105,6 +116,14 @@ median latency, CUDA peak allocation delta, per-node-count fits, failures and
 interpretation boundaries. Edge construction is deliberately outside the model
 timing. Re-run multiple `--seed` values with one fixed `--model-seed` when a
 crossover margin is small.
+
+`--edge-free-spatial-grid` instead measures current static GGG, opt-in static
+spatial GGG, coordinate-updating spatial GGG, and private static EGNN. The
+three attention variants receive no `edge_index`; EGNN receives the
+deterministic prebuilt `E=kN` controls. The JSON reports parameter/state
+hashes, synchronized median latency, peak CUDA allocation delta, edge-index
+bytes, and explicit topology/accuracy boundaries. This is a different-model,
+different-topology systems comparison, not a same-computation benchmark.
 
 `scripts/run_registered_transport_study.py` freezes the 2026-07-19 six-arm
 screen, fifteen-arm five-seed transport confirmation, conditional five-arm

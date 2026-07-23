@@ -239,3 +239,103 @@ def test_edge_multiplier_grid_rejects_invalid_model_seed(model_seed: int) -> Non
             repeats=1,
             max_wall_seconds=30.0,
         )
+
+
+def test_tiny_edge_free_grid_records_exact_boundaries_and_model_identity() -> None:
+    result = SCALING["run_edge_free_spatial_benchmark"](
+        sizes=(8,),
+        edge_multipliers=(2, 4),
+        device="cpu",
+        seed=20260723,
+        model_seed=20260723,
+        warmup=0,
+        repeats=1,
+        max_wall_seconds=30.0,
+    )
+
+    assert result["schema_version"] == 1
+    assert result["benchmark"] == "edge_free_spatial_vs_edge_scaled_egnn"
+    assert result["sizes"] == [8]
+    assert result["edge_multipliers"] == [2, 4]
+    assert result["graph_seed"] == result["model_seed"] == 20260723
+    assert result["inference_boundary"] == {
+        "edge_construction_timed": False,
+        "coordinate_updates_timed": True,
+        "candidate_edge_index": None,
+        "egnn_receives_prebuilt_edges": True,
+        "topology_matched": False,
+    }
+    assert result["model_state_sha256"]["ggg"] == (
+        result["model_state_sha256"]["spatial_static"]
+    )
+    assert result["model_parameters_semantics"] == "trainable_parameters"
+    assert result["model_parameters"]["ggg"] < result["model_total_parameters"]["ggg"]
+    assert result["model_parameters"]["spatial_static"] == (
+        result["model_parameters"]["ggg"]
+    )
+    assert result["model_total_parameters"]["spatial_static"] == (
+        result["model_total_parameters"]["ggg"]
+    )
+    assert result["model_parameters"]["static_egnn"] == (
+        result["model_total_parameters"]["static_egnn"]
+    )
+    assert result["model_parameter_bytes"]["ggg"] == (
+        4 * result["model_total_parameters"]["ggg"]
+    )
+    assert set(result["rows"][0]["edge_free_models"]) == {
+        "ggg",
+        "spatial_static",
+        "spatial_dynamic",
+    }
+    assert all(
+        metrics["status"] == "completed"
+        for metrics in result["rows"][0]["edge_free_models"].values()
+    )
+    assert len(result["rows"][0]["egnn"]) == 2
+    for cell in result["rows"][0]["egnn"]:
+        assert cell["status"] == "completed"
+        assert cell["candidate_edges_including_self"] == (
+            cell["nodes"] * cell["edge_multiplier"]
+        )
+        assert len(cell["edge_index_sha256"]) == 64
+        assert cell["receiver_candidate_degree"]["minimum"] == (
+            cell["edge_multiplier"]
+        )
+        assert cell["receiver_candidate_degree"]["maximum"] == (
+            cell["edge_multiplier"]
+        )
+    _assert_finite_json(result)
+    json.dumps(result, allow_nan=False)
+
+
+def test_edge_free_timer_rejects_nonfinite_output_before_timing() -> None:
+    class NonfiniteModel(torch.nn.Module):
+        def forward(
+            self,
+            node_feats: torch.Tensor,
+            pos: torch.Tensor,
+            *,
+            batch: torch.Tensor,
+        ) -> dict[str, torch.Tensor]:
+            del pos, batch
+            return {
+                "node_scalars": node_feats.new_full(
+                    (node_feats.shape[0], 1),
+                    math.inf,
+                )
+            }
+
+    node_feats = torch.zeros(4, 3)
+    metrics = SCALING["_timed_edge_free_metrics"](
+        model=NonfiniteModel(),
+        node_feats=node_feats,
+        pos=torch.zeros(4, 3),
+        batch=torch.zeros(4, dtype=torch.long),
+        warmup=0,
+        repeats=1,
+    )
+
+    assert metrics == {
+        "status": "failed",
+        "failure_class": "nonfinite_output",
+    }

@@ -358,6 +358,74 @@ molecule, protein or point-cloud quality. Raw grids, seed confirmation,
 profile, analysis and provenance are under
 `artifacts/edge-multiplier-scaling-20260723/`.
 
+## Edge-free spatial-linear scaling (2026-07-23)
+
+This follow-up removes the candidate edge path entirely. Each all-global head
+adds a fixed ten-dimensional degree-two Gaussian-Taylor feature map at one
+log-spaced spatial scale. Its dot product is positive and O(3)-invariant, while
+graph centering/RMS normalization supplies translation invariance. The spatial
+kernel is added through segmented sufficient statistics, so neither an
+`edge_index` nor an `N x N` pair tensor is materialized. The option is off by
+default, adds no learned parameters, and preserves the incumbent state hash
+under matched initialization.
+
+The registered forward-only CUDA grid used width-64/four-head/three-layer GGG,
+static and coordinate-updating spatial GGG, and the width-91/three-layer private
+static EGNN. It covered `N={128,512,2048,8192}` and EGNN
+`k={4,16,64,128}` with five warmups and fifteen synchronized repeats. All
+cells completed. Graph construction was excluded; EGNN received deterministic
+prebuilt receiver-regular `E=kN` tensors, while the attention candidates
+received no topology. Trainable parameter counts were 153,081 for static
+attention, 153,475 for coordinate-updating attention, and 152,065 for EGNN;
+the corresponding total counts were 153,285, 153,679, and 152,065.
+
+After the first grid, two spatial-only overheads were removed: fixed scale
+validation no longer synchronizes GPU values back to the CPU inside each
+layer, and spatial denominator/value statistics share one transport reduction.
+The original grid is retained. At `N=8192`, the optimized static/dynamic paths
+improved from 12.374/13.167 ms to 11.354/12.070 ms in the final 15-repeat grid.
+
+A 20-warmup/100-repeat confirmation then measured the high-density crossover:
+
+| N | path | k / edges | median latency | peak delta plus edge index |
+|---:|---|---:|---:|---:|
+| 8,192 | current GGG | no edges | 10.029 ms | 120.33 MiB |
+| 8,192 | spatial static | no edges | 11.359 ms | 121.58 MiB |
+| 8,192 | spatial dynamic | no edges | 12.093 ms | 121.67 MiB |
+| 8,192 | private static EGNN | 64 / 524,288 | 11.672 ms | 753.00 MiB |
+| 8,192 | private static EGNN | 80 / 655,360 | 15.587 ms | 939.97 MiB |
+| 8,192 | private static EGNN | 96 / 786,432 | 18.829 ms | 1128.72 MiB |
+| 8,192 | private static EGNN | 128 / 1,048,576 | 25.407 ms | 1506.56 MiB |
+
+Thus static spatial attention was 1.03x faster than EGNN at `k=64` and 2.24x
+faster at `k=128`, while its measured working-plus-edge memory was 6.19x and
+12.39x lower. The coordinate-updating path was 3.6% slower at `k=64`, crossed
+by `k=80` (1.29x faster), and was 2.10x faster at `k=128`. Relative to current
+GGG, static spatial overhead at `N=8192` was 1.13x latency and 1.01x memory;
+dynamic spatial overhead was 1.20x and 1.01x. The registered 2.5x overhead
+bound passed.
+
+The benefit is confined to sufficiently large, edge-dense workloads. At
+`N<=2048`, EGNN remained faster even at `k=128`; at `N=8192,k=4`, EGNN was
+about 11.9x faster than static spatial attention and also used less working
+memory. The comparison does not preserve arbitrary omitted adjacency, does not
+time neighbor construction, and says nothing about backward/training,
+accuracy, forces, or molecule/protein/point-cloud generalization.
+
+Reproduce the registered grid with:
+
+```bash
+uv run python scripts/benchmark_sparse_scaling.py --edge-free-spatial-grid \
+  --sizes 128 512 2048 8192 --edge-multipliers 4 16 64 128 \
+  --device cuda --seed 20260723 --model-seed 20260723 \
+  --warmup 5 --repeats 15 --max-wall-seconds 300 \
+  --metrics-out artifacts/edge-free-spatial-grid.json
+```
+
+Raw initial/optimized grids, the 100-repeat crossover confirmation,
+correctness gates, interpretation, and provenance are under
+`artifacts/edge-free-spatial-linear-20260723/`.
+
 ## Registered EGNN-parity result (2026-07-20)
 
 The confirmed packet kept static coordinates, width-64 LGL learned transport,

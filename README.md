@@ -47,6 +47,8 @@ model = EquivariantAttention(
         global_memory_count=1,
         use_memory_interaction=False,
         use_radial_trace=False,
+        # Optional no-edge multi-scale Euclidean kernel; default off.
+        use_multiscale_spatial_kernel=False,
         # Optional latent-coordinate refinement; disabled by default.
         coordinate_updates=False,
         # Optional invariant receiver/sender/RBF local content; default off.
@@ -232,6 +234,19 @@ clearer high-density systems win. This compares different model equations in
 forward-only execution and excludes neighbor construction and accuracy. See
 [the exact-edge record](docs/BENCHMARKS.md#exact-ekn-same-edge-scaling-2026-07-23).
 
+The edge-free spatial extension adds a ten-feature/head positive Euclidean
+kernel to all-global learned attention without an edge list or `N x N` pair
+tensor. On the same RTX PRO 6000, a 100-repeat `N=8192` confirmation measured
+static spatial attention at 11.359 ms and 121.58 MiB peak CUDA delta. Private
+static EGNN took 11.672 ms/753.00 MiB at `k=64` and
+25.407 ms/1506.56 MiB at `k=128`; the spatial path was therefore 1.03x and
+2.24x faster, with 6.19x and 12.39x lower measured working-plus-edge memory.
+The coordinate-updating spatial path was 3.6% slower than EGNN at `k=64`, but
+1.29x faster by `k=80` and 2.10x faster at `k=128`. Low-edge/small-node EGNN
+remains much faster. These are forward-only synthetic systems results, not
+topology preservation or molecule/protein/point-cloud accuracy evidence. See
+[the edge-free record](docs/BENCHMARKS.md#edge-free-spatial-linear-scaling-2026-07-23).
+
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
@@ -256,6 +271,11 @@ uv run python scripts/benchmark_sparse_scaling.py --edge-multiplier-grid \
   --device cuda --seed 20260723 --model-seed 20260723 \
   --warmup 3 --repeats 7 \
   --metrics-out artifacts/exact-edge-grid.json
+uv run python scripts/benchmark_sparse_scaling.py --edge-free-spatial-grid \
+  --sizes 128 512 2048 8192 --edge-multipliers 4 16 64 128 \
+  --device cuda --seed 20260723 --model-seed 20260723 \
+  --warmup 5 --repeats 15 \
+  --metrics-out artifacts/edge-free-spatial-grid.json
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
 

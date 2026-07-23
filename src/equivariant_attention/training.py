@@ -32,6 +32,7 @@ def build_regression_model(
     use_radial_trace: bool = False,
     global_transport_mode: str = "learned",
     coordinate_updates: bool = False,
+    use_multiscale_spatial_kernel: bool = False,
     use_pairwise_local_content: bool = False,
     pairwise_residual_scale_init: float = 0.1,
     use_edge_conditioned_local_transport: bool = False,
@@ -62,6 +63,7 @@ def build_regression_model(
             memory_interaction_cutoff=memory_interaction_cutoff,
             use_radial_trace=use_radial_trace,
             coordinate_updates=coordinate_updates,
+            use_multiscale_spatial_kernel=use_multiscale_spatial_kernel,
         )
     )
     _zero_init_linear(model.scalar_out)

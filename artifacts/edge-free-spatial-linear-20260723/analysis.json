@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-free-spatial-linear-20260723",
+  "classification": {
+    "registered_grid": "planned",
+    "initial_preoptimization_grid": "retained exploratory implementation result",
+    "optimized_grid": "authoritative post-repair rerun",
+    "confirmation_k64_k128": "sensitivity confirmation of registered points",
+    "confirmation_k80_k96": "exploratory crossover localization"
+  },
+  "hypotheses": {
+    "H1_dense_equivalence_below_1e-10": "passed",
+    "H2_symmetry_and_coordinate_error_below_1e-6": "passed",
+    "H3_candidate_independent_of_egnn_k": "structurally passed; the candidate has no edge input and is measured once per N",
+    "static_faster_and_lower_memory_at_n8192_k64_k128": "passed",
+    "dynamic_faster_and_lower_memory_at_n8192_k64_k128": "mixed: latency failed at k64 and passed at k128; memory passed at both",
+    "candidate_overhead_below_2.5x_ggg": "passed"
+  },
+  "optimization": {
+    "disclosed_as_post_initial_measurement": true,
+    "changes": [
+      "removed per-layer GPU-to-CPU validation synchronization for fixed registered scales",
+      "fused spatial denominator and value sufficient statistics into one transport"
+    ],
+    "n8192": {
+      "spatial_static_initial_ms": 12.373631005175412,
+      "spatial_static_final_grid_ms": 11.354147049132735,
+      "spatial_static_fractional_reduction": 0.08239165654901673,
+      "spatial_dynamic_initial_ms": 13.166589953470975,
+      "spatial_dynamic_final_grid_ms": 12.070433993358165,
+      "spatial_dynamic_fractional_reduction": 0.08325283645852749
+    }
+  },
+  "parameter_accounting": {
+    "model_parameters_field_semantics": "trainable_parameters",
+    "total_parameters": {
+      "ggg": 153285,
+      "spatial_static": 153285,
+      "spatial_dynamic": 153679,
+      "static_egnn": 152065
+    },
+    "parameter_bytes_include": "trainable and frozen parameter tensors"
+  },
+  "confirmation_n8192": {
+    "warmup": 20,
+    "repeats": 100,
+    "ggg": {
+      "median_ms": 10.029346507508308,
+      "peak_cuda_bytes_delta": 126173696
+    },
+    "spatial_static": {
+      "median_ms": 11.359256983269006,
+      "peak_cuda_bytes_delta": 127484416,
+      "latency_ratio_to_ggg": 1.1326019072892817,
+      "memory_ratio_to_ggg": 1.0103882191102653
+    },
+    "spatial_dynamic": {
+      "median_ms": 12.093270022887737,
+      "peak_cuda_bytes_delta": 127582720,
+      "latency_ratio_to_ggg": 1.205788434354552,
+      "memory_ratio_to_ggg": 1.011167335543535
+    },
+    "egnn": [
+      {
+        "edge_multiplier": 64,
+        "edges": 524288,
+        "median_ms": 11.672095017274842,
+        "peak_cuda_bytes_delta_plus_edge_index": 789578240,
+        "static_speedup": 1.0275403606474096,
+        "dynamic_speedup": 0.9651727775187539,
+        "static_memory_reduction": 6.193527528886354
+      },
+      {
+        "edge_multiplier": 80,
+        "edges": 655360,
+        "median_ms": 15.587141999276355,
+        "peak_cuda_bytes_delta_plus_edge_index": 985629184,
+        "static_speedup": 1.372197320848941,
+        "dynamic_speedup": 1.2889104410780634,
+        "static_memory_reduction": 7.731369958191595
+      },
+      {
+        "edge_multiplier": 96,
+        "edges": 786432,
+        "median_ms": 18.829466484021395,
+        "peak_cuda_bytes_delta_plus_edge_index": 1183547904,
+        "static_speedup": 1.6576318778380683,
+        "dynamic_speedup": 1.5570202640298882,
+        "static_memory_reduction": 9.28386340178238
+      },
+      {
+        "edge_multiplier": 128,
+        "edges": 1048576,
+        "median_ms": 25.40692751063034,
+        "peak_cuda_bytes_delta_plus_edge_index": 1579745792,
+        "static_speedup": 2.2366716016771235,
+        "dynamic_speedup": 2.100914596510717,
+        "static_memory_reduction": 12.391677677685719
+      }
+    ]
+  },
+  "decision": {
+    "implementation": "retain as opt-in",
+    "public_default_changed": false,
+    "performance_claim": "admitted only for recorded large-N high-edge forward workload",
+    "accuracy_claim": "not evaluated",
+    "dynamic_k64_prediction": "retained failure"
+  }
+}
