@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "review_task_id": "review-task-c5e24df80494e2175d5a",
+  "packet_fingerprint": "c5e24df80494e2175d5a871e2eba4c5e7b962f69049961a7fe072620e18dd708",
+  "reviewer": "codex-independent-qm9-strict-cuda-reviewer",
+  "independent": true,
+  "review_modes": ["method", "record"],
+  "reviewed_claim_ids": ["C1", "C2", "C3", "C4"],
+  "reviewed_artifacts": [
+    {"path": "scope.md", "sha256": "37c66f31198e1cd8ed7ed613de281dccb08ea8048a22a1dc411cea7c2bc5cc6c"},
+    {"path": "claim-register.json", "sha256": "74941aadaeab900b5d3694d909a3208ae936969a47c759b3e3e285786eba851a"},
+    {"path": "evidence-graph.json", "sha256": "a524a840e524c6893e9445e288ccc41b9828c16516f4988a799d3e9dd8154e84"},
+    {"path": "execution-record.json", "sha256": "f695e72e30ab1aba3937f4c83cfe85740cca00634491d595fa9314eb9040187b"},
+    {"path": "compute-environment.json", "sha256": "c16ff7aea5846f138a7cc5b71f31f8cd28634cbdeb655cba01d377c3fcdc5fef"},
+    {"path": "strict-cuda-smoke.json", "sha256": "5583514e54c8d86152522ab369420b715e52bdd0e71b57827857feccd9401750"},
+    {"path": "strict-run-1.json", "sha256": "1df348d12bd60f6ce566d120e44b53dd373758730c9619170be5deb67b89766f"},
+    {"path": "strict-run-2.json", "sha256": "189b2dcdb7d13180ac846ec3d69cea9f15f13d1c34d7c8911264a40cc5e23f20"},
+    {"path": "strict-run-3.json", "sha256": "d0caa088a664cb224a65c6ec127ee86bd4b3d6255c71a00a9a18d09fe73ca52d"},
+    {"path": "strict-run-4.json", "sha256": "443db5b60a7486d0b4134de3bc3e14cf5e8757b176549670dc130bfc595ecfc0"},
+    {"path": "strict-run-5.json", "sha256": "2f60554b6177f0b5716ac0667f759fbc5f264ac3dbda6bb481cd4b1fe1111d61"},
+    {"path": "strict-summary.json", "sha256": "77f0e602f4aa6773bb76a13a2f2fbe9cafdd644968c9a5b90e292d7734e6eba2"},
+    {"path": "reference-use-ledger.json", "sha256": "e043579af1acaa739cef0741ee0355b29f708fa9b5f30cac7582a6a883313804"},
+    {"path": "report.md", "sha256": "939d78e183e57a5eb6812b25fb41b7455c7dc1a5c098e31d40b0f93ce9a32163"}
+  ],
+  "findings": [],
+  "limitations": [
+    "This was a read-only record and method review; the reviewer did not rerun training.",
+    "Process freshness and absence of fallback rely on the execution record and each result's effective strict runtime state because per-process stdout and stderr logs were not retained.",
+    "The result covers one model seed, one random-row split, FP32, and one GPU and driver combination.",
+    "The registered 0.005 eV threshold is a decision rule, not a universal statistical guarantee.",
+    "Reviewer identity and organizational independence are an unattested runtime assertion."
+  ],
+  "status": "passed"
+}

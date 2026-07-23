@@ -57,6 +57,25 @@ assert the caller's intended lane, but it cannot weaken the recorded rule. A
 strict CUDA error is evidence that the current operator path is unsupported,
 not a reason to switch modes after inspecting outcomes.
 
+### Recorded strict QM9 CUDA result
+
+The 2026-07-23 packet under
+`artifacts/qm9-strict-cuda-repeatability-20260723/` executed five fresh FP32
+CUDA processes for the current static LGL control (500 updates, model/split
+seed 42, random-row train/validation sizes 110000/10000). All five produced
+validation MAE `0.6988662062644958 eV` and final-state SHA-256
+`22a337b66efe53d63909b4abf376dd65ef9c47c2d6aecce81f14cffc5d902976`.
+The metric range and sample standard deviation were both zero, and the strict
+gate passed without fallback. Test evaluation was disabled.
+
+This conclusion is intentionally narrow: the current source, one model seed,
+one random-row split, FP32, and the recorded RTX PRO 6000. It does not establish
+cross-hardware determinism, multi-seed accuracy, generalization, or superiority
+over EGNN. The validation MAE must not be compared as an architecture
+improvement against historical runs from different source hashes. All five
+runs clipped gradients on 456/500 updates, so the packet also confirms that
+the high-clipping diagnostic remains unresolved.
+
 ## What Pins a Run
 
 | Element | Pinned by |

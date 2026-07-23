@@ -2,6 +2,30 @@
 
 ## Status
 
+- QM9 strict-CUDA repeatability packet confirmed on 2026-07-23. Before another
+  accuracy architecture comparison, run five independent processes of the
+  current static LGL attention control on the pinned QM9 `gap` random-row split
+  with `num_samples=130000`, train/validation sizes `110000/10000`, batch size
+  64, 500 updates, FP32, model/split seed 42, train-only target normalization,
+  and test evaluation disabled. Each process requests strict deterministic
+  PyTorch/cuDNN/cuBLAS behavior before CUDA work and records effective runtime,
+  source/data/split/config/initial/final-state identities. Admission requires
+  exactly equal validation MAE values and one final-state hash across all five
+  processes; the registered `0.005 eV` range is additionally reported but
+  cannot weaken the strict bitwise gate. A two-step strict CUDA smoke runs
+  first. An unsupported deterministic operator is a terminal recorded failure,
+  not permission to fall back to seeded execution. The packet uses one local
+  GPU, no new download or dependency, no test labels, and at most 900 seconds
+  of cumulative GPU wall time.
+- The strict-CUDA packet passed on the recorded RTX PRO 6000. Five fresh
+  500-update processes produced exactly the same validation MAE
+  (`0.6988662063 eV`) and canonical final-state SHA-256, with zero metric span
+  and no deterministic-operator failure. Test evaluation remained disabled.
+  This removes same-seed runtime variance as a confounder for this exact
+  source/configuration/hardware lane; it is not an accuracy or cross-hardware
+  claim. Each run still clipped 456/500 updates (`91.2%`), so the next
+  architecture packet should address local-message scaling and clipping before
+  interpreting small validation changes.
 - Full train-step scaling packet confirmed on 2026-07-23. The registered
   comparison measures eager FP32
   `zero_grad -> forward -> synthetic MSE -> backward -> AdamW.step` for the

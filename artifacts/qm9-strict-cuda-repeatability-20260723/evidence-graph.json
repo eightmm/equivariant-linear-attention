@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {"id": "C1", "type": "claim", "label": "Strict CUDA path support"},
+    {"id": "C2", "type": "claim", "label": "Five-process bitwise repeatability"},
+    {"id": "C3", "type": "claim", "label": "Zero measured same-seed metric spread"},
+    {"id": "C4", "type": "claim", "label": "Persistent 91.2 percent clipping"},
+    {"id": "smoke", "type": "execution", "label": "Two-step strict CUDA smoke"},
+    {"id": "five-runs", "type": "execution", "label": "Five fresh strict CUDA QM9 runs"},
+    {"id": "summary", "type": "execution", "label": "Identity-validating strict summary"}
+  ],
+  "edges": [
+    {"source": "smoke", "target": "C1", "relation": "supports"},
+    {"source": "five-runs", "target": "C1", "relation": "supports"},
+    {"source": "five-runs", "target": "C2", "relation": "supports"},
+    {"source": "summary", "target": "C2", "relation": "supports"},
+    {"source": "summary", "target": "C3", "relation": "supports"},
+    {"source": "five-runs", "target": "C4", "relation": "supports"}
+  ]
+}

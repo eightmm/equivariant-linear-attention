@@ -1,0 +1,44 @@
+{
+  "references": [
+    {
+      "skill": "codex-science",
+      "reference_id": "skill",
+      "path": "skills/codex-science/SKILL.md",
+      "sha256": "d084b35a4f1592ddf826333049572d5ae42ea296d835366b50ecde26984c0b83",
+      "reason": "Task-scoped hypothesis, evidence, claim, and independent-review workflow.",
+      "affected_artifact": "artifacts/qm9-strict-cuda-repeatability-20260723/manifest.json"
+    },
+    {
+      "skill": "research-method",
+      "reference_id": "skill",
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/research-method/SKILL.md",
+      "sha256": "0c316ec1b855694969964b075d42887dddfc806549783d5102c49ea40d775870",
+      "reason": "Frozen falsifiable prediction, baseline, metric, and interpretation boundary.",
+      "affected_artifact": "artifacts/qm9-strict-cuda-repeatability-20260723/scope.md"
+    },
+    {
+      "skill": "chem-bio-ml",
+      "reference_id": "shared-data-evaluation",
+      "path": "references/shared-data-evaluation.md",
+      "sha256": "d2d2903363e57091d283d20c0908e03ce9aec0983b7ea05d80ffa8b17a6b7aa3",
+      "reason": "Train-only normalization, validation/test separation, and split provenance.",
+      "affected_artifact": "artifacts/qm9-strict-cuda-repeatability-20260723/report.md"
+    },
+    {
+      "skill": "chem-bio-ml",
+      "reference_id": "molecular-3d-physics",
+      "path": "references/molecular-3d-physics.md",
+      "sha256": "1793c6f529591ed54382db69c80c05e229a8deccfcbaa4116a3dfe20514e18c5",
+      "reason": "Bounded molecular 3D inference and equivariant-model evidence scope.",
+      "affected_artifact": "artifacts/qm9-strict-cuda-repeatability-20260723/claim-register.json"
+    },
+    {
+      "skill": "cx-compute-environment",
+      "reference_id": "upstream-skill",
+      "path": "authored-skills/compute-environment/SKILL.md",
+      "sha256": "d08938ac9a5ae2650ef9920de8e4b587d78ce492a0dc833e78523026023b3203",
+      "reason": "Bounded local GPU execution and compute provenance.",
+      "affected_artifact": "artifacts/qm9-strict-cuda-repeatability-20260723/compute-environment.json"
+    }
+  ]
+}

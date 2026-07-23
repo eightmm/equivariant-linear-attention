@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C1",
+      "text": "The current static LGL FP32 QM9 path completes under strict deterministic CUDA controls on the recorded RTX PRO 6000 without fallback.",
+      "permitted_inference": "operator support for the exact recorded source, configuration, and environment",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": ["strict CUDA smoke", "five full strict CUDA runs"],
+      "falsifier": "An unsupported deterministic operator, warning-only downgrade, or seeded fallback",
+      "uncertainty": "Other architectures, dtypes, hardware, drivers, and distributed execution are untested",
+      "next_action": "Retain strict mode for matched architecture comparisons"
+    },
+    {
+      "id": "C2",
+      "text": "Five fresh 500-update strict CUDA processes produced identical validation MAE and one canonical final-state hash.",
+      "permitted_inference": "same-seed bitwise repeatability for the exact recorded lane",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": ["five raw result files", "strict repeat summary"],
+      "falsifier": "Nonzero metric span or more than one final-state hash",
+      "uncertainty": "One seed and one random-row split do not estimate multi-seed accuracy variance",
+      "next_action": "Use this lane as the deterministic basis for bounded matched comparisons"
+    },
+    {
+      "id": "C3",
+      "text": "The registered 0.005 eV same-seed noise threshold passes with measured validation-MAE span and sample standard deviation both equal to zero.",
+      "permitted_inference": "descriptive runtime noise result for this exact lane",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": ["strict repeat summary"],
+      "falsifier": "Metric span above 0.005 eV",
+      "uncertainty": "The threshold is a decision rule, not a universal statistical guarantee",
+      "next_action": "Do not transfer the zero-noise conclusion across configurations without measurement"
+    },
+    {
+      "id": "C4",
+      "text": "Gradient clipping remains active on 456 of 500 updates in every recorded process.",
+      "permitted_inference": "diagnostic evidence of persistent high clipping frequency",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": ["five raw result files"],
+      "falsifier": "Any raw result reports a different clipping count or denominator",
+      "uncertainty": "This does not establish clipping as the cause of the accuracy gap",
+      "next_action": "Test an opt-in receiver-degree normalization with clipping and validation gates"
+    }
+  ]
+}

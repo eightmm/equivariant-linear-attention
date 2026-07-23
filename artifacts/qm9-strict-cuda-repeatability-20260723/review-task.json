@@ -1,0 +1,357 @@
+{
+  "artifacts": [
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "sha256": "37c66f31198e1cd8ed7ed613de281dccb08ea8048a22a1dc411cea7c2bc5cc6c"
+    },
+    {
+      "kind": "claim-register",
+      "path": "claim-register.json",
+      "sha256": "74941aadaeab900b5d3694d909a3208ae936969a47c759b3e3e285786eba851a"
+    },
+    {
+      "kind": "evidence-graph",
+      "path": "evidence-graph.json",
+      "sha256": "a524a840e524c6893e9445e288ccc41b9828c16516f4988a799d3e9dd8154e84"
+    },
+    {
+      "kind": "execution-log",
+      "path": "execution-record.json",
+      "sha256": "f695e72e30ab1aba3937f4c83cfe85740cca00634491d595fa9314eb9040187b"
+    },
+    {
+      "kind": "environment",
+      "path": "compute-environment.json",
+      "sha256": "c16ff7aea5846f138a7cc5b71f31f8cd28634cbdeb655cba01d377c3fcdc5fef"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-cuda-smoke.json",
+      "sha256": "5583514e54c8d86152522ab369420b715e52bdd0e71b57827857feccd9401750"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-run-1.json",
+      "sha256": "1df348d12bd60f6ce566d120e44b53dd373758730c9619170be5deb67b89766f"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-run-2.json",
+      "sha256": "189b2dcdb7d13180ac846ec3d69cea9f15f13d1c34d7c8911264a40cc5e23f20"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-run-3.json",
+      "sha256": "d0caa088a664cb224a65c6ec127ee86bd4b3d6255c71a00a9a18d09fe73ca52d"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-run-4.json",
+      "sha256": "443db5b60a7486d0b4134de3bc3e14cf5e8757b176549670dc130bfc595ecfc0"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-run-5.json",
+      "sha256": "2f60554b6177f0b5716ac0667f759fbc5f264ac3dbda6bb481cd4b1fe1111d61"
+    },
+    {
+      "kind": "metrics",
+      "path": "strict-summary.json",
+      "sha256": "77f0e602f4aa6773bb76a13a2f2fbe9cafdd644968c9a5b90e292d7734e6eba2"
+    },
+    {
+      "kind": "decision-log",
+      "path": "reference-use-ledger.json",
+      "sha256": "e043579af1acaa739cef0741ee0355b29f708fa9b5f30cac7582a6a883313804"
+    },
+    {
+      "kind": "report",
+      "path": "report.md",
+      "sha256": "939d78e183e57a5eb6812b25fb41b7455c7dc1a5c098e31d40b0f93ce9a32163"
+    }
+  ],
+  "claims": [
+    {
+      "falsifier": "An unsupported deterministic operator, warning-only downgrade, or seeded fallback",
+      "id": "C1",
+      "next_action": "Retain strict mode for matched architecture comparisons",
+      "permitted_inference": "operator support for the exact recorded source, configuration, and environment",
+      "required_evidence": [
+        "strict CUDA smoke",
+        "five full strict CUDA runs"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The current static LGL FP32 QM9 path completes under strict deterministic CUDA controls on the recorded RTX PRO 6000 without fallback.",
+      "uncertainty": "Other architectures, dtypes, hardware, drivers, and distributed execution are untested"
+    },
+    {
+      "falsifier": "Nonzero metric span or more than one final-state hash",
+      "id": "C2",
+      "next_action": "Use this lane as the deterministic basis for bounded matched comparisons",
+      "permitted_inference": "same-seed bitwise repeatability for the exact recorded lane",
+      "required_evidence": [
+        "five raw result files",
+        "strict repeat summary"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "Five fresh 500-update strict CUDA processes produced identical validation MAE and one canonical final-state hash.",
+      "uncertainty": "One seed and one random-row split do not estimate multi-seed accuracy variance"
+    },
+    {
+      "falsifier": "Metric span above 0.005 eV",
+      "id": "C3",
+      "next_action": "Do not transfer the zero-noise conclusion across configurations without measurement",
+      "permitted_inference": "descriptive runtime noise result for this exact lane",
+      "required_evidence": [
+        "strict repeat summary"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The registered 0.005 eV same-seed noise threshold passes with measured validation-MAE span and sample standard deviation both equal to zero.",
+      "uncertainty": "The threshold is a decision rule, not a universal statistical guarantee"
+    },
+    {
+      "falsifier": "Any raw result reports a different clipping count or denominator",
+      "id": "C4",
+      "next_action": "Test an opt-in receiver-degree normalization with clipping and validation gates",
+      "permitted_inference": "diagnostic evidence of persistent high clipping frequency",
+      "required_evidence": [
+        "five raw result files"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "Gradient clipping remains active on 456 of 500 updates in every recorded process.",
+      "uncertainty": "This does not establish clipping as the cause of the accuracy gap"
+    }
+  ],
+  "created_at": "2026-07-23T09:12:48Z",
+  "decision_contract": {
+    "code": [
+      {
+        "path": "../../scripts/train_compare.py",
+        "sha256": "3221252f1ef6c73ab57e9103cfd5cdefe1dcab823adae0cb61ae914f2b924491"
+      },
+      {
+        "path": "../../src/equivariant_attention/moment.py",
+        "sha256": "79ad3dcb95296de68021b6e6701e78bd84dfd0bbb5a311c66ca421511087b2b7"
+      },
+      {
+        "path": "../../src/equivariant_attention/reproducibility.py",
+        "sha256": "fb51643d7f50080fc2015baab1525c5db54815a89f49eee96b62e29df0348d61"
+      },
+      {
+        "path": "../../scripts/summarize_reproducibility_runs.py",
+        "sha256": "70d6edcf328d33569d80737ecab695eb6f3da8f9637074f9fd6cfcc0876d59f0"
+      }
+    ],
+    "environment": {
+      "amp_dtype": "none",
+      "base_git_sha": "6da172ff854e90a2644178b33e14271b8ef6973d",
+      "compute_environment_artifact": "compute-environment.json",
+      "determinism_mode": "strict",
+      "driver": "580.159.03",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+      "lockfile_sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+      "python": "3.12.12",
+      "seed": 42,
+      "torch": "2.12.1"
+    },
+    "executions": [
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "strict-cuda-smoke",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "strict-cuda-runs-1-to-5",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "strict-summary",
+        "status": "passed"
+      },
+      {
+        "command": "scripts/check.sh fast",
+        "exit_code": 0,
+        "id": "fast-gate",
+        "status": "passed"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../../PROJECT.md",
+        "role": "project contract and result boundary",
+        "sha256": "74feab760b4ed9f0a4f185c1c653a7d79ae1b4932a6d96011ae246f935162ed7"
+      },
+      {
+        "path": "../../uv.lock",
+        "role": "locked Python environment",
+        "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2"
+      }
+    ],
+    "plan": [
+      {
+        "id": "P1",
+        "objective_done_criteria": "Scope records configuration, strict gate, compute ceiling, and inference boundaries.",
+        "status": "completed",
+        "step": "Freeze the exact CUDA repeatability packet before execution."
+      },
+      {
+        "id": "P2",
+        "objective_done_criteria": "The exact path completes with all requested deterministic controls effective.",
+        "status": "completed",
+        "step": "Run a two-step strict CUDA smoke without fallback."
+      },
+      {
+        "id": "P3",
+        "objective_done_criteria": "All processes finish within the bound and test evaluation remains disabled.",
+        "status": "completed",
+        "step": "Run five fresh 500-update strict CUDA processes."
+      },
+      {
+        "id": "P4",
+        "objective_done_criteria": "Exactly equal validation MAE values and one final-state hash.",
+        "status": "completed",
+        "step": "Apply the identity-validating strict repeat gate."
+      },
+      {
+        "id": "P5",
+        "objective_done_criteria": "Focused tests and scripts/check.sh fast pass.",
+        "status": "completed",
+        "step": "Run focused and repository fast verification."
+      },
+      {
+        "id": "P6",
+        "objective_done_criteria": "No unresolved critical or major finding remains.",
+        "status": "pending",
+        "step": "Complete independent hash-bound record review."
+      }
+    ],
+    "question": "Does the current static LGL QM9 lane produce an exactly repeatable validation metric and final model state in five fresh strict CUDA processes?"
+  },
+  "evidence_boundary": "This packet exposes recorded run evidence while excluding producer-only rationale fields. It does not authenticate the reviewer, guarantee true independence, or include unrecorded evidence.",
+  "evidence_graph": {
+    "edges": [
+      {
+        "relation": "supports",
+        "source": "smoke",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "five-runs",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "five-runs",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "summary",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "summary",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "five-runs",
+        "target": "C4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "C1",
+        "label": "Strict CUDA path support",
+        "type": "claim"
+      },
+      {
+        "id": "C2",
+        "label": "Five-process bitwise repeatability",
+        "type": "claim"
+      },
+      {
+        "id": "C3",
+        "label": "Zero measured same-seed metric spread",
+        "type": "claim"
+      },
+      {
+        "id": "C4",
+        "label": "Persistent 91.2 percent clipping",
+        "type": "claim"
+      },
+      {
+        "id": "smoke",
+        "label": "Two-step strict CUDA smoke",
+        "type": "execution"
+      },
+      {
+        "id": "five-runs",
+        "label": "Five fresh strict CUDA QM9 runs",
+        "type": "execution"
+      },
+      {
+        "id": "summary",
+        "label": "Identity-validating strict summary",
+        "type": "execution"
+      }
+    ],
+    "schema_version": 1
+  },
+  "fingerprint": "c5e24df80494e2175d5a871e2eba4c5e7b962f69049961a7fe072620e18dd708",
+  "independent_required": true,
+  "lane_receipts": [],
+  "material_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4"
+  ],
+  "model_receipts": [],
+  "producer_context_excluded": [
+    "chain_of_thought",
+    "hidden_answer",
+    "intended_conclusion",
+    "private_scratchpad",
+    "producer_rationale",
+    "suspected_bug"
+  ],
+  "query_records": [],
+  "response_contract": {
+    "findings": "stable ID, severity, code, message, evidence, required action, and resolution status",
+    "independent": "boolean attestation",
+    "limitations": "required",
+    "review_modes": [
+      "method",
+      "record"
+    ],
+    "reviewed_artifacts": "path and SHA-256 pairs from this packet",
+    "reviewed_claim_ids": "all material claims unless an explicit blocked reason is supplied",
+    "reviewer": "required"
+  },
+  "review_modes": [
+    "method",
+    "record"
+  ],
+  "review_questions": [
+    "Verify the five strict CUDA raw records, identity, gate arithmetic, test boundary, clipping diagnostic, and bounded inference."
+  ],
+  "review_task_id": "review-task-c5e24df80494e2175d5a",
+  "schema_version": 1,
+  "source_manifest_path": "/home/jaemin/project/layer/equivariant-attention/artifacts/qm9-strict-cuda-repeatability-20260723/manifest.json",
+  "source_manifest_sha256": "9b26dcddd3a87f5373637d2fb1b3b86a4fcc91cf3f42622e11ea9b2b529c36a8",
+  "source_run_id": "qm9-strict-cuda-repeatability-20260723",
+  "study_table": null
+}
