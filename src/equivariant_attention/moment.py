@@ -81,6 +81,7 @@ class EquivariantAttentionConfig:
     use_pairwise_local_content: bool = False
     pairwise_residual_scale_init: float = 0.1
     use_edge_conditioned_local_transport: bool = False
+    normalize_edge_conditioned_local_by_sqrt_degree: bool = False
 
 
 class EquivariantAttention(nn.Module):
@@ -149,6 +150,9 @@ class EquivariantAttention(nn.Module):
                     learn_local_radial_gate=config.learn_local_radial_gate,
                     use_edge_conditioned_local_transport=(
                         config.use_edge_conditioned_local_transport
+                    ),
+                    normalize_edge_conditioned_local_by_sqrt_degree=(
+                        config.normalize_edge_conditioned_local_by_sqrt_degree
                     ),
                     global_memory_count=config.global_memory_count,
                     use_memory_interaction=config.use_memory_interaction,
@@ -436,6 +440,7 @@ class _EquivariantMomentLayer(nn.Module):
         num_rbf: int,
         learn_local_radial_gate: bool,
         use_edge_conditioned_local_transport: bool,
+        normalize_edge_conditioned_local_by_sqrt_degree: bool,
         global_memory_count: int,
         use_memory_interaction: bool,
         memory_assignment_temperature: float,
@@ -488,6 +493,9 @@ class _EquivariantMomentLayer(nn.Module):
                 vectors=vectors,
                 num_heads=local_head_count,
                 num_rbf=num_rbf,
+                normalize_by_sqrt_degree=(
+                    normalize_edge_conditioned_local_by_sqrt_degree
+                ),
             )
             if use_edge_conditioned_local_transport and local_head_count
             else None
@@ -928,6 +936,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
         vectors: int,
         num_heads: int,
         num_rbf: int,
+        normalize_by_sqrt_degree: bool = False,
     ) -> None:
         super().__init__()
         if scalars % num_heads:
@@ -939,6 +948,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
         self.scalars = scalars
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
+        self.normalize_by_sqrt_degree = normalize_by_sqrt_degree
         self.edge_mlp = nn.Sequential(
             nn.Linear(2 * scalars + num_rbf, 12),
             nn.SiLU(),
@@ -1011,6 +1021,17 @@ class _EdgeConditionedLocalTransport(nn.Module):
             receiver,
             num_nodes,
         )
+        if self.normalize_by_sqrt_degree:
+            degree = cutoff.new_zeros(num_nodes).index_add(
+                0,
+                receiver,
+                torch.ones_like(cutoff),
+            )
+            inverse_sqrt_degree = degree.clamp_min(1.0).rsqrt()
+            scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
+            vector_base = vector_base * inverse_sqrt_degree[:, None, None]
+            relative = relative * inverse_sqrt_degree[:, None, None]
+            tensor = tensor * inverse_sqrt_degree[:, None, None]
         radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
         return scalar_message, vector_base, relative, tensor, radial_trace
 
@@ -3033,6 +3054,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "learn_local_radial_gate",
         "use_pairwise_local_content",
         "use_edge_conditioned_local_transport",
+        "normalize_edge_conditioned_local_by_sqrt_degree",
         "use_memory_interaction",
         "use_radial_trace",
         "coordinate_updates",
@@ -3094,6 +3116,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                 "edge-conditioned local transport cannot be combined with the "
                 "legacy learned local radial gate"
             )
+    elif config.normalize_edge_conditioned_local_by_sqrt_degree:
+        raise ValueError(
+            "edge-conditioned local degree normalization requires "
+            "edge-conditioned local transport"
+        )
     _float32_control(
         "pairwise_residual_scale_init",
         config.pairwise_residual_scale_init,

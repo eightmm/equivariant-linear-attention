@@ -338,6 +338,7 @@ def test_training_cli_builds_sparse_edge_conditioned_lgl() -> None:
             "--routing",
             "lgl",
             "--edge-conditioned-local-transport",
+            "--edge-conditioned-local-sqrt-degree",
             "--precompute-local-edges",
         ]
     )
@@ -346,6 +347,7 @@ def test_training_cli_builds_sparse_edge_conditioned_lgl() -> None:
 
     assert model.config.local_head_counts == (4, 0, 4)
     assert model.config.use_edge_conditioned_local_transport
+    assert model.config.normalize_edge_conditioned_local_by_sqrt_degree
     assert args.precompute_local_edges
 
 

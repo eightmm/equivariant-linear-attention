@@ -2,6 +2,35 @@
 
 ## Status
 
+- Receiver-degree normalization packet confirmed on 2026-07-23. The only model
+  intervention is an opt-in division of every edge-conditioned local scalar,
+  vector, relative-vector, and symmetric-traceless receiver sum by the square
+  root of its non-self incoming candidate count. The existing unnormalized
+  sum remains the default, parameter schema and initialization must remain
+  unchanged, and the option is invalid unless edge-conditioned local transport
+  is enabled. Float64 tests must cover an explicit reference, zero-degree
+  receivers, disabled-state compatibility, O(3), translation, permutation,
+  edge-order invariance, graph isolation, finite gradients, and CLI/config
+  provenance.
+- The frozen screen compares strict-CUDA EC-LGL `sum` and
+  `sum/sqrt(receiver_degree)` with identical source, initial state, cached QM9
+  data, random-row split, precomputed 2.5-Angstrom candidates, FP32, 500
+  updates, model/split seed 42, and test evaluation disabled. The candidate
+  passes the diagnostic gate only if clipping fraction decreases by at least
+  `0.05` absolute and validation MAE is no more than `0.020 eV` worse than the
+  matched EC-LGL baseline. Mean pre-clip gradient norm, peak norm, runtime, and
+  peak CUDA allocation are descriptive. One candidate smoke precedes the two
+  full runs; no confirmation, default change, EGNN superiority claim, or
+  accuracy promotion is authorized by this screen.
+- The receiver-degree implementation passed its exact-reference,
+  compatibility, O(3)/translation, permutation/edge-order, graph-isolation,
+  gradient, CLI, and repository gates. The registered CUDA diagnostic failed:
+  clipping changed only from `0.920` to `0.916`, below the required `0.05`
+  reduction, while mean/maximum pre-clip norms increased from
+  `6.154/44.101` to `6.726/53.507`. The candidate validation MAE improved
+  descriptively from `0.744964` to `0.715997 eV`, satisfying the accuracy
+  guard but not rescuing the failed primary gate. The option remains off by
+  default; no confirmation or test evaluation ran.
 - QM9 strict-CUDA repeatability packet confirmed on 2026-07-23. Before another
   accuracy architecture comparison, run five independent processes of the
   current static LGL attention control on the pinned QM9 `gap` random-row split

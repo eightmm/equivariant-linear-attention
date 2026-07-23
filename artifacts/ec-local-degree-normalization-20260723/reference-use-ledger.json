@@ -1,0 +1,76 @@
+{
+  "references": [
+    {
+      "skill": "codex-science",
+      "reference_id": "skill",
+      "path": "skills/codex-science/SKILL.md",
+      "sha256": "d084b35a4f1592ddf826333049572d5ae42ea296d835366b50ecde26984c0b83",
+      "reason": "Falsifiable run, evidence, provenance, and independent-review workflow.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/manifest.json"
+    },
+    {
+      "skill": "research-method",
+      "reference_id": "skill",
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/research-method/SKILL.md",
+      "sha256": "0c316ec1b855694969964b075d42887dddfc806549783d5102c49ea40d775870",
+      "reason": "Single-variable paired design and frozen clipping/accuracy gate.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/scope.md"
+    },
+    {
+      "skill": "ml-training",
+      "reference_id": "equivariance",
+      "path": "references/equivariance.md",
+      "sha256": "b6a63f24c224cdd255f1b17668fd0a68597cdf8d50156d5abc7ef1c8c3e27d23",
+      "reason": "Raw-coordinate O(3), translation, batching, and float64 transformation gates.",
+      "affected_artifact": "tests/test_edge_conditioned_local.py"
+    },
+    {
+      "skill": "chem-bio-ml",
+      "reference_id": "shared-data-evaluation",
+      "path": "references/shared-data-evaluation.md",
+      "sha256": "d2d2903363e57091d283d20c0908e03ce9aec0983b7ea05d80ffa8b17a6b7aa3",
+      "reason": "Split identity, train-only normalization, validation/test separation, and one-seed claim boundary.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/report.md"
+    },
+    {
+      "skill": "cx-modeling-problem-execution",
+      "reference_id": "upstream-skill",
+      "path": "authored-skills/modeling-problem-execution/SKILL.md",
+      "sha256": "534a0978ac1b18d3e4f7318dc6f51699aa1da2b774f179c93b3626bb2b47ae36",
+      "reason": "One-time approved smoke-to-full execution and preservation of negative results.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/execution-record.json"
+    },
+    {
+      "skill": "cx-compute-environment",
+      "reference_id": "upstream-skill",
+      "path": "authored-skills/compute-environment/SKILL.md",
+      "sha256": "d08938ac9a5ae2650ef9920de8e4b587d78ce492a0dc833e78523026023b3203",
+      "reason": "Locked local environment, GPU smoke, and compute provenance.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/compute-environment.json"
+    },
+    {
+      "skill": "science-provenance",
+      "reference_id": "artifact-contract",
+      "path": "skills/science-provenance/references/artifact-contract.md",
+      "sha256": "b762bdd86796642e0b098091c043efef750d0462761e09be45996d111897c73a",
+      "reason": "Manifest, claim register, evidence graph, artifact hashing, and validation.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/manifest.json"
+    },
+    {
+      "skill": "science-review",
+      "reference_id": "independent-review-runtime",
+      "path": "skills/science-review/references/independent-review-runtime.md",
+      "sha256": "e88dc02934caca5c524b1598c05539643df8bd681068c41d07f559cee6683006",
+      "reason": "Hash-bound independent reviewer packet and finalized receipt.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/review-task.json"
+    },
+    {
+      "skill": "science-review",
+      "reference_id": "review-checklist",
+      "path": "skills/science-review/references/review-checklist.md",
+      "sha256": "9b3957c88263433c16af8df46a4de29d186d8bc173b233767cc79167d6e73c46",
+      "reason": "Finding severity and pass rule.",
+      "affected_artifact": "artifacts/ec-local-degree-normalization-20260723/review-receipt-v2.json"
+    }
+  ]
+}

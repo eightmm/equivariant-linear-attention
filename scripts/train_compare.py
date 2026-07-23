@@ -365,6 +365,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pairwise-local-content", action="store_true")
     parser.add_argument("--pairwise-residual-scale-init", type=float, default=0.1)
     parser.add_argument("--edge-conditioned-local-transport", action="store_true")
+    parser.add_argument(
+        "--edge-conditioned-local-sqrt-degree",
+        action="store_true",
+        help=(
+            "divide edge-conditioned local receiver sums by the square root "
+            "of incoming non-self candidate degree"
+        ),
+    )
     parser.add_argument("--precompute-local-edges", action="store_true")
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
     parser.add_argument("--memory-interaction", action="store_true")
@@ -453,6 +461,7 @@ def _build_benchmark_model(
             "pairwise_local_content": False,
             "pairwise_residual_scale_init": 0.1,
             "edge_conditioned_local_transport": False,
+            "edge_conditioned_local_sqrt_degree": False,
             "no_alignment_linear_term": False,
             "no_key_balancing": False,
             "diagnostic_max_nodes": 128,
@@ -504,6 +513,9 @@ def _build_benchmark_model(
         pairwise_residual_scale_init=args.pairwise_residual_scale_init,
         use_edge_conditioned_local_transport=(
             args.edge_conditioned_local_transport
+        ),
+        normalize_edge_conditioned_local_by_sqrt_degree=(
+            args.edge_conditioned_local_sqrt_degree
         ),
         global_memory_count=args.memory_count,
         use_memory_interaction=args.memory_interaction,
@@ -1790,6 +1802,15 @@ def _run_config(
         "learn_local_radial_gate": args.learn_local_radial_gate,
         "edge_conditioned_local_transport": (
             args.edge_conditioned_local_transport
+        ),
+        "edge_conditioned_local_aggregation": (
+            "cutoff_sum_over_sqrt_receiver_degree"
+            if args.edge_conditioned_local_sqrt_degree
+            else (
+                "cutoff_sum"
+                if args.edge_conditioned_local_transport
+                else "not_applicable"
+            )
         ),
         "precompute_local_edges": args.precompute_local_edges,
         "local_candidate_builder": (

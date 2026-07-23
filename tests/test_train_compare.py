@@ -221,6 +221,27 @@ def test_run_config_records_pairwise_local_content_and_mass_contract() -> None:
     assert zero_model.local_pairwise_content.residual_scale.item() == 0.0
 
 
+def test_run_config_records_edge_conditioned_degree_normalization() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--edge-conditioned-local-transport",
+            "--edge-conditioned-local-sqrt-degree",
+        ]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["edge_conditioned_local_transport"] is True
+    assert config["edge_conditioned_local_aggregation"] == (
+        "cutoff_sum_over_sqrt_receiver_degree"
+    )
+    assert model.config.normalize_edge_conditioned_local_by_sqrt_degree is True
+
+
 @pytest.mark.parametrize(
     ("mode", "formula", "balancing"),
     [

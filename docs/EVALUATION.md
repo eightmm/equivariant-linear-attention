@@ -324,6 +324,28 @@ bounded message normalization or staged residual intervention and retain the
 repeated-run gate; these results do not authorize selecting among several
 repairs after inspecting validation labels.
 
+## EC-LGL receiver-degree normalization (completed 2026-07-23)
+
+The opt-in intervention divides every edge-conditioned non-self local message
+sum by the square root of the receiver's incoming candidate count. It adds no
+parameter and leaves the unnormalized sum as the default. Float64 reference,
+zero-degree, disabled-state identity, O(3), translation, permutation,
+edge-order, graph-isolation, finite-gradient, and CLI provenance tests pass.
+
+The strict-CUDA paired seed-42 screen held source, initialization, state schema,
+data, split, precomputed radius candidates, optimizer, and evaluation fixed.
+Clipping changed from `460/500` (`0.920`) to `458/500` (`0.916`), failing the
+preregistered `0.05` absolute-reduction gate. Mean and maximum pre-clip norms
+also increased from `6.154/44.101` to `6.726/53.507`, so simple receiver-degree
+normalization is not a sufficient clipping repair.
+
+Validation MAE improved from `0.744964` to `0.715997 eV` (`-0.028967 eV`).
+This is a descriptive one-seed result on the adaptively reused random-row
+validation split. Because the primary clipping gate failed, it does not
+authorize a default change or accuracy claim. A later multi-seed experiment
+requires a separately frozen contract. No test labels or EGNN comparison were
+used in this packet.
+
 Record common initialization hashes, total and nonzero-gradient parameters,
 synchronized latency, peak CUDA memory, node-count strata, bounded kernel
 scales, mass/denominator quantiles, entropy over log node count, maximum weight,

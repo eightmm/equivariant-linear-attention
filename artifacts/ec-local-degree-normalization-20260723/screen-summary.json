@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "comparison": "paired_strict_cuda_ec_lgl_receiver_aggregation",
+  "identity": {
+    "same_source": true,
+    "same_initial_state": true,
+    "same_state_schema": true,
+    "same_data": true,
+    "same_split": true,
+    "source_sha256": "c4b28d15dba5ff90e2f2e0285361c7082bde11eac5cc3d18bc498ad190d52ca2",
+    "initial_state_sha256": "ce86d2380b4c9cbdf87171e3cc52f278a90adc0829bae61e8f3c1d3dbb036034",
+    "state_schema_sha256": "3e0dce0953cc9e5d2ec7ba862f2c1a861cbde1ac600082a6cef8983760bdcb17"
+  },
+  "baseline": {
+    "aggregation": "cutoff_sum",
+    "val_mae_eV": 0.7449641845703125,
+    "clip_fraction": 0.92,
+    "clipped_step_count": 460,
+    "step_count": 500,
+    "pre_clip_grad_norm_mean": 6.154067729115486,
+    "pre_clip_grad_norm_max": 44.10126495361328,
+    "elapsed_seconds": 16.56130675895838,
+    "peak_cuda_memory_bytes": 168440320
+  },
+  "candidate": {
+    "aggregation": "cutoff_sum_over_sqrt_receiver_degree",
+    "val_mae_eV": 0.7159973894119263,
+    "clip_fraction": 0.916,
+    "clipped_step_count": 458,
+    "step_count": 500,
+    "pre_clip_grad_norm_mean": 6.7255260947346684,
+    "pre_clip_grad_norm_max": 53.5068359375,
+    "elapsed_seconds": 16.73892729502404,
+    "peak_cuda_memory_bytes": 168450560
+  },
+  "candidate_minus_baseline": {
+    "val_mae_eV": -0.028966795158386294,
+    "clip_fraction": -0.0040000000000000036,
+    "clipped_step_count": -2,
+    "pre_clip_grad_norm_mean": 0.5714583656191827,
+    "pre_clip_grad_norm_max": 9.405570983886719,
+    "elapsed_seconds": 0.17762053606566042,
+    "peak_cuda_memory_bytes": 10240
+  },
+  "gate": {
+    "required_clip_reduction_absolute": 0.05,
+    "max_val_mae_regression_eV": 0.02,
+    "clip_passed": false,
+    "validation_guard_passed": true,
+    "passed": false,
+    "verdict": "diagnostic_rejection_keep_opt_in"
+  },
+  "validation_evaluated": true,
+  "test_evaluated": false
+}

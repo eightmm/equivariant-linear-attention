@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {"id": "C1", "type": "claim", "label": "Exact sqrt-degree operator"},
+    {"id": "C2", "type": "claim", "label": "Symmetry and gradient contracts"},
+    {"id": "C3", "type": "claim", "label": "Disabled-state compatibility"},
+    {"id": "C4", "type": "claim", "label": "Clipping reduction gate"},
+    {"id": "focused", "type": "execution", "label": "Focused RED/GREEN tests"},
+    {"id": "fast", "type": "execution", "label": "Repository fast gate"},
+    {"id": "baseline", "type": "execution", "label": "Strict CUDA EC-LGL sum"},
+    {"id": "candidate", "type": "execution", "label": "Strict CUDA EC-LGL normalized"},
+    {"id": "paired-summary", "type": "artifact", "label": "Frozen paired gate arithmetic"}
+  ],
+  "edges": [
+    {"source": "focused", "target": "C1", "relation": "supports"},
+    {"source": "focused", "target": "C2", "relation": "supports"},
+    {"source": "fast", "target": "C2", "relation": "supports"},
+    {"source": "focused", "target": "C3", "relation": "supports"},
+    {"source": "baseline", "target": "C3", "relation": "supports"},
+    {"source": "candidate", "target": "C3", "relation": "supports"},
+    {"source": "baseline", "target": "paired-summary", "relation": "supports"},
+    {"source": "candidate", "target": "paired-summary", "relation": "supports"},
+    {"source": "paired-summary", "target": "C4", "relation": "contradicts"}
+  ]
+}

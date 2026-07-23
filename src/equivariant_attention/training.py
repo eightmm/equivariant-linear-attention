@@ -36,6 +36,7 @@ def build_regression_model(
     use_pairwise_local_content: bool = False,
     pairwise_residual_scale_init: float = 0.1,
     use_edge_conditioned_local_transport: bool = False,
+    normalize_edge_conditioned_local_by_sqrt_degree: bool = False,
     hidden_tensor_dim: int = 0,
 ) -> nn.Module:
     if (
@@ -71,6 +72,9 @@ def build_regression_model(
             use_pairwise_local_content=use_pairwise_local_content,
             pairwise_residual_scale_init=pairwise_residual_scale_init,
             use_edge_conditioned_local_transport=use_edge_conditioned_local_transport,
+            normalize_edge_conditioned_local_by_sqrt_degree=(
+                normalize_edge_conditioned_local_by_sqrt_degree
+            ),
             global_memory_count=global_memory_count,
             use_memory_interaction=use_memory_interaction,
             memory_assignment_temperature=memory_assignment_temperature,

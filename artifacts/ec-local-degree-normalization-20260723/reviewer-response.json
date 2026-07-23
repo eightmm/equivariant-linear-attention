@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "review_task_id": "review-task-c5070152b0eb8f0552a6",
+  "packet_fingerprint": "c5070152b0eb8f0552a6bbe62efd10ffe7b5b1973e833c36a7df9e474f318b04",
+  "reviewer": "repro-gate-independent-method-reviewer",
+  "independent": true,
+  "review_modes": ["method"],
+  "reviewed_claim_ids": ["C1", "C2", "C3", "C4"],
+  "reviewed_artifacts": [
+    {"path": "scope.md", "sha256": "65b8d15ee18fd98d9c95355b0026afc3cf510a19d457280cce92b059af156b15"},
+    {"path": "compute-environment.json", "sha256": "b9f2ad2c8f50572f3bc559d8914b74131f1874394f10a4312a77945ba9c545a3"},
+    {"path": "candidate-smoke.json", "sha256": "a6926de8ea0458ada1e567c6ddc4c6c1d3eb5af1ee7f3f0d470a9c63f142a5ef"},
+    {"path": "baseline-sum.json", "sha256": "d7026be35f33236e73a128075c346c3c734778f38f4ab35a200b90019f34246b"},
+    {"path": "candidate-sqrt-degree.json", "sha256": "10652105d18613ca931ed6d7a114e9baf438896dfab8e240d01ff4f0bbdf9416"},
+    {"path": "screen-summary.json", "sha256": "682a2363a566e34b8f1fb3cef57060c23718766e13a2a4e027cddebaa13c5050"},
+    {"path": "claim-register.json", "sha256": "a9f7986422020462e5ce1f9d043737c8f50493b5cf347b37aa79d804cde19030"},
+    {"path": "evidence-graph.json", "sha256": "bb6a88d1127823050df88248485dc29cab308fd2e42286362dec2242e504e540"},
+    {"path": "execution-record.json", "sha256": "ecf077604e82825c9baaecf52ef86451cb7226e599fa9b1ccce792bbafaa0ff9"},
+    {"path": "reference-use-ledger.json", "sha256": "618f13a89de5e5c69ab4fac9daea2b85ee6cc6e4bce6ebcfb794f9c16e1d7b3a"},
+    {"path": "report.md", "sha256": "6d14373706e423544923721eccf5ea7a4734b170bf26c1bd858ab899c10d7c52"}
+  ],
+  "status": "passed",
+  "findings": [
+    {
+      "id": "S1",
+      "severity": "suggestion",
+      "code": "paired-summary-evidence-routing",
+      "message": "The evidence graph now correctly routes baseline and candidate through paired-summary, with only paired-summary contradicting C4.",
+      "resolution_status": "resolved",
+      "evidence": ["evidence-graph.json", "screen-summary.json"],
+      "required_action": ""
+    }
+  ],
+  "limitations": [
+    "This review covers the registered single-seed bounded validation diagnostic, not multi-seed generalization, test-set performance, or an EGNN comparison."
+  ]
+}

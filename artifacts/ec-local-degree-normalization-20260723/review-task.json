@@ -1,0 +1,379 @@
+{
+  "artifacts": [
+    {
+      "kind": "protocol",
+      "path": "scope.md",
+      "sha256": "65b8d15ee18fd98d9c95355b0026afc3cf510a19d457280cce92b059af156b15"
+    },
+    {
+      "kind": "environment",
+      "path": "compute-environment.json",
+      "sha256": "b9f2ad2c8f50572f3bc559d8914b74131f1874394f10a4312a77945ba9c545a3"
+    },
+    {
+      "kind": "metrics",
+      "path": "candidate-smoke.json",
+      "sha256": "a6926de8ea0458ada1e567c6ddc4c6c1d3eb5af1ee7f3f0d470a9c63f142a5ef"
+    },
+    {
+      "kind": "metrics",
+      "path": "baseline-sum.json",
+      "sha256": "d7026be35f33236e73a128075c346c3c734778f38f4ab35a200b90019f34246b"
+    },
+    {
+      "kind": "metrics",
+      "path": "candidate-sqrt-degree.json",
+      "sha256": "10652105d18613ca931ed6d7a114e9baf438896dfab8e240d01ff4f0bbdf9416"
+    },
+    {
+      "kind": "metrics",
+      "path": "screen-summary.json",
+      "sha256": "682a2363a566e34b8f1fb3cef57060c23718766e13a2a4e027cddebaa13c5050"
+    },
+    {
+      "kind": "claim-register",
+      "path": "claim-register.json",
+      "sha256": "a9f7986422020462e5ce1f9d043737c8f50493b5cf347b37aa79d804cde19030"
+    },
+    {
+      "kind": "evidence-graph",
+      "path": "evidence-graph.json",
+      "sha256": "bb6a88d1127823050df88248485dc29cab308fd2e42286362dec2242e504e540"
+    },
+    {
+      "kind": "execution-log",
+      "path": "execution-record.json",
+      "sha256": "ecf077604e82825c9baaecf52ef86451cb7226e599fa9b1ccce792bbafaa0ff9"
+    },
+    {
+      "kind": "decision-log",
+      "path": "reference-use-ledger.json",
+      "sha256": "618f13a89de5e5c69ab4fac9daea2b85ee6cc6e4bce6ebcfb794f9c16e1d7b3a"
+    },
+    {
+      "kind": "report",
+      "path": "report.md",
+      "sha256": "6d14373706e423544923721eccf5ea7a4734b170bf26c1bd858ab899c10d7c52"
+    }
+  ],
+  "claims": [
+    {
+      "falsifier": "Reference error above 1e-10, self degree inclusion, or nonfinite zero-degree output",
+      "id": "C1",
+      "next_action": "Keep the equation and CLI provenance stable",
+      "permitted_inference": "implemented operator contract",
+      "required_evidence": [
+        "float64 explicit reference and zero-degree test"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The opt-in edge-conditioned local path divides every non-self receiver message sum by the square root of incoming candidate degree.",
+      "uncertainty": "Candidate degree is not cutoff-mass normalization"
+    },
+    {
+      "falsifier": "A registered tolerance or finite-gradient test fails",
+      "id": "C2",
+      "next_action": "Retain the tests as regression gates",
+      "permitted_inference": "software correctness on the tested float64 boundary",
+      "required_evidence": [
+        "focused tests and repository fast gate"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The normalized option preserves the tested O(3), translation, permutation, edge-order, batch-isolation, and finite-gradient contracts.",
+      "uncertainty": "Tests do not prove correctness for every graph or dtype"
+    },
+    {
+      "falsifier": "State schema, initial state, or output differs when disabled",
+      "id": "C3",
+      "next_action": "Do not change the default from this packet",
+      "permitted_inference": "backward-compatible default software contract",
+      "required_evidence": [
+        "disabled-state compatibility test",
+        "paired run identities"
+      ],
+      "required_support": 1,
+      "status": "supported",
+      "text": "The option is disabled by default and explicit disabling preserves the previous state schema, initialization, and outputs exactly.",
+      "uncertainty": "No historical checkpoint migration was needed because no parameter was added"
+    },
+    {
+      "falsifier": "Clip reduction below 0.05 or validation regression above 0.020 eV",
+      "id": "C4",
+      "next_action": "Reject clipping promotion; profile parameter-group gradients before another repair",
+      "permitted_inference": "single-seed bounded diagnostic screen",
+      "required_evidence": [
+        "paired strict CUDA raw metrics and frozen gate"
+      ],
+      "required_support": 1,
+      "status": "unsupported",
+      "text": "The normalized candidate reduces clipping by at least 0.05 absolute without more than 0.020 eV validation regression.",
+      "uncertainty": "One seed does not estimate accuracy or clipping variability across initialization"
+    }
+  ],
+  "created_at": "2026-07-23T09:38:27Z",
+  "decision_contract": {
+    "code": [
+      {
+        "path": "../../src/equivariant_attention/moment.py",
+        "sha256": "949fb20cd7cf6b124ab6e39493559d7f05a7c8813b365593338d05370b854278"
+      },
+      {
+        "path": "../../src/equivariant_attention/training.py",
+        "sha256": "93968cf82d6d5e782e5c89802b188b23828b2eee013896ed13a7f50cf87a4acb"
+      },
+      {
+        "path": "../../scripts/train_compare.py",
+        "sha256": "155e16d270b18e6109fe1bf506f720ca32700b410ee98dc553d22393a7661ee5"
+      },
+      {
+        "path": "../../tests/test_edge_conditioned_local.py",
+        "sha256": "3296315429f9ce285a8f763074ec8a47631382c8db1e05a2e0c314868a230a8a"
+      },
+      {
+        "path": "../../tests/test_train_compare.py",
+        "sha256": "d2a7b01bafbfd26e47d4ac88b1dfbfaa6a0e26a8b2b0098350ab894fc6a141f3"
+      },
+      {
+        "path": "../../tests/test_benchmarking.py",
+        "sha256": "b8998d2d23c5c4a24d58efbd603441dff5d1db9c1c606d34ed039daf61caa714"
+      }
+    ],
+    "environment": {
+      "amp_dtype": "none",
+      "base_git_sha": "f2badf7c0608c345e3b18875e30977d97c2621eb",
+      "compute_environment_artifact": "compute-environment.json",
+      "determinism_mode": "strict",
+      "driver": "580.159.03",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+      "lockfile_sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+      "model_seed": 42,
+      "python": "3.12.12",
+      "split_seed": 42,
+      "torch": "2.12.1"
+    },
+    "executions": [
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "focused-green",
+        "status": "passed"
+      },
+      {
+        "command": "scripts/check.sh fast",
+        "exit_code": 0,
+        "id": "fast-gate",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "candidate-cuda-smoke",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "baseline-sum",
+        "status": "passed"
+      },
+      {
+        "command": "See execution-record.json.",
+        "exit_code": 0,
+        "id": "candidate-sqrt-degree",
+        "status": "passed"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../../PROJECT.md",
+        "role": "project contract and result boundary",
+        "sha256": "7cab77ed83c5f025a6f2b2af102f520a748a7de7a7b3b240fe50cef80c76d84d"
+      },
+      {
+        "path": "../../uv.lock",
+        "role": "locked Python environment",
+        "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2"
+      }
+    ],
+    "plan": [
+      {
+        "id": "P1",
+        "objective_done_criteria": "Scope and PROJECT record one intervention and an outcome-independent gate.",
+        "status": "completed",
+        "step": "Freeze the operator, paired comparison, thresholds, and inference boundaries."
+      },
+      {
+        "id": "P2",
+        "objective_done_criteria": "Exact reference, compatibility, symmetry, gradient, and CLI tests pass.",
+        "status": "completed",
+        "step": "Implement through intentional RED then GREEN tests."
+      },
+      {
+        "id": "P3",
+        "objective_done_criteria": "Fast gate and smoke pass without deterministic fallback.",
+        "status": "completed",
+        "step": "Run repository fast verification and strict CUDA candidate smoke."
+      },
+      {
+        "id": "P4",
+        "objective_done_criteria": "Both arms finish with matching identities and no test evaluation.",
+        "status": "completed",
+        "step": "Run the strict CUDA baseline and normalized candidate."
+      },
+      {
+        "id": "P5",
+        "objective_done_criteria": "Machine-readable result preserves either pass or rejection.",
+        "status": "completed",
+        "step": "Apply the frozen clipping and validation gate."
+      },
+      {
+        "id": "P6",
+        "objective_done_criteria": "No unresolved critical or major finding remains.",
+        "status": "pending",
+        "step": "Complete independent hash-bound record and method review."
+      }
+    ],
+    "question": "Does opt-in square-root receiver-degree normalization materially reduce EC-LGL gradient clipping without degrading a matched bounded QM9 validation screen?"
+  },
+  "evidence_boundary": "This packet exposes recorded run evidence while excluding producer-only rationale fields. It does not authenticate the reviewer, guarantee true independence, or include unrecorded evidence.",
+  "evidence_graph": {
+    "edges": [
+      {
+        "relation": "supports",
+        "source": "focused",
+        "target": "C1"
+      },
+      {
+        "relation": "supports",
+        "source": "focused",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "fast",
+        "target": "C2"
+      },
+      {
+        "relation": "supports",
+        "source": "focused",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "baseline",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "candidate",
+        "target": "C3"
+      },
+      {
+        "relation": "supports",
+        "source": "baseline",
+        "target": "paired-summary"
+      },
+      {
+        "relation": "supports",
+        "source": "candidate",
+        "target": "paired-summary"
+      },
+      {
+        "relation": "contradicts",
+        "source": "paired-summary",
+        "target": "C4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "C1",
+        "label": "Exact sqrt-degree operator",
+        "type": "claim"
+      },
+      {
+        "id": "C2",
+        "label": "Symmetry and gradient contracts",
+        "type": "claim"
+      },
+      {
+        "id": "C3",
+        "label": "Disabled-state compatibility",
+        "type": "claim"
+      },
+      {
+        "id": "C4",
+        "label": "Clipping reduction gate",
+        "type": "claim"
+      },
+      {
+        "id": "focused",
+        "label": "Focused RED/GREEN tests",
+        "type": "execution"
+      },
+      {
+        "id": "fast",
+        "label": "Repository fast gate",
+        "type": "execution"
+      },
+      {
+        "id": "baseline",
+        "label": "Strict CUDA EC-LGL sum",
+        "type": "execution"
+      },
+      {
+        "id": "candidate",
+        "label": "Strict CUDA EC-LGL normalized",
+        "type": "execution"
+      },
+      {
+        "id": "paired-summary",
+        "label": "Frozen paired gate arithmetic",
+        "type": "artifact"
+      }
+    ],
+    "schema_version": 1
+  },
+  "fingerprint": "c5070152b0eb8f0552a6bbe62efd10ffe7b5b1973e833c36a7df9e474f318b04",
+  "independent_required": true,
+  "lane_receipts": [],
+  "material_claim_ids": [
+    "C1",
+    "C2",
+    "C3",
+    "C4"
+  ],
+  "model_receipts": [],
+  "producer_context_excluded": [
+    "chain_of_thought",
+    "hidden_answer",
+    "intended_conclusion",
+    "private_scratchpad",
+    "producer_rationale",
+    "suspected_bug"
+  ],
+  "query_records": [],
+  "response_contract": {
+    "findings": "stable ID, severity, code, message, evidence, required action, and resolution status",
+    "independent": "boolean attestation",
+    "limitations": "required",
+    "review_modes": [
+      "method"
+    ],
+    "reviewed_artifacts": "path and SHA-256 pairs from this packet",
+    "reviewed_claim_ids": "all material claims unless an explicit blocked reason is supplied",
+    "reviewer": "required"
+  },
+  "review_modes": [
+    "method"
+  ],
+  "review_questions": [
+    "Verify the repaired evidence graph routes both arm results through the paired summary before contradicting C4; re-check claim arithmetic, scope boundaries, implementation evidence, and whether the packet merits passed status."
+  ],
+  "review_task_id": "review-task-c5070152b0eb8f0552a6",
+  "schema_version": 1,
+  "source_manifest_path": "/home/jaemin/project/layer/equivariant-attention/artifacts/ec-local-degree-normalization-20260723/manifest.json",
+  "source_manifest_sha256": "983a9a08fddff3400a13253edf8a4b68b8a46e1b99f98ef767f3424651003261",
+  "source_run_id": "ec-local-degree-normalization-20260723",
+  "study_table": null
+}

@@ -14,7 +14,20 @@ from equivariant_attention.training import (
 import equivariant_attention.moment as moment
 
 
-def _edge_conditioned_model(*, num_layers: int = 1) -> EquivariantAttention:
+def _edge_conditioned_model(
+    *,
+    num_layers: int = 1,
+    normalize_by_sqrt_degree: bool | None = None,
+) -> EquivariantAttention:
+    normalization_kwargs = (
+        {}
+        if normalize_by_sqrt_degree is None
+        else {
+            "normalize_edge_conditioned_local_by_sqrt_degree": (
+                normalize_by_sqrt_degree
+            )
+        }
+    )
     return EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=4,
@@ -25,6 +38,7 @@ def _edge_conditioned_model(*, num_layers: int = 1) -> EquivariantAttention:
             local_head_counts=(2,) * num_layers,
             use_key_balancing=False,
             use_edge_conditioned_local_transport=True,
+            **normalization_kwargs,
         )
     ).double()
 
@@ -105,13 +119,92 @@ def test_edge_conditioned_sum_matches_explicit_dense_reference() -> None:
         assert torch.allclose(observed, reference, atol=1e-12, rtol=1e-11)
 
 
-def test_edge_conditioned_branches_have_finite_nonzero_gradients() -> None:
+def test_edge_conditioned_sqrt_degree_matches_explicit_receiver_reference() -> None:
+    torch.manual_seed(1212)
+    baseline = moment._EdgeConditionedLocalTransport(
+        scalars=8,
+        vectors=2,
+        num_heads=2,
+        num_rbf=3,
+        normalize_by_sqrt_degree=False,
+    ).double()
+    normalized = moment._EdgeConditionedLocalTransport(
+        scalars=8,
+        vectors=2,
+        num_heads=2,
+        num_rbf=3,
+        normalize_by_sqrt_degree=True,
+    ).double()
+    normalized.load_state_dict(baseline.state_dict())
+    scalars = torch.randn(4, 8, dtype=torch.float64)
+    vectors = torch.randn(4, 2, 3, dtype=torch.float64)
+    pos = 0.2 * torch.randn(4, 3, dtype=torch.float64)
+    batch = torch.zeros(4, dtype=torch.long)
+    edge_index = torch.tensor(
+        [
+            [0, 1, 2, 3, 0, 0, 1],
+            [0, 1, 2, 3, 1, 2, 2],
+        ]
+    )
+    geometry = moment._local_geometry(
+        pos,
+        batch,
+        num_graphs=1,
+        cutoff=2.5,
+        num_rbf=3,
+        edge_index=edge_index,
+    )
+
+    raw_outputs = baseline(scalars, vectors, geometry, num_nodes=4)
+    actual = normalized(scalars, vectors, geometry, num_nodes=4)
+    degree = torch.tensor([2.0, 1.0, 0.0, 0.0], dtype=torch.float64)
+
+    for raw, observed in zip(raw_outputs, actual, strict=True):
+        divisor = degree.clamp_min(1.0).sqrt().reshape(
+            4, *((1,) * (raw.ndim - 1))
+        )
+        assert torch.allclose(observed, raw / divisor, atol=1e-12, rtol=1e-11)
+        assert torch.isfinite(observed).all()
+
+
+def test_edge_conditioned_disabled_option_is_exactly_backward_compatible() -> None:
+    torch.manual_seed(1214)
+    default_model = _edge_conditioned_model()
+    torch.manual_seed(1214)
+    explicit_disabled = _edge_conditioned_model(normalize_by_sqrt_degree=False)
+    node_feats, pos, batch, edge_index = _sparse_batch()
+
+    default_output = default_model(
+        node_feats,
+        pos,
+        batch=batch,
+        edge_index=edge_index,
+    )
+    disabled_output = explicit_disabled(
+        node_feats,
+        pos,
+        batch=batch,
+        edge_index=edge_index,
+    )
+
+    assert default_model.state_dict().keys() == explicit_disabled.state_dict().keys()
+    for name, value in default_model.state_dict().items():
+        assert torch.equal(value, explicit_disabled.state_dict()[name])
+    for name in default_output:
+        assert torch.equal(default_output[name], disabled_output[name])
+
+
+@pytest.mark.parametrize("normalize_by_sqrt_degree", [False, True])
+def test_edge_conditioned_branches_have_finite_nonzero_gradients(
+    normalize_by_sqrt_degree: bool,
+) -> None:
     torch.manual_seed(1213)
     transport = moment._EdgeConditionedLocalTransport(
         scalars=8,
         vectors=2,
         num_heads=2,
         num_rbf=3,
+        normalize_by_sqrt_degree=normalize_by_sqrt_degree,
     ).double()
     scalars = torch.randn(4, 8, dtype=torch.float64, requires_grad=True)
     vectors = torch.randn(4, 2, 3, dtype=torch.float64, requires_grad=True)
@@ -141,9 +234,14 @@ def test_edge_conditioned_branches_have_finite_nonzero_gradients() -> None:
         assert torch.count_nonzero(value) > 0
 
 
-def test_edge_conditioned_public_path_preserves_o3_permutation_and_edge_order() -> None:
+@pytest.mark.parametrize("normalize_by_sqrt_degree", [False, True])
+def test_edge_conditioned_public_path_preserves_o3_permutation_and_edge_order(
+    normalize_by_sqrt_degree: bool,
+) -> None:
     torch.manual_seed(1217)
-    model = _edge_conditioned_model()
+    model = _edge_conditioned_model(
+        normalize_by_sqrt_degree=normalize_by_sqrt_degree
+    )
     node_feats, pos, batch, edge_index = _sparse_batch()
     orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
     orthogonal[:, 0].neg_()
@@ -186,9 +284,14 @@ def test_edge_conditioned_public_path_preserves_o3_permutation_and_edge_order() 
         assert torch.allclose(reordered[name], reference[name], atol=1e-12)
 
 
-def test_edge_conditioned_batch_preserves_graph_relabel_frames_and_isolation() -> None:
+@pytest.mark.parametrize("normalize_by_sqrt_degree", [False, True])
+def test_edge_conditioned_batch_preserves_graph_relabel_frames_and_isolation(
+    normalize_by_sqrt_degree: bool,
+) -> None:
     torch.manual_seed(1219)
-    model = _edge_conditioned_model()
+    model = _edge_conditioned_model(
+        normalize_by_sqrt_degree=normalize_by_sqrt_degree
+    )
     node_feats, pos, batch, edge_index = _sparse_batch()
     first_orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
     second_orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
@@ -401,5 +504,19 @@ def test_edge_conditioned_config_rejects_inactive_or_ambiguous_routes(
                 num_heads=2,
                 use_edge_conditioned_local_transport=True,
                 **kwargs,
+            )
+        )
+
+
+def test_edge_conditioned_degree_normalization_requires_edge_transport() -> None:
+    with pytest.raises(ValueError, match="degree normalization"):
+        EquivariantAttention(
+            EquivariantAttentionConfig(
+                node_dim=4,
+                hidden_irreps="8x0e + 2x1o",
+                num_layers=1,
+                num_heads=2,
+                local_head_counts=(2,),
+                normalize_edge_conditioned_local_by_sqrt_degree=True,
             )
         )

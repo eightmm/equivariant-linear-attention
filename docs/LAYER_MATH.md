@@ -279,17 +279,27 @@ m^r_i = sum_j f_c(u_ij) tanh(g^r_ij) d_ij,
 m^T_i = sum_j f_c(u_ij) tanh(g^T_ij) ST(d_ij).
 ```
 
+When `normalize_edge_conditioned_local_by_sqrt_degree` is enabled, let
+`D_i = |{j : (i,j) is a retained non-self candidate}|`. Every message family
+above is replaced by
+
+```text
+mtilde_i = m_i / sqrt(max(D_i, 1)).
+```
+
+The degree is shared across heads and message types, counts candidates rather
+than cutoff mass, and introduces no learned parameter. The default remains the
+unnormalized sum.
+
 Self edges are excluded from these four sums because self information remains
 in the node residual. Invariant gates times polar vectors, relative polar
 vectors, or even symmetric-traceless tensors preserve O(3); receiver sums
 preserve node-permutation consistency and graph isolation. After edge contents
 have been validated, the local transport is `O(E_local)` and the complete
 fixed-width model hot path is `O(E_local + N)`. Duplicate/self validation and
-neighbor construction are deliberately outside that claim. The current
-registered operator uses an unnormalized sum: its failed repeated QM9 screen
-and high clipping rate make bounded normalization or staged residual
-initialization the next testable optimization hypothesis, not an established
-repair.
+neighbor construction are deliberately outside that claim. The original
+registered operator uses the default unnormalized sum; the square-root-degree
+variant remains opt-in pending its registered diagnostic screen.
 
 The opt-in pairwise-content repair leaves those equivariant moments unchanged
 and adds one invariant scalar message. Let `qbar_ih` and `kbar_jh` be the raw

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "run_id": "ec-local-degree-normalization-20260723",
+  "question": "Does opt-in square-root receiver-degree normalization materially reduce EC-LGL gradient clipping without degrading a matched bounded QM9 validation screen?",
+  "plan": [
+    {
+      "id": "P1",
+      "step": "Freeze the operator, paired comparison, thresholds, and inference boundaries.",
+      "objective_done_criteria": "Scope and PROJECT record one intervention and an outcome-independent gate.",
+      "status": "completed"
+    },
+    {
+      "id": "P2",
+      "step": "Implement through intentional RED then GREEN tests.",
+      "objective_done_criteria": "Exact reference, compatibility, symmetry, gradient, and CLI tests pass.",
+      "status": "completed"
+    },
+    {
+      "id": "P3",
+      "step": "Run repository fast verification and strict CUDA candidate smoke.",
+      "objective_done_criteria": "Fast gate and smoke pass without deterministic fallback.",
+      "status": "completed"
+    },
+    {
+      "id": "P4",
+      "step": "Run the strict CUDA baseline and normalized candidate.",
+      "objective_done_criteria": "Both arms finish with matching identities and no test evaluation.",
+      "status": "completed"
+    },
+    {
+      "id": "P5",
+      "step": "Apply the frozen clipping and validation gate.",
+      "objective_done_criteria": "Machine-readable result preserves either pass or rejection.",
+      "status": "completed"
+    },
+    {
+      "id": "P6",
+      "step": "Complete independent hash-bound record and method review.",
+      "objective_done_criteria": "No unresolved critical or major finding remains.",
+      "status": "completed"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../../PROJECT.md",
+      "sha256": "7cab77ed83c5f025a6f2b2af102f520a748a7de7a7b3b240fe50cef80c76d84d",
+      "role": "project contract and result boundary"
+    },
+    {
+      "path": "../../uv.lock",
+      "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+      "role": "locked Python environment"
+    }
+  ],
+  "code": [
+    {"path": "../../src/equivariant_attention/moment.py", "sha256": "949fb20cd7cf6b124ab6e39493559d7f05a7c8813b365593338d05370b854278"},
+    {"path": "../../src/equivariant_attention/training.py", "sha256": "93968cf82d6d5e782e5c89802b188b23828b2eee013896ed13a7f50cf87a4acb"},
+    {"path": "../../scripts/train_compare.py", "sha256": "155e16d270b18e6109fe1bf506f720ca32700b410ee98dc553d22393a7661ee5"},
+    {"path": "../../tests/test_edge_conditioned_local.py", "sha256": "3296315429f9ce285a8f763074ec8a47631382c8db1e05a2e0c314868a230a8a"},
+    {"path": "../../tests/test_train_compare.py", "sha256": "d2a7b01bafbfd26e47d4ac88b1dfbfaa6a0e26a8b2b0098350ab894fc6a141f3"},
+    {"path": "../../tests/test_benchmarking.py", "sha256": "b8998d2d23c5c4a24d58efbd603441dff5d1db9c1c606d34ed039daf61caa714"}
+  ],
+  "executions": [
+    {"id": "focused-green", "command": "See execution-record.json.", "exit_code": 0, "status": "passed"},
+    {"id": "fast-gate", "command": "scripts/check.sh fast", "exit_code": 0, "status": "passed"},
+    {"id": "candidate-cuda-smoke", "command": "See execution-record.json.", "exit_code": 0, "status": "passed"},
+    {"id": "baseline-sum", "command": "See execution-record.json.", "exit_code": 0, "status": "passed"},
+    {"id": "candidate-sqrt-degree", "command": "See execution-record.json.", "exit_code": 0, "status": "passed"}
+  ],
+  "environment": {
+    "base_git_sha": "f2badf7c0608c345e3b18875e30977d97c2621eb",
+    "python": "3.12.12",
+    "torch": "2.12.1",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "driver": "580.159.03",
+    "model_seed": 42,
+    "split_seed": 42,
+    "determinism_mode": "strict",
+    "amp_dtype": "none",
+    "lockfile_sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+    "compute_environment_artifact": "compute-environment.json"
+  },
+  "artifacts": [
+    {"path": "scope.md", "kind": "protocol", "role": "frozen intervention and acceptance contract", "sha256": "65b8d15ee18fd98d9c95355b0026afc3cf510a19d457280cce92b059af156b15"},
+    {"path": "compute-environment.json", "kind": "environment", "role": "non-sensitive local compute record", "sha256": "b9f2ad2c8f50572f3bc559d8914b74131f1874394f10a4312a77945ba9c545a3"},
+    {"path": "candidate-smoke.json", "kind": "metrics", "role": "two-step strict CUDA candidate smoke", "sha256": "a6926de8ea0458ada1e567c6ddc4c6c1d3eb5af1ee7f3f0d470a9c63f142a5ef"},
+    {"path": "baseline-sum.json", "kind": "metrics", "role": "registered unnormalized EC-LGL baseline", "sha256": "d7026be35f33236e73a128075c346c3c734778f38f4ab35a200b90019f34246b"},
+    {"path": "candidate-sqrt-degree.json", "kind": "metrics", "role": "registered normalized EC-LGL candidate", "sha256": "10652105d18613ca931ed6d7a114e9baf438896dfab8e240d01ff4f0bbdf9416"},
+    {"path": "screen-summary.json", "kind": "metrics", "role": "paired identities, differences, and frozen verdict", "sha256": "682a2363a566e34b8f1fb3cef57060c23718766e13a2a4e027cddebaa13c5050"},
+    {"path": "claim-register.json", "kind": "claim-register", "role": "claim status and inference boundaries", "sha256": "a9f7986422020462e5ce1f9d043737c8f50493b5cf347b37aa79d804cde19030"},
+    {"path": "evidence-graph.json", "kind": "evidence-graph", "role": "support and contradiction edges", "sha256": "bb6a88d1127823050df88248485dc29cab308fd2e42286362dec2242e504e540"},
+    {"path": "execution-record.json", "kind": "execution-log", "role": "RED/GREEN, verification, environment failure, and CUDA commands", "sha256": "ecf077604e82825c9baaecf52ef86451cb7226e599fa9b1ccce792bbafaa0ff9"},
+    {"path": "reference-use-ledger.json", "kind": "decision-log", "role": "material procedural reference hashes", "sha256": "618f13a89de5e5c69ab4fac9daea2b85ee6cc6e4bce6ebcfb794f9c16e1d7b3a"},
+    {"path": "report.md", "kind": "report", "role": "negative diagnostic result and descriptive accuracy observation", "sha256": "6d14373706e423544923721eccf5ea7a4734b170bf26c1bd858ab899c10d7c52"},
+    {"path": "review-task.json", "kind": "review-task", "role": "hash-bound independent method review packet", "sha256": "6301699ed3bfe67b02d36a69360e99617da739c29e8136f273d6321b18120ce7"},
+    {"path": "reviewer-response.json", "kind": "review-response", "role": "independent reviewer response with resolved suggestion", "sha256": "af2eebbbc84c0612f458ec5add830fd4a970b11bf8e588d636977704e8050849"},
+    {"path": "review-receipt-v2.json", "kind": "review-receipt", "role": "validated independent review receipt", "sha256": "dd390952a0efe786c335945232ef0da284bbb571c58df501320918c694058286"}
+  ],
+  "claims": [
+    {"id": "C1", "text": "The opt-in local operator implements exact square-root receiver-degree normalization.", "evidence": ["scope.md", "execution-record.json"]},
+    {"id": "C2", "text": "The normalized option preserves the tested symmetry, permutation, isolation, and gradient contracts.", "evidence": ["execution-record.json"]},
+    {"id": "C3", "text": "The default remains unnormalized and explicit disabling preserves schema, initialization, and outputs.", "evidence": ["execution-record.json", "baseline-sum.json", "candidate-sqrt-degree.json"]},
+    {"id": "C4", "text": "The normalized candidate reduces clipping by at least 0.05 absolute without more than 0.020 eV validation regression; the saved screen contradicts this claim.", "evidence": ["baseline-sum.json", "candidate-sqrt-degree.json", "screen-summary.json"]}
+  ],
+  "review": {
+    "status": "passed",
+    "findings": [
+      {
+        "id": "S1",
+        "severity": "suggestion",
+        "code": "paired-summary-evidence-routing",
+        "resolution_status": "resolved"
+      }
+    ],
+    "receipt": "review-receipt-v2.json"
+  }
+}
