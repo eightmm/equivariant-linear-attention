@@ -20,6 +20,7 @@ settings rather than separate model classes. `model.attention_kind` is
 | `pos` | `(N, 3)` | finite float32+ coordinates on the same device |
 | `batch` | `(N,)` | optional integer IDs `0..G-1` |
 | `edge_index` | `(2, E)` | optional keyword-only integer local candidates: receiver row then sender row |
+| `readout_mask` | `(N,)` | optional keyword-only boolean mask selecting graph-pooling nodes |
 
 At least one node is required. Graph IDs must be nonnegative, contiguous, and
 start at zero; empty graphs are not encoded. A missing batch means one graph.
@@ -28,6 +29,11 @@ be on the input device, nonnegative and in range, unique as directed pairs,
 same-graph, and contain `i <- i` for every node. Candidates outside the strict
 local cutoff are discarded. Supplying edges bypasses complete-pair discovery;
 omitting them preserves the existing fallback.
+
+When supplied, `readout_mask` must select at least one node in every graph.
+Transport still uses every node; only the final node-to-graph mean is masked.
+Omitting the mask, or supplying an all-true mask, preserves the default
+all-node mean exactly.
 
 ## Outputs
 
@@ -46,9 +52,11 @@ The forward result is a tensor-only dictionary:
 Representation metadata belongs to the model rather than the output dictionary
 so compiled/tensor consumers do not receive strings.
 
-`node_tensors` and `graph_tensors` read out the last attention block's
-transient symmetric-traceless moment. They are not a persistent tensor hidden
-state computed after the final scalar/vector FFN.
+Without hidden `2e` channels, `node_tensors` and `graph_tensors` read out the
+last attention block's transient symmetric-traceless moment as before. When
+`hidden_irreps` contains `Cx2e`, the model instead carries `C` persistent
+five-component symmetric-traceless channels through every block and reads the
+requested output tensors from that final hidden state.
 
 The default `coordinate_updates=False` returns exactly the original six keys
 and allocates no coordinate parameters. With the option enabled, every
@@ -69,8 +77,17 @@ scalar training objective. `node_positions` is the resulting latent geometry.
 - row normalization, with exactly one key-mass balancing cycle enabled by
   default and a no-balancing lane restricted to controlled experiments;
 - exact factorized relative vector and rank-2 moment transport;
-- scalar/vector residual updates;
+- scalar/vector residual updates and optional persistent Cartesian `2e`
+  residual/FFN updates;
 - ratio-2 pointwise equivariant FFN in every block.
+
+The persistent `2e` path is opt-in through `hidden_irreps`, for example
+`"64x0e + 4x1o + 4x2e"`. Each block mixes its bounded hidden tensor state into
+the transient head moments, feeds Frobenius contractions back to the scalar
+path, and updates the tensor state with invariant scalar gates. Channel mixing
+acts only over multiplicities, so the state transforms as `T -> R T R^T`.
+This is a Cartesian rank-2 implementation; it does not add `2o`, spherical
+harmonics, Clebsch--Gordan products, or arbitrary `l>2` input support.
 
 Turning off `use_alignment_linear_term` removes only the `beta * (q dot k)`
 term while retaining the same `beta` constant. `kernel_floor_mode="fixed"`

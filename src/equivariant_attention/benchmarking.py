@@ -15,6 +15,7 @@ class GraphSample:
     target: torch.Tensor
     sample_id: str
     edge_index: torch.Tensor | None = None
+    readout_mask: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class GraphBatch:
     sample_ids: tuple[str, ...]
     edge_index: torch.Tensor | None = None
     edge_index_is_validated: bool = False
+    readout_mask: torch.Tensor | None = None
 
     def to(
         self,
@@ -55,6 +57,11 @@ class GraphBatch:
                 else self.edge_index.to(device=device, dtype=torch.long)
             ),
             edge_index_is_validated=self.edge_index_is_validated,
+            readout_mask=(
+                None
+                if self.readout_mask is None
+                else self.readout_mask.to(device=device)
+            ),
         )
 
 
@@ -112,6 +119,15 @@ def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
             offset_edges.append(sample_edges + node_offset)
             node_offset += sample.node_feats.shape[0]
         edge_index = torch.cat(offset_edges, dim=1)
+    readout_presence = [sample.readout_mask is not None for sample in samples]
+    if any(readout_presence) and not all(readout_presence):
+        raise ValueError("all samples must either provide readout_mask or omit it")
+    readout_mask = None
+    if all(readout_presence):
+        readout_mask = torch.cat(
+            [_validated_sample_readout_mask(sample) for sample in samples],
+            dim=0,
+        )
     return GraphBatch(
         node_feats=node_feats,
         pos=pos,
@@ -120,6 +136,7 @@ def collate_graphs(samples: Sequence[GraphSample]) -> GraphBatch:
         sample_ids=tuple(sample.sample_id for sample in samples),
         edge_index=edge_index,
         edge_index_is_validated=edge_index is not None,
+        readout_mask=readout_mask,
     )
 
 
@@ -238,6 +255,24 @@ def _validated_sample_edge_index(sample: GraphSample) -> torch.Tensor:
     if not bool(has_self.all().item()):
         raise ValueError("sample edge_index must contain a self edge for every node")
     return edge_index
+
+
+def _validated_sample_readout_mask(sample: GraphSample) -> torch.Tensor:
+    readout_mask = sample.readout_mask
+    if readout_mask is None:
+        raise RuntimeError("readout_mask validation requires a mask")
+    if readout_mask.dtype != torch.bool:
+        raise TypeError("readout_mask must use boolean dtype")
+    if readout_mask.shape != (sample.node_feats.shape[0],):
+        raise ValueError(
+            "readout_mask must have shape "
+            f"({sample.node_feats.shape[0]},), got {tuple(readout_mask.shape)}"
+        )
+    if readout_mask.device != sample.node_feats.device:
+        raise ValueError("readout_mask and node_feats must be on the same device")
+    if not bool(readout_mask.any().item()):
+        raise ValueError("readout_mask must select at least one node")
+    return readout_mask
 
 
 def _qm9_sample_id(data: object, *, row_index: int) -> str:

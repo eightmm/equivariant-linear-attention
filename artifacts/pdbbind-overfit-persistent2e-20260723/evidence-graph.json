@@ -1,0 +1,37 @@
+{
+  "run_id": "pdbbind-overfit-persistent2e-20260723",
+  "edges": [
+    {
+      "claim_id": "C1",
+      "depends_on": ["upstream_dataset_card", "loader_tests", "real_row_smoke"]
+    },
+    {
+      "claim_id": "C2",
+      "depends_on": ["persistent_2e_tests", "fast_verification"],
+      "missing_nonessential_lane": "gpu_smoke",
+      "claim_effect": "CPU float64 mathematical implementation is supported; CUDA and mixed-precision execution are not verified."
+    },
+    {
+      "claim_id": "C3",
+      "depends_on": ["frozen_subset_receipt", "registered_cuda_attention_train_result"],
+      "available_fallback": "cpu-fallback-result.json",
+      "claim_effect": "The CPU fallback instantiation failed the numerical threshold; the exact registered CUDA instantiation is not verified."
+    },
+    {
+      "claim_id": "C4",
+      "depends_on": ["registered_cuda_attention_train_result", "registered_cuda_egnn_train_result", "compute_environment"],
+      "contract_verdict": "rejected_unfulfilled_as_registered",
+      "evidence_status": "not_verified",
+      "claim_effect": "Unavailable CUDA measurement is the frozen falsifier. No latency or memory performance conclusion is permitted."
+    }
+  ],
+  "boundaries": {
+    "validation_rows_consumed": false,
+    "test_rows_consumed": false,
+    "validation_cache_materialized": true,
+    "test_cache_materialized": true,
+    "cache_materialization_cause": "A disclosed failed generic datasets builder preflight materialized all split caches despite split=train; no validation/test row was indexed, printed, selected, or used.",
+    "generalization_claim": false,
+    "official_egnn_reproduction": false
+  }
+}

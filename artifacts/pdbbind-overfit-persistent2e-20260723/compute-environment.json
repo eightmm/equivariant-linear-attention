@@ -1,0 +1,137 @@
+{
+  "platform": {
+    "machine": "x86_64",
+    "release": "7.0.0-28-generic",
+    "system": "Linux"
+  },
+  "resources": {
+    "cpu_count": 20,
+    "cpu_model": "Intel(R) Core(TM) i5-14600KF",
+    "cores_per_socket": 14,
+    "disk_free_bytes": 2021628145664,
+    "memory_bytes": 134887141376,
+    "sockets": 1,
+    "threads_per_core": 2
+  },
+  "active_runtime": {
+    "captured_after_run": true,
+    "python_executable": "/home/jaemin/project/layer/equivariant-attention/.venv/bin/python3",
+    "python_version": "3.12.12",
+    "torch_version": "2.12.1+cu130",
+    "torch_cuda_version": "13.0",
+    "cuda_available_in_sandbox": false,
+    "torch_num_threads": 14,
+    "torch_num_interop_threads": 14,
+    "omp_num_threads": null,
+    "mkl_num_threads": null,
+    "reference_precision": "float32",
+    "measurement_device": "cpu"
+  },
+  "git": {
+    "base_sha": "805c50ce1ccec197e498832a4d7e5f7377fe18c1",
+    "branch": "codex/dynamic-coordinate-egnn-analysis",
+    "worktree_dirty_during_run": true
+  },
+  "run_source_lineage": {
+    "exact_dirty_tree_hash_at_run": null,
+    "exact_pre_review_runner_sha256": null,
+    "limitation": "The CPU result was produced from an uncommitted tree and the exact dirty-tree/runner hash was not captured before execution. base_sha alone does not identify that run source.",
+    "attested_unchanged_since_run": [
+      "src/equivariant_attention/moment.py",
+      "src/equivariant_attention/benchmarking.py",
+      "src/equivariant_attention/training.py",
+      "src/equivariant_attention/_egnn_baseline.py",
+      "pyproject.toml",
+      "uv.lock"
+    ],
+    "post_run_semantic_repairs": [
+      "scripts/run_registered_pdbbind_overfit.py now enforces exact frozen sample/node/ligand identities.",
+      "Future CPU results serialize peak_cuda_memory_bytes as null instead of the historical zero sentinel."
+    ],
+    "post_run_nonsemantic_changes": [
+      "Loader variable names were clarified from atomic-number wording to opaque atom-token wording without changing the frozen digest schema.",
+      "Tests, documentation, and evidence artifacts were expanded after independent review."
+    ],
+    "claim_effect": "The raw CPU metrics and model state hashes are retained, but this is not a byte-for-byte source-reproducibility attestation for the 20-minute fallback run."
+  },
+  "locked_environment": {
+    "pyproject_sha256": "bc1cdf5e04f8dbe75495715cc5e5a4d2772315b710015ecaac1d8e097206fcef",
+    "uv_lock_sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2"
+  },
+  "source_sha256_after_review_repair": {
+    "src/equivariant_attention/moment.py": "d5372d5a334c90ee3830a601e7c8c1b1bec1122d6760d267af7e355ae26b7799",
+    "src/equivariant_attention/pdbbind.py": "cca33d37fcccad26e8361bdfc0f4234dfd83a662ac3a0bf578b86430b3e6c5f1",
+    "src/equivariant_attention/benchmarking.py": "7742ebb78391606a463ceb34f270901c5e0cac587b313c6fa7237795922c1e6a",
+    "src/equivariant_attention/training.py": "99cdb921eadc0f55ca696ac9b64d5cabd8df9781da7b55ea866529cf8071cbd8",
+    "src/equivariant_attention/_egnn_baseline.py": "233274bdf03754dc5e635bedd2707668588602fa7a782af1ad2a45341a2dc20c",
+    "scripts/run_registered_pdbbind_overfit.py": "3041cbfed91c036c825ff24509ab7c255f36a374c455e5478bc649c195a7c55a"
+  },
+  "result_sha256": {
+    "cpu-fallback-result.json": "09b2735e7d9738b89b15931e2a915ea2913994dfc3a601681fb486f31fdad57f",
+    "cpu-smoke-result.json": "a872d902ec53f87ab354280a1dad8df74514238349ccded3518df1393ec7c448"
+  },
+  "gpu_execution": {
+    "sandbox_gate": "failed: cuda requested but unavailable",
+    "external_gate": "not run: approval execution rejected by current Codex usage limit",
+    "cuda_metrics_verified": false
+  },
+  "schema_version": 1,
+  "tools": {
+    "R": {
+      "available": false,
+      "version": null
+    },
+    "docker": {
+      "available": true,
+      "version": "Docker version 29.6.2, build dfc4efb"
+    },
+    "julia": {
+      "available": false,
+      "version": null
+    },
+    "jupyter": {
+      "available": false,
+      "version": null
+    },
+    "nvidia-smi": {
+      "available": true,
+      "version": "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running."
+    },
+    "podman": {
+      "available": false,
+      "version": null
+    },
+    "python": {
+      "available": true,
+      "version": "Python 3.12.3"
+    },
+    "rocm-smi": {
+      "available": false,
+      "version": null
+    },
+    "rsync": {
+      "available": true,
+      "version": "rsync  version 3.2.7  protocol version 31"
+    },
+    "sacct": {
+      "available": false,
+      "version": null
+    },
+    "sbatch": {
+      "available": false,
+      "version": null
+    },
+    "squeue": {
+      "available": false,
+      "version": null
+    },
+    "ssh": {
+      "available": true,
+      "version": "OpenSSH_9.6p1 Ubuntu-3ubuntu13.18, OpenSSL 3.0.13 30 Jan 2024"
+    },
+    "uv": {
+      "available": true,
+      "version": "uv 0.10.3"
+    }
+  }
+}

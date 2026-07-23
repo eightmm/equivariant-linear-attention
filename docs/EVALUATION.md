@@ -18,6 +18,43 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Registered ATOM3D-LBA overfit outcome (2026-07-23)
+
+The train-only capacity packet froze the first 16 rows of the pinned
+ATOM3D-LBA train Parquet, retained pocket plus ligand nodes, and pooled only
+ligand nodes. Both FP32 arms used identical features, targets, cyclic batches
+of two, AdamW at `1e-3`, zero weight decay, clipping at 1.0, and at most 3,000
+updates. Attention used no edge tensor; the private static EGNN used 382,530
+directed 6-Angstrom candidates including the self candidates removed inside
+the baseline.
+
+| arm | parameters | best train MAE | final train MAE | CPU median step | elapsed |
+|---|---:|---:|---:|---:|---:|
+| edge-free GGG + persistent `4x2e` | 167,115 | 0.151798 pK @ 2,950 | 0.199863 pK | 0.117964 s | 373.890 s |
+| private static EGNN, width 92 | 167,260 | 0.163536 pK @ 2,850 | 0.163732 pK | 0.252309 s | 823.408 s |
+
+These medians come from one sequential CPU run after excluding the first ten
+train steps. The timed interval covers `train_regression_step` only; radius
+construction, batch-index selection/collation, and periodic full-train
+evaluation are outside it. It is not a repeated end-to-end benchmark.
+
+Neither CPU arm reached the `0.10 pK` threshold. The CPU fallback
+instantiation is therefore rejected, but it cannot formally substitute for the
+frozen CUDA protocol: the exact preregistered C3 remains not verified.
+Attention's lower best observed MAE and `2.139x` CPU step-rate ratio are
+descriptive post-outcome observations, not promotion criteria. The late-step
+curves oscillated, making a separately registered learning-rate-decay
+diagnostic the smallest next experiment; changing the optimizer after seeing
+this result would not repair the CPU fallback.
+
+The registered CUDA run was not executed: CUDA was unavailable inside the
+sandbox and external GPU execution was rejected by the current Codex usage
+limit. Consequently CUDA C2 execution, C3 overfit, and C4 speed/peak-memory
+evidence remain not verified. Because C4's frozen falsifier includes
+unavailable or non-comparable measurements, C4 is also contractually
+unfulfilled/rejected as registered; this permits no performance conclusion.
+`validation_evaluated=false` and `test_evaluated=false` in both result arms.
+
 ## Registered comparison sequence
 
 All adaptive QM9 arms use target `gap` in eV, random-row split seed 42, FP32,

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "run_id": "pdbbind-overfit-persistent2e-20260723",
+  "generated_at": "2026-07-23T07:05:42Z",
+  "git_base_sha": "805c50ce1ccec197e498832a4d7e5f7377fe18c1",
+  "branch": "codex/dynamic-coordinate-egnn-analysis",
+  "self_hash_included": false,
+  "artifact_sha256": {
+    "claim-register.json": "f7d6944127220ab111adafd3799fc06d64007cb3a93c559d00db2bd9bf29ed3b",
+    "compute-environment.json": "437879dcdd94d790265a2c33eb17e6a00d37aefc51baae2ff2cd2c8e7be9b983",
+    "cpu-fallback-result.json": "09b2735e7d9738b89b15931e2a915ea2913994dfc3a601681fb486f31fdad57f",
+    "cpu-smoke-result.json": "a872d902ec53f87ab354280a1dad8df74514238349ccded3518df1393ec7c448",
+    "evidence-graph.json": "4631f8ab863024a307de9bcdd374b5ab63f5ed4f7c4fe35350faa29858a03452",
+    "frozen-subset.json": "4652e055df189fd134020587ac02f283e79cc32ed9c0463ea95e62e9ea93f7d4",
+    "implementation-record.json": "2170700bbf74266f6d5b4942fe97f8ca39a02e94955903890ecacf39a1453b18",
+    "preflight-attempts.json": "03b84d48740f8c67856cb894ae9ca19fafa70c15191e6eef832ee3e3dbbe6cfb",
+    "red-tests.json": "ca0dfb3972f4fd908e289950e9b29249336ad12f5084714533dbaaed6335a8fd",
+    "reference-use-ledger.json": "29f0cbb933e1cb401311c5aa560e6f4c84a240ac2b9220cd3ea28a1b9c67a332",
+    "report.md": "229d72729cfed42b70874f6a3838b78ac560fea9365c84ef4dbf96d0b4e3506b",
+    "reproduction-commands.json": "f5a87de68888095257689a63d91750618d3ec9ed6ab23c8d49cec7b5c7dfdaab",
+    "result-correction.json": "5078b6c31034aaf13b8e53208beefdca5733f719b170e9a8b30d187735db9736",
+    "review-receipt.json": "53ef51cfd0122578416c7ce98a75e170904387dc0cdab1c07c0a6b53782ad1ca",
+    "scope.md": "fdf78cbd2bea8c974d042b9d1be4d5aaa8e6c4d25ef629e86cc7111b4194a542",
+    "verification-summary.json": "0d91ac6e96940cf2575a2ca939d2869dfb63ba124ae0c4aec4a02b36cd4b677b"
+  },
+  "source_sha256": {
+    "pyproject.toml": "bc1cdf5e04f8dbe75495715cc5e5a4d2772315b710015ecaac1d8e097206fcef",
+    "uv.lock": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+    "src/equivariant_attention/_egnn_baseline.py": "233274bdf03754dc5e635bedd2707668588602fa7a782af1ad2a45341a2dc20c",
+    "src/equivariant_attention/benchmarking.py": "7742ebb78391606a463ceb34f270901c5e0cac587b313c6fa7237795922c1e6a",
+    "src/equivariant_attention/moment.py": "d5372d5a334c90ee3830a601e7c8c1b1bec1122d6760d267af7e355ae26b7799",
+    "src/equivariant_attention/pdbbind.py": "cca33d37fcccad26e8361bdfc0f4234dfd83a662ac3a0bf578b86430b3e6c5f1",
+    "src/equivariant_attention/training.py": "99cdb921eadc0f55ca696ac9b64d5cabd8df9781da7b55ea866529cf8071cbd8",
+    "scripts/run_registered_pdbbind_overfit.py": "3041cbfed91c036c825ff24509ab7c255f36a374c455e5478bc649c195a7c55a",
+    "tests/test_pdbbind_lba.py": "386444c7f90ae4a166b7ba0e49d49f23187e175deb4020b8ffaff2e59bace4bf",
+    "tests/test_persistent_tensors.py": "b3caa3ee339c91f4f79cf1110c9d9dadee98bccdbe6686c37254d8c14b412915",
+    "tests/test_readout_mask.py": "8409d5aa76725c2b183058c5cc7b2316112f40ab635b7b4524abab372c220cee",
+    "tests/test_registered_pdbbind_overfit.py": "8e19c18dce06db57dc76b4073bc3d5b9bc094e5d0e7d83b075fcd8b5a278f635"
+  },
+  "documentation_sha256": {
+    "PROJECT.md": "b21755a9a60b184668ad90910a02b6eaf053b97cffd12b980d5c51b964087a76",
+    "README.md": "5ddde261b5d2b2df38649f70754f5f81decbf7ab0090ceed90ae8cd223da28ce",
+    "docs/DATA.md": "b348a8a27595151905a57d8fe4a982974214e984a985144eb3f528a4d23a2081",
+    "docs/EVALUATION.md": "e559badf5474a26336f97ea059bc80f46d69bc4baaa14fee3e7b8d0b6c32e604",
+    "docs/EXPERIMENTS.jsonl": "18b4ae8596ca18cac5d99b1a5bd46e8899bb11f964c76bb15b34c9cab6b4dd84",
+    "docs/LAYER_MATH.md": "54d6d51352c99111d04b8056b06dbd045e807502877eb5e454fcdbab75ba72af",
+    "docs/MODEL.md": "e509bca1be0ffd06236fdce983b55a8c7ecf95758afbb9e7a2b08e605019c264",
+    "docs/TRAINING.md": "f42ed5eb66b756146efe65c209b6390b037e47322d0fcb89bed0ec671601ba85"
+  },
+  "release": {
+    "implementation_and_documented_null_result": "go",
+    "remaining_major_findings": 0,
+    "registered_cuda_overfit_or_superiority_claim": "no_go",
+    "exact_dirty_run_source_hash_available": false
+  }
+}

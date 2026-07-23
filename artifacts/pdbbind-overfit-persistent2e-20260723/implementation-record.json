@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "run_id": "pdbbind-overfit-persistent2e-20260723",
+  "implemented": [
+    {
+      "feature": "persistent Cartesian 2e hidden channels",
+      "files": [
+        "src/equivariant_attention/moment.py",
+        "src/equivariant_attention/training.py"
+      ],
+      "default_effect": "none when hidden tensor multiplicity is zero",
+      "boundaries": [
+        "reflection-even 2e only",
+        "no external 2e or 2o node input",
+        "no spherical harmonics or general l>2"
+      ]
+    },
+    {
+      "feature": "optional node readout mask",
+      "files": [
+        "src/equivariant_attention/benchmarking.py",
+        "src/equivariant_attention/moment.py",
+        "src/equivariant_attention/_egnn_baseline.py",
+        "src/equivariant_attention/training.py"
+      ],
+      "default_effect": "omitted and all-true masks retain whole-graph mean pooling"
+    },
+    {
+      "feature": "pinned train-only ATOM3D-LBA loader",
+      "files": [
+        "src/equivariant_attention/pdbbind.py",
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "data_policy": "opaque atom-token IDs, pocket plus ligand nodes, ligand-only readout, no committed records"
+    },
+    {
+      "feature": "bounded matched overfit runner",
+      "files": [
+        "scripts/run_registered_pdbbind_overfit.py"
+      ],
+      "controls": [
+        "immutable dataset revision and exact 16 sample IDs/counts",
+        "near-parameter-matched private static EGNN",
+        "identical target normalization, order, optimizer, and update cap",
+        "validation/test evaluation absent"
+      ]
+    }
+  ],
+  "review_repairs": [
+    "Expanded persistent-path symmetry checks to every node/graph output and batch isolation.",
+    "Added exact disabled-state/output comparison and independently checked compatibility against git HEAD.",
+    "Made the runner reject frozen sample identity, node-count, or ligand-count drift.",
+    "Changed future CPU peak_cuda_memory_bytes output from zero sentinel to null and preserved the raw historical result with a separate correction receipt.",
+    "Disclosed validation/test cache materialization separately from row consumption."
+  ]
+}

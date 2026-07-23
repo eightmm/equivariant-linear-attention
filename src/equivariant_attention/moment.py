@@ -129,6 +129,7 @@ class EquivariantAttention(nn.Module):
                 _EquivariantMomentLayer(
                     scalars=self.hidden_irreps.scalars,
                     vectors=self.hidden_irreps.vectors,
+                    tensors=self.hidden_irreps.tensors,
                     num_heads=config.num_heads,
                     linear_kernel_init=config.linear_kernel_init,
                     linear_kernel_max=config.linear_kernel_max,
@@ -190,7 +191,11 @@ class EquivariantAttention(nn.Module):
         self.vector_out = _ChannelMix(
             self.hidden_irreps.vectors, self.output_irreps.vectors
         )
-        self.tensor_out = _ChannelMix(config.num_heads, self.output_irreps.tensors)
+        tensor_out_channels = self.hidden_irreps.tensors or config.num_heads
+        self.tensor_out = _ChannelMix(
+            tensor_out_channels,
+            self.output_irreps.tensors,
+        )
 
     def forward(
         self,
@@ -200,6 +205,7 @@ class EquivariantAttention(nn.Module):
         *,
         edge_index: torch.Tensor | None = None,
         edge_index_is_validated: bool = False,
+        readout_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if not isinstance(edge_index_is_validated, bool):
             raise TypeError("edge_index_is_validated must be boolean")
@@ -210,8 +216,19 @@ class EquivariantAttention(nn.Module):
             pos,
             batch,
         )
+        pool_mask, pool_batch, pool_counts = _readout_metadata(
+            readout_mask,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+        )
         scalars = self.scalar_in(node_feats)
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
+        persistent_tensor = (
+            pos.new_zeros((pos.shape[0], self.hidden_irreps.tensors, 5))
+            if self.hidden_irreps.tensors
+            else None
+        )
         transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
         has_local_heads = any(layer.local_head_count for layer in self.layers)
@@ -281,7 +298,7 @@ class EquivariantAttention(nn.Module):
                 ) * normalized_pos.unsqueeze(1)
                 vectors = vectors + geometry_vector.to(dtype=vectors.dtype)
                 global_geometry_injected = True
-            scalars, vectors, transient_tensor = layer(
+            layer_args = (
                 scalars,
                 vectors,
                 normalized_pos,
@@ -292,6 +309,20 @@ class EquivariantAttention(nn.Module):
                 local_geometry,
                 self.local_pairwise_content,
             )
+            if self.hidden_irreps.tensors:
+                if persistent_tensor is None:
+                    raise RuntimeError("persistent tensor state is missing")
+                (
+                    scalars,
+                    vectors,
+                    persistent_tensor,
+                    transient_tensor,
+                ) = layer(
+                    *layer_args,
+                    persistent_tensor=persistent_tensor,
+                )
+            else:
+                scalars, vectors, transient_tensor = layer(*layer_args)
             if layer_index < len(self.coordinate_updaters):
                 pos = pos + self.coordinate_updaters[layer_index](
                     scalars,
@@ -304,19 +335,35 @@ class EquivariantAttention(nn.Module):
 
         node_scalars = self.scalar_out(self.scalar_out_norm(scalars))
         node_vectors = self.vector_out(vectors)
-        node_tensors = _st_features_to_matrix(self.tensor_out(transient_tensor))
+        tensor_state = (
+            persistent_tensor
+            if self.hidden_irreps.tensors
+            else transient_tensor
+        )
+        if tensor_state is None:
+            raise RuntimeError("tensor output state is missing")
+        node_tensors = _st_features_to_matrix(self.tensor_out(tensor_state))
+        pooled_scalars = (
+            node_scalars if pool_mask is None else node_scalars[pool_mask]
+        )
+        pooled_vectors = (
+            node_vectors if pool_mask is None else node_vectors[pool_mask]
+        )
+        pooled_tensors = (
+            node_tensors if pool_mask is None else node_tensors[pool_mask]
+        )
         output = {
             "node_scalars": node_scalars,
             "node_vectors": node_vectors,
             "node_tensors": node_tensors,
             "graph_scalars": _scatter_mean(
-                node_scalars, batch, num_graphs, graph_counts
+                pooled_scalars, pool_batch, num_graphs, pool_counts
             ),
             "graph_vectors": _scatter_mean(
-                node_vectors, batch, num_graphs, graph_counts
+                pooled_vectors, pool_batch, num_graphs, pool_counts
             ),
             "graph_tensors": _scatter_mean(
-                node_tensors, batch, num_graphs, graph_counts
+                pooled_tensors, pool_batch, num_graphs, pool_counts
             ),
         }
         if self.config.coordinate_updates:
@@ -372,6 +419,7 @@ class _EquivariantMomentLayer(nn.Module):
         self,
         scalars: int,
         vectors: int,
+        tensors: int,
         num_heads: int,
         linear_kernel_init: float,
         linear_kernel_max: float,
@@ -400,6 +448,7 @@ class _EquivariantMomentLayer(nn.Module):
         super().__init__()
         self.scalars = scalars
         self.vectors = vectors
+        self.tensors = tensors
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
         self.eps = eps
@@ -479,7 +528,21 @@ class _EquivariantMomentLayer(nn.Module):
         self.relative_mix = nn.Parameter(torch.full((num_heads,), 0.1))
         self.tensor_mix = nn.Parameter(torch.full((num_heads,), 0.1))
         self.vector_update = _ChannelMix(num_heads, vectors)
-        invariant_dim = scalars + 6 * num_heads
+        self.persistent_tensor_to_head = (
+            _ChannelMix(tensors, num_heads) if tensors else None
+        )
+        self.persistent_tensor_from_head = (
+            _ChannelMix(num_heads, tensors) if tensors else None
+        )
+        self.persistent_tensor_gate = (
+            nn.Linear(scalars, tensors) if tensors else None
+        )
+        self.persistent_tensor_residual_scale = (
+            nn.Parameter(torch.tensor(float(residual_scale_init)))
+            if tensors
+            else None
+        )
+        invariant_dim = scalars + 6 * num_heads + tensors
         self.scalar_update_norm = nn.LayerNorm(invariant_dim)
         self.scalar_update = nn.Sequential(
             nn.Linear(invariant_dim, scalars),
@@ -494,15 +557,26 @@ class _EquivariantMomentLayer(nn.Module):
         )
         ffn_hidden = 2 * scalars
         self.ffn_norm = nn.LayerNorm(scalars)
-        self.ffn_in = nn.Linear(scalars + vectors, 2 * ffn_hidden)
+        self.ffn_in = nn.Linear(scalars + vectors + tensors, 2 * ffn_hidden)
         self.ffn_out = nn.Linear(ffn_hidden, scalars)
         self.ffn_vector_gate = nn.Linear(scalars, vectors)
         self.ffn_vector_mix = _ChannelMix(vectors, vectors)
+        self.persistent_tensor_ffn_gate = (
+            nn.Linear(scalars, tensors) if tensors else None
+        )
+        self.persistent_tensor_ffn_mix = (
+            _ChannelMix(tensors, tensors) if tensors else None
+        )
         self.ffn_scalar_residual_scale = nn.Parameter(
             torch.tensor(float(residual_scale_init))
         )
         self.ffn_vector_residual_scale = nn.Parameter(
             torch.tensor(float(residual_scale_init))
+        )
+        self.persistent_tensor_ffn_residual_scale = (
+            nn.Parameter(torch.tensor(float(residual_scale_init)))
+            if tensors
+            else None
         )
         # Allocated for every route and M so comparisons retain one state schema.
         self.memory_router_in = nn.Linear(self.head_dim, _MEMORY_ROUTER_DIM)
@@ -519,14 +593,39 @@ class _EquivariantMomentLayer(nn.Module):
         graph_counts: torch.Tensor,
         local_geometry: tuple[torch.Tensor, ...] | None,
         local_pairwise_content: _LocalPairwiseContent | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        *,
+        persistent_tensor: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, ...]:
+        if self.tensors:
+            if persistent_tensor is None:
+                raise ValueError(
+                    "persistent_tensor is required when hidden 2e channels are enabled"
+                )
+            if persistent_tensor.shape != (scalars.shape[0], self.tensors, 5):
+                raise ValueError(
+                    "persistent_tensor must have shape "
+                    f"({scalars.shape[0]}, {self.tensors}, 5)"
+                )
+        elif persistent_tensor is not None:
+            raise ValueError(
+                "persistent_tensor requires positive hidden 2e channels"
+            )
+        else:
+            persistent_tensor = raw_pos.new_zeros((scalars.shape[0], 0, 5))
         if self.local_head_count == 0 and self.global_transport_mode == "none":
             tensor = raw_pos.new_zeros((scalars.shape[0], self.num_heads, 5))
-            scalars, vectors = self._apply_ffn(scalars, vectors)
+            scalars, vectors, persistent_tensor = self._apply_ffn(
+                scalars,
+                vectors,
+                persistent_tensor,
+            )
+            if self.tensors:
+                return scalars, vectors, persistent_tensor, tensor
             return scalars, vectors, tensor
 
         s_norm = self.norm(scalars)
         bounded_vectors = _bounded_irrep(vectors, self.eps)
+        bounded_persistent_tensor = _bounded_st_tensor(persistent_tensor)
         n_nodes = scalars.shape[0]
 
         raw_query_scalar = self.query_scalar(s_norm).reshape(
@@ -712,11 +811,16 @@ class _EquivariantMomentLayer(nn.Module):
         )
         scalar_message = scalar_message.reshape(n_nodes, self.scalars)
         moment_q1 = q1.to(dtype=moment_dtype)
-        tensor_vector = _st_matrix_vector(tensor, moment_q1)
+        tensor_context = tensor
+        if self.persistent_tensor_to_head is not None:
+            tensor_context = tensor_context + self.persistent_tensor_to_head(
+                bounded_persistent_tensor
+            ).to(dtype=moment_dtype)
+        tensor_vector = _st_matrix_vector(tensor_context, moment_q1)
         query_base_dot = (moment_q1 * vector_base).sum(dim=-1)
         query_relative_dot = (moment_q1 * relative).sum(dim=-1)
         relative_square = relative.square().sum(dim=-1)
-        tensor_square = _st_frobenius_square(tensor)
+        tensor_square = _st_frobenius_square(tensor_context)
         query_tensor_dot = (moment_q1 * tensor_vector).sum(dim=-1)
 
         vector_per_head = (
@@ -725,18 +829,20 @@ class _EquivariantMomentLayer(nn.Module):
             + self.tensor_mix.to(dtype=moment_dtype)[None, :, None] * tensor_vector
         )
 
-        scalar_invariants = torch.cat(
-            [
-                scalar_message,
-                query_base_dot,
-                query_relative_dot,
-                relative_square,
-                tensor_square,
-                query_tensor_dot,
-                radial_trace,
-            ],
-            dim=-1,
-        )
+        invariant_parts = [
+            scalar_message,
+            query_base_dot,
+            query_relative_dot,
+            relative_square,
+            tensor_square,
+            query_tensor_dot,
+            radial_trace,
+        ]
+        if self.tensors:
+            invariant_parts.append(
+                _st_frobenius_square(bounded_persistent_tensor)
+            )
+        scalar_invariants = torch.cat(invariant_parts, dim=-1)
         normalized_invariants = _stable_layer_norm(
             self.scalar_update_norm, scalar_invariants
         )
@@ -745,19 +851,61 @@ class _EquivariantMomentLayer(nn.Module):
         scalars = scalars + self.scalar_residual_scale * scalar_delta
         bounded_delta = _bounded_irrep(vector_delta, self.eps).to(dtype=vectors.dtype)
         vectors = vectors + self.vector_residual_scale * bounded_delta
-        scalars, vectors = self._apply_ffn(scalars, vectors)
+        if self.persistent_tensor_from_head is not None:
+            if (
+                self.persistent_tensor_gate is None
+                or self.persistent_tensor_residual_scale is None
+            ):
+                raise RuntimeError("persistent tensor update is incomplete")
+            tensor_delta = self.persistent_tensor_from_head(tensor)
+            tensor_delta = tensor_delta * torch.tanh(
+                self.persistent_tensor_gate(s_norm)
+            ).to(dtype=tensor_delta.dtype).unsqueeze(-1)
+            persistent_tensor = persistent_tensor + (
+                self.persistent_tensor_residual_scale
+                * _bounded_st_tensor(tensor_delta)
+            )
+        scalars, vectors, persistent_tensor = self._apply_ffn(
+            scalars,
+            vectors,
+            persistent_tensor,
+        )
+        if self.tensors:
+            return scalars, vectors, persistent_tensor, tensor
         return scalars, vectors, tensor
 
     def _apply_ffn(
         self,
         scalars: torch.Tensor,
         vectors: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        persistent_tensor: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         ffn_scalars = self.ffn_norm(scalars)
         ffn_vectors = _bounded_irrep(vectors, self.eps)
-        ffn_invariants = torch.cat(
-            [ffn_scalars, ffn_vectors.square().sum(dim=-1)], dim=-1
-        )
+        if self.persistent_tensor_ffn_mix is not None:
+            if (
+                self.persistent_tensor_ffn_gate is None
+                or self.persistent_tensor_ffn_residual_scale is None
+            ):
+                raise RuntimeError("persistent tensor FFN is incomplete")
+            tensor_ffn = self.persistent_tensor_ffn_mix(
+                _bounded_st_tensor(persistent_tensor)
+            )
+            tensor_ffn = tensor_ffn * torch.tanh(
+                self.persistent_tensor_ffn_gate(ffn_scalars)
+            ).to(dtype=tensor_ffn.dtype).unsqueeze(-1)
+            persistent_tensor = persistent_tensor + (
+                self.persistent_tensor_ffn_residual_scale
+                * _bounded_st_tensor(tensor_ffn)
+            )
+        ffn_parts = [ffn_scalars, ffn_vectors.square().sum(dim=-1)]
+        if self.tensors:
+            ffn_parts.append(
+                _st_frobenius_square(
+                    _bounded_st_tensor(persistent_tensor)
+                ).to(dtype=scalars.dtype)
+            )
+        ffn_invariants = torch.cat(ffn_parts, dim=-1)
         ffn_content, ffn_gate = self.ffn_in(ffn_invariants).chunk(2, dim=-1)
         scalar_ffn = self.ffn_out(F.silu(ffn_content) * ffn_gate)
         vector_ffn = self.ffn_vector_mix(ffn_vectors) * torch.tanh(
@@ -767,7 +915,7 @@ class _EquivariantMomentLayer(nn.Module):
         vectors = vectors + self.ffn_vector_residual_scale * _bounded_irrep(
             vector_ffn, self.eps
         )
-        return scalars, vectors
+        return scalars, vectors, persistent_tensor
 
 
 class _EdgeConditionedLocalTransport(nn.Module):
@@ -2595,6 +2743,16 @@ def _st_frobenius_square(value: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _bounded_st_tensor(value: torch.Tensor) -> torch.Tensor:
+    if value.shape[-1] != 5:
+        raise ValueError("symmetric-traceless features must have final dimension 5")
+    output_dtype = value.dtype
+    reduced = value.to(dtype=_moment_dtype(value))
+    rms = torch.sqrt(_st_frobenius_square(reduced) / 5.0)
+    scale = torch.hypot(rms, torch.ones_like(rms))
+    return (reduced / scale.unsqueeze(-1)).to(dtype=output_dtype)
+
+
 def _segment_sum(
     value: torch.Tensor, batch: torch.Tensor, num_segments: int
 ) -> torch.Tensor:
@@ -2707,6 +2865,33 @@ def _graph_metadata(batch: torch.Tensor) -> tuple[int, torch.Tensor]:
     if bool((graph_counts == 0).any().item()):
         raise ValueError("batch indices must be contiguous and start at zero")
     return num_graphs, graph_counts
+
+
+def _readout_metadata(
+    readout_mask: torch.Tensor | None,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
+    if readout_mask is None:
+        return None, batch, graph_counts
+    if readout_mask.dtype != torch.bool:
+        raise TypeError("readout_mask must use boolean dtype")
+    if readout_mask.shape != batch.shape:
+        raise ValueError(
+            f"readout_mask must have shape {tuple(batch.shape)}, "
+            f"got {tuple(readout_mask.shape)}"
+        )
+    if readout_mask.device != batch.device:
+        raise ValueError("readout_mask and batch must be on the same device")
+    selected_batch = batch[readout_mask]
+    selected_counts = torch.bincount(selected_batch, minlength=num_graphs)
+    if bool((selected_counts == 0).any().item()):
+        raise ValueError("readout_mask must select at least one node from every graph")
+    if bool(readout_mask.all().item()):
+        return None, batch, graph_counts
+    return readout_mask, selected_batch, selected_counts
 
 
 def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
@@ -2945,9 +3130,9 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     )
     hidden = CartesianIrreps.parse(config.hidden_irreps)
     output = CartesianIrreps.parse(config.output_irreps)
-    if hidden.scalars <= 0 or hidden.vectors <= 0 or hidden.tensors:
+    if hidden.scalars <= 0 or hidden.vectors <= 0:
         raise ValueError(
-            "hidden_irreps supports only scalar and vector channels, both with positive multiplicity"
+            "hidden_irreps requires positive scalar and vector channels"
         )
     if hidden.scalars % config.num_heads:
         raise ValueError("hidden scalar channels must be divisible by num_heads")

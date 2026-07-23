@@ -27,6 +27,12 @@ QM9 tooling is optional:
 uv sync --locked --extra qm9
 ```
 
+The train-only ATOM3D-LBA/PDBBind overfit loader is also optional:
+
+```bash
+uv sync --locked --extra qm9 --extra pdbbind
+```
+
 ## Example
 
 ```python
@@ -68,6 +74,13 @@ print(out["graph_scalars"].shape)  # (2, 1)
 print(out["graph_vectors"].shape)  # (2, 1, 3)
 print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 ```
+
+Adding hidden channels such as `hidden_irreps="64x0e + 4x1o + 4x2e"` carries a
+persistent symmetric-traceless Cartesian rank-2 state through every block.
+Invariant gates couple it to scalar/vector updates while preserving O(3),
+translation, batching, and node-permutation behavior. This opt-in path supports
+only reflection-even `2e`; it is not a general spherical-harmonic or arbitrary
+`l>2` implementation.
 
 Setting `coordinate_updates=True` adds bounded, graph-centroid-preserving
 updates between successive blocks and returns `out["node_positions"]`. Each
@@ -123,8 +136,8 @@ and is excluded from any linear-time preprocessing claim.
 
 - O(3) equivariant, including reflections; translation invariant and
   permutation consistent.
-- Persistent `0e` scalars and polar `1o` vectors; transient `2e`
-  symmetric-traceless moments.
+- Persistent `0e` scalars and polar `1o` vectors; transient `2e` moments by
+  default, with opt-in persistent reflection-even `2e` hidden channels.
 - `node_feats` contains invariant scalar (`0e`) channels only; coordinates are
   stored in float32+ independently of feature/model precision.
 - `local_head_counts=None` gives the global/global/global (`ggg`) route. The

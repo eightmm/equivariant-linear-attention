@@ -8,6 +8,7 @@ from .moment import (
     _bounded_centered_displacement,
     _graph_metadata,
     _local_edge_index_components,
+    _readout_metadata,
     _scatter_mean,
     _validated_local_edge_index,
 )
@@ -120,6 +121,7 @@ class _StaticEGNNBaseline(nn.Module):
         *,
         edge_index: torch.Tensor | None = None,
         edge_index_is_validated: bool = False,
+        readout_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats, pos, batch
@@ -137,11 +139,20 @@ class _StaticEGNNBaseline(nn.Module):
         for layer in self.layers:
             value = layer(value, pos, receiver, sender)
         node_scalar = self.scalar_out(self.scalar_out_norm(value))
-        graph_scalar = _scatter_mean(
-            node_scalar,
+        pool_mask, pool_batch, pool_counts = _readout_metadata(
+            readout_mask,
             batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+        )
+        pooled_scalar = (
+            node_scalar if pool_mask is None else node_scalar[pool_mask]
+        )
+        graph_scalar = _scatter_mean(
+            pooled_scalar,
+            pool_batch,
             num_graphs,
-            graph_counts,
+            pool_counts,
         )
         return {"graph_scalars": graph_scalar}
 
@@ -253,6 +264,7 @@ class _DynamicEGNNBaseline(_StaticEGNNBaseline):
         *,
         edge_index: torch.Tensor | None = None,
         edge_index_is_validated: bool = False,
+        readout_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
@@ -282,11 +294,20 @@ class _DynamicEGNNBaseline(_StaticEGNNBaseline):
                     graph_counts,
                 )
         node_scalar = self.scalar_out(self.scalar_out_norm(value))
-        graph_scalar = _scatter_mean(
-            node_scalar,
+        pool_mask, pool_batch, pool_counts = _readout_metadata(
+            readout_mask,
             batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+        )
+        pooled_scalar = (
+            node_scalar if pool_mask is None else node_scalar[pool_mask]
+        )
+        graph_scalar = _scatter_mean(
+            pooled_scalar,
+            pool_batch,
             num_graphs,
-            graph_counts,
+            pool_counts,
         )
         return {
             "graph_scalars": graph_scalar,

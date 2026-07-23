@@ -1,0 +1,40 @@
+{
+  "dataset": "vector-institute/atom3d-lba",
+  "revision": "f93dd2d150a47c270f624620f84e07451a158705",
+  "split": "train",
+  "row_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "sample_ids": [
+    "atom3d-lba:train:0000000:f4b50b7f750536eb",
+    "atom3d-lba:train:0000001:692313822d508b6e",
+    "atom3d-lba:train:0000002:15125e5a557a555d",
+    "atom3d-lba:train:0000003:406aa0a7d117016d",
+    "atom3d-lba:train:0000004:2f9c0cfddea66fb4",
+    "atom3d-lba:train:0000005:f2f3723537437ed5",
+    "atom3d-lba:train:0000006:7ed9cbf7b02f4f79",
+    "atom3d-lba:train:0000007:a126aaaf321f6a5a",
+    "atom3d-lba:train:0000008:eadaa56e544f2a15",
+    "atom3d-lba:train:0000009:e8ec563c766fc777",
+    "atom3d-lba:train:0000010:fb3dcdcdb15d2ad4",
+    "atom3d-lba:train:0000011:91374cf35c81aa57",
+    "atom3d-lba:train:0000012:d969fce338703204",
+    "atom3d-lba:train:0000013:e66008b245277d8d",
+    "atom3d-lba:train:0000014:1fc38247d746f251",
+    "atom3d-lba:train:0000015:c852ae5217f21b9e"
+  ],
+  "node_counts": [331, 243, 412, 721, 386, 587, 708, 394, 601, 498, 551, 227, 625, 223, 343, 528],
+  "ligand_counts": [27, 32, 14, 54, 32, 25, 47, 12, 40, 32, 39, 14, 29, 15, 40, 37],
+  "feature_contract": {
+    "atom_token_classes": 138,
+    "segment_classes": 2,
+    "node_dim": 140,
+    "readout": "ligand-only"
+  },
+  "effective_train_arrow_sha256": [
+    "33702fce2eaa4824e16bbf15c8f85a1998a5ed3465dbb6a27f62cd24ff6392ec",
+    "2a9555911e44026fec00cc5a29f87e76dd9d25e5ad129dae36680d57f29a0f68"
+  ],
+  "local_cache_size": "1.7G after the disclosed failed all-split builder attempt and the train-only rebuild",
+  "labels_recorded_in_receipt": false,
+  "validation_rows_consumed": false,
+  "test_rows_consumed": false
+}

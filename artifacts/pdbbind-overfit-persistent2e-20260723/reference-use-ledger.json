@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "run_id": "pdbbind-overfit-persistent2e-20260723",
+  "external_primary_sources": [
+    {
+      "name": "ATOM3D-LBA Hugging Face dataset",
+      "url": "https://huggingface.co/datasets/vector-institute/atom3d-lba",
+      "immutable_revision": "f93dd2d150a47c270f624620f84e07451a158705",
+      "used_for": [
+        "repository identity and pinned Parquet paths",
+        "published schema and split context"
+      ],
+      "limitation": "The card calls input_ids atomic numbers, but pinned train preflight observed categorical IDs through 137. This packet assigns no element semantics."
+    },
+    {
+      "name": "ATOM3D LBA Zenodo record",
+      "url": "https://zenodo.org/records/4914718",
+      "used_for": [
+        "upstream LBA/PDBBind provenance",
+        "license boundary"
+      ],
+      "license": "CC-BY-NC-ND-4.0",
+      "limitation": "No record content is redistributed by this repository."
+    }
+  ],
+  "procedural_references": [
+    {
+      "name": "codex-science",
+      "path": "/home/jaemin/.codex/plugins/cache/codex-science/codex-science/0.5.0+codex.20260723034109/skills/codex-science/SKILL.md",
+      "sha256": "d084b35a4f1592ddf826333049572d5ae42ea296d835366b50ecde26984c0b83",
+      "read_reason": "Govern the task-scoped scientific workbench, evidence graph, independent review, and release boundary.",
+      "affected_claims_or_artifacts": ["C1", "C2", "C3", "C4", "scope.md", "report.md", "review-receipt.json"]
+    },
+    {
+      "name": "codex-science reference-loading",
+      "path": "/home/jaemin/.codex/plugins/cache/codex-science/codex-science/0.5.0+codex.20260723034109/skills/codex-science/references/reference-loading.md",
+      "sha256": "a953ca5ec7b5535e83f9c2e9a24f285dbacd7579a7afd4aa2b6a9288dc30f2f4",
+      "read_reason": "Record exact controlling references, hashes, and use boundaries.",
+      "affected_claims_or_artifacts": ["reference-use-ledger.json", "manifest.json"]
+    },
+    {
+      "name": "cx-modeling-problem-execution",
+      "path": "/home/jaemin/.codex/plugins/cache/codex-science/codex-science/0.5.0+codex.20260723034109/catalog/codex-skills/cx-modeling-problem-execution/SKILL.md",
+      "sha256": "37a86192a65e15c14612cbe7b7c759a4dcf1fb1e435b3c62b1515bd4597b27bc",
+      "read_reason": "Separate mathematical implementation, bounded fitting, and generalization claims.",
+      "affected_claims_or_artifacts": ["C2", "C3", "scope.md", "claim-register.json", "report.md"]
+    },
+    {
+      "name": "cx-compute-environment",
+      "path": "/home/jaemin/.codex/plugins/cache/codex-science/codex-science/0.5.0+codex.20260723034109/catalog/codex-skills/cx-compute-environment/SKILL.md",
+      "sha256": "517f3cd25fe043c5aa0d59b9ac8ee542e4293f23d9979385aeb849a16cb6974a",
+      "read_reason": "Capture runtime, hardware, tool, and unavailable-GPU evidence.",
+      "affected_claims_or_artifacts": ["C3", "C4", "compute-environment.json"]
+    },
+    {
+      "name": "chem-bio-ml",
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/chem-bio-ml/SKILL.md",
+      "sha256": "1a40fe68088830fd8d42a2362d6e5a5b46f29b66989443a6e73e92759a7dae25",
+      "read_reason": "Constrain molecular data semantics, split usage, labels, provenance, and inference scope.",
+      "affected_claims_or_artifacts": ["C1", "scope.md", "frozen-subset.json", "preflight-attempts.json", "docs/DATA.md"]
+    },
+    {
+      "name": "research-method",
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/research-method/SKILL.md",
+      "sha256": "0c316ec1b855694969964b075d42887dddfc806549783d5102c49ea40d775870",
+      "read_reason": "Freeze falsifiers, baselines, metrics, stopping rules, and post-outcome interpretation.",
+      "affected_claims_or_artifacts": ["C3", "C4", "scope.md", "claim-register.json", "docs/EXPERIMENTS.jsonl"]
+    },
+    {
+      "name": "ml-training",
+      "path": "/home/jaemin/.oh-my-setting/custom-skills/ml-training/SKILL.md",
+      "sha256": "9bac85c19477aa5fe68a12a75e14ba38e3103767a9d8a0865bf07d8524b2b885",
+      "read_reason": "Review optimizer, normalization, variable graph batches, clipping, and finite-gradient behavior.",
+      "affected_claims_or_artifacts": ["C3", "scripts/run_registered_pdbbind_overfit.py", "src/equivariant_attention/training.py"]
+    },
+    {
+      "name": "data-loading",
+      "path": "/home/jaemin/.agents/skills/data-loading/SKILL.md",
+      "sha256": "262ee06b704bb445e5d3ef38d853f6a06475f4fc983f5cacda840afc53d680cd",
+      "read_reason": "Implement explicit pinned Parquet loading and variable-size graph collation.",
+      "affected_claims_or_artifacts": ["C1", "src/equivariant_attention/pdbbind.py", "src/equivariant_attention/benchmarking.py"]
+    },
+    {
+      "name": "profiling",
+      "path": "/home/jaemin/.agents/skills/profiling/SKILL.md",
+      "sha256": "2cf5233dfa7ef83a5f8e9c653dcf0016f6809d55d6aa11380a9ba78e1d484092",
+      "read_reason": "Use synchronization, warm-up exclusion, and explicit CUDA peak-memory semantics.",
+      "affected_claims_or_artifacts": ["C4", "scripts/run_registered_pdbbind_overfit.py", "result-correction.json"]
+    },
+    {
+      "name": "karpathy-guidelines",
+      "path": "/home/jaemin/.codex/skills/karpathy-guidelines/SKILL.md",
+      "sha256": "6e22cc54cb02a5e98ae42d06d9d7292db0c1b43894831b32879beb0166b2aea7",
+      "read_reason": "Keep the intervention opt-in, narrowly scoped, compatible, and directly testable.",
+      "affected_claims_or_artifacts": ["C2", "implementation-record.json", "src/equivariant_attention/moment.py"]
+    },
+    {
+      "name": "tdd-workflow",
+      "path": "/home/jaemin/.agents/skills/tdd-workflow/SKILL.md",
+      "sha256": "2b5f62f68752e7c21dd217c9274b23290a5b8a6d40454125a27560a905e3da92",
+      "read_reason": "Establish intentional RED evidence before loader, readout, tensor, runner, and review repairs.",
+      "affected_claims_or_artifacts": ["C1", "C2", "red-tests.json", "tests/test_pdbbind_lba.py", "tests/test_readout_mask.py", "tests/test_persistent_tensors.py", "tests/test_registered_pdbbind_overfit.py"]
+    }
+  ]
+}

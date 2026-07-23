@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "reviewer": "/root/science_final_review",
+  "independent": true,
+  "review_mode": "read_only",
+  "major_findings": [],
+  "minor_findings": [
+    {
+      "id": "REV-MIN-001",
+      "finding": "C4 evidence status and contractual verdict must be separated: measurement is not_verified, while the frozen unavailable-measurement falsifier makes the registered verdict rejected.",
+      "references": [
+        "artifacts/pdbbind-overfit-persistent2e-20260723/claim-register.json:26",
+        "artifacts/pdbbind-overfit-persistent2e-20260723/report.md:19",
+        "artifacts/pdbbind-overfit-persistent2e-20260723/evidence-graph.json:20"
+      ],
+      "required_repair": "Record verdict=rejected, evidence_status=not_verified, and performance_inference=none."
+    },
+    {
+      "id": "REV-MIN-002",
+      "finding": "CPU median step latency excludes graph construction, batch collation, and periodic full-train evaluation, and comes from one sequential run; the public table must state this boundary.",
+      "references": [
+        "scripts/run_registered_pdbbind_overfit.py:449",
+        "scripts/run_registered_pdbbind_overfit.py:451",
+        "scripts/run_registered_pdbbind_overfit.py:461",
+        "docs/EVALUATION.md:31",
+        "artifacts/pdbbind-overfit-persistent2e-20260723/report.md:35"
+      ],
+      "required_repair": "State the exclusions and single sequential execution in EVALUATION and report."
+    }
+  ],
+  "claim_verdicts": {
+    "C1": {
+      "verdict": "supported",
+      "scope": "Pinned train-only loader/readout correctness; no generalization claim."
+    },
+    "C2": {
+      "cpu_float64_reference": "supported",
+      "cuda_mixed_precision": "not_verified"
+    },
+    "C3": {
+      "cpu_fallback": "rejected",
+      "registered_cuda": "not_verified"
+    },
+    "C4": {
+      "verdict": "rejected",
+      "evidence_status": "not_verified",
+      "performance_inference": "none"
+    }
+  },
+  "verification": {
+    "fast_gate": "423 passed, 89.01% coverage, CPU float64 smoke passed",
+    "focused_repair_tests": "13 passed",
+    "git_diff_check": "passed",
+    "artifact_json_validation": "passed",
+    "independent_equivariance_probe_max_error": 2.78e-16,
+    "independent_batch_isolation_max_error": 1.11e-16,
+    "disabled_path_compatibility": "164 state keys and all six outputs bit-identical to git HEAD",
+    "gpu_gate": "not run; CUDA unavailable"
+  },
+  "hash_bound_sources": {
+    "moment.py": "d5372d5a334c90ee3830a601e7c8c1b1bec1122d6760d267af7e355ae26b7799",
+    "pdbbind.py": "cca33d37fcccad26e8361bdfc0f4234dfd83a662ac3a0bf578b86430b3e6c5f1",
+    "benchmarking.py": "7742ebb78391606a463ceb34f270901c5e0cac587b313c6fa7237795922c1e6a",
+    "training.py": "99cdb921eadc0f55ca696ac9b64d5cabd8df9781da7b55ea866529cf8071cbd8",
+    "_egnn_baseline.py": "233274bdf03754dc5e635bedd2707668588602fa7a782af1ad2a45341a2dc20c",
+    "runner": "3041cbfed91c036c825ff24509ab7c255f36a374c455e5478bc649c195a7c55a",
+    "cpu_result": "09b2735e7d9738b89b15931e2a915ea2913994dfc3a601681fb486f31fdad57f"
+  },
+  "release_recommendation": {
+    "implementation_and_documented_null_result": "conditional_go",
+    "conditions": [
+      "Resolve or explicitly mark REV-MIN-001 and REV-MIN-002.",
+      "Attach this receipt and the final artifact manifest."
+    ],
+    "overfit_cuda_or_superiority_claim": "no_go",
+    "expensive_rerun_required": false
+  },
+  "parent_resolution": {
+    "REV-MIN-001": {
+      "status": "resolved",
+      "evidence": [
+        "artifacts/pdbbind-overfit-persistent2e-20260723/evidence-graph.json",
+        "artifacts/pdbbind-overfit-persistent2e-20260723/report.md",
+        "docs/EVALUATION.md"
+      ]
+    },
+    "REV-MIN-002": {
+      "status": "resolved",
+      "evidence": [
+        "artifacts/pdbbind-overfit-persistent2e-20260723/report.md",
+        "docs/EVALUATION.md",
+        "PROJECT.md"
+      ]
+    },
+    "remaining_major_findings": 0,
+    "implementation_and_documented_null_result": "go_after_manifest",
+    "overfit_cuda_or_superiority_claim": "no_go"
+  }
+}

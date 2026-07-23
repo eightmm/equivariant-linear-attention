@@ -1,0 +1,206 @@
+{
+  "arm_budget_seconds": 180.0,
+  "arms": [
+    {
+      "arm": "attention",
+      "edge_count_with_self": 0,
+      "elapsed_seconds": 0.38342063897289336,
+      "final_loss_normalized_mse": 1.5498559474945068,
+      "final_state_sha256": "10db667b637c8dfdf34de1c288cb18878eb24eb66deb9d9be08ae4014379515d",
+      "gradient_parameters": {
+        "nonfinite_gradient_count": 0,
+        "nonzero_gradient_count": 65,
+        "parameter_count": 167115,
+        "with_gradient_count": 165230
+      },
+      "history": [
+        {
+          "elapsed_seconds": 0.3834120479878038,
+          "loss_normalized_mse": 1.5498559474945068,
+          "step": 1,
+          "train_mae_pK": 2.042823225259781,
+          "train_rmse_pK": 2.4720894930863153
+        }
+      ],
+      "initial_state_sha256": "9743829d078a9ea0a28662f4404f596d1767d3ce1ac6a6a46e844609940e6a0c",
+      "overfit_passed": false,
+      "parameter_count": 167115,
+      "peak_cuda_memory_bytes": 0,
+      "status": "completed",
+      "step_latency_median_seconds": 0.2394430519780144,
+      "step_latency_p90_seconds": 0.2394430519780144,
+      "steps_completed": 1,
+      "stop_reason": "max_steps",
+      "test_evaluated": false,
+      "threshold_step": null,
+      "time_to_threshold_seconds": null,
+      "train_mae_pK": 2.042823225259781,
+      "train_rmse_pK": 2.4720894930863153,
+      "validation_evaluated": false
+    },
+    {
+      "arm": "egnn",
+      "edge_count_with_self": 382530,
+      "elapsed_seconds": 0.32800591201521456,
+      "final_loss_normalized_mse": 1.5498559474945068,
+      "final_state_sha256": "30f918a1498e480eeec4a6ed8251db0c866a649228483baa0e85a5e4d484323a",
+      "gradient_parameters": {
+        "nonfinite_gradient_count": 0,
+        "nonzero_gradient_count": 93,
+        "parameter_count": 167260,
+        "with_gradient_count": 167260
+      },
+      "history": [
+        {
+          "elapsed_seconds": 0.32799417100613937,
+          "loss_normalized_mse": 1.5498559474945068,
+          "step": 1,
+          "train_mae_pK": 2.05337655544281,
+          "train_rmse_pK": 2.4739349224421776
+        }
+      ],
+      "initial_state_sha256": "c44d4929e6e1a5bb183aab82c8f2ca95ff05fe77018c85c6b02f4dfb09f26142",
+      "overfit_passed": false,
+      "parameter_count": 167260,
+      "peak_cuda_memory_bytes": 0,
+      "status": "completed",
+      "step_latency_median_seconds": 0.06254205998266116,
+      "step_latency_p90_seconds": 0.06254205998266116,
+      "steps_completed": 1,
+      "stop_reason": "max_steps",
+      "test_evaluated": false,
+      "threshold_step": null,
+      "time_to_threshold_seconds": null,
+      "train_mae_pK": 2.05337655544281,
+      "train_rmse_pK": 2.4739349224421776,
+      "validation_evaluated": false
+    }
+  ],
+  "arms_registered": [
+    "attention",
+    "egnn"
+  ],
+  "attention": {
+    "coordinate_updates": false,
+    "edge_index": null,
+    "hidden_dim": 64,
+    "hidden_tensor_dim": 4,
+    "key_balancing": false,
+    "multiscale_spatial_kernel": true,
+    "num_heads": 4,
+    "num_layers": 3,
+    "route": "ggg"
+  },
+  "attention_overfit_passed": false,
+  "batch_size": 2,
+  "claim_boundary": "train-only wiring/capacity sanity check",
+  "dataset": "vector-institute/atom3d-lba",
+  "dataset_revision": "f93dd2d150a47c270f624620f84e07451a158705",
+  "device": "cpu",
+  "egnn": {
+    "coordinate_updates": false,
+    "cutoff_angstrom": 6.0,
+    "kind": "internal_static_egnn_baseline",
+    "num_layers": 3
+  },
+  "egnn_overfit_passed": false,
+  "ligand_counts": [
+    27,
+    32,
+    14,
+    54,
+    32,
+    25,
+    47,
+    12,
+    40,
+    32,
+    39,
+    14,
+    29,
+    15,
+    40,
+    37
+  ],
+  "matched_egnn_width": 92,
+  "max_steps": 1,
+  "model_seed": 20260723,
+  "node_counts": [
+    331,
+    243,
+    412,
+    721,
+    386,
+    587,
+    708,
+    394,
+    601,
+    498,
+    551,
+    227,
+    625,
+    223,
+    343,
+    528
+  ],
+  "optimizer": {
+    "gradient_clip": 1.0,
+    "learning_rate": 0.001,
+    "name": "AdamW",
+    "weight_decay": 0.0
+  },
+  "order_seed": 20260723,
+  "packet_budget_seconds": 180.0,
+  "packet_elapsed_seconds": 1.1992476049927063,
+  "packet_id": "pdbbind-overfit-persistent2e-20260723",
+  "sample_ids": [
+    "atom3d-lba:train:0000000:f4b50b7f750536eb",
+    "atom3d-lba:train:0000001:692313822d508b6e",
+    "atom3d-lba:train:0000002:15125e5a557a555d",
+    "atom3d-lba:train:0000003:406aa0a7d117016d",
+    "atom3d-lba:train:0000004:2f9c0cfddea66fb4",
+    "atom3d-lba:train:0000005:f2f3723537437ed5",
+    "atom3d-lba:train:0000006:7ed9cbf7b02f4f79",
+    "atom3d-lba:train:0000007:a126aaaf321f6a5a",
+    "atom3d-lba:train:0000008:eadaa56e544f2a15",
+    "atom3d-lba:train:0000009:e8ec563c766fc777",
+    "atom3d-lba:train:0000010:fb3dcdcdb15d2ad4",
+    "atom3d-lba:train:0000011:91374cf35c81aa57",
+    "atom3d-lba:train:0000012:d969fce338703204",
+    "atom3d-lba:train:0000013:e66008b245277d8d",
+    "atom3d-lba:train:0000014:1fc38247d746f251",
+    "atom3d-lba:train:0000015:c852ae5217f21b9e"
+  ],
+  "schema_version": 1,
+  "split": "train",
+  "status": "completed",
+  "subset_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "target_normalizer": {
+    "mean": [
+      6.885624408721924
+    ],
+    "std": [
+      2.468780040740967
+    ]
+  },
+  "test_evaluated": false,
+  "threshold_train_mae_pK": 0.1,
+  "validation_evaluated": false
+}

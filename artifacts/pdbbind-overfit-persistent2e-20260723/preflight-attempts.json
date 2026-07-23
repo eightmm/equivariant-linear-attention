@@ -1,0 +1,45 @@
+{
+  "attempts": [
+    {
+      "id": "download-loader-smoke-1",
+      "command": "load_atom3d_lba_samples(data/atom3d_lba, indices=range(16))",
+      "exit_code": 1,
+      "failure": "pinned train row 7 contains input_ids above 118",
+      "secondary_observation": "datasets 5.0.0 generated local caches for train, val, and test despite split=train",
+      "data_use": {
+        "selected_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "validation_rows_indexed": false,
+        "test_rows_indexed": false,
+        "validation_or_test_targets_reported": false
+      },
+      "resolution": "Treat pinned train input_ids as opaque categories 1..137 and load only explicit pinned train parquet URLs."
+    },
+    {
+      "id": "train-token-schema-scan",
+      "exit_code": 0,
+      "result": {
+        "minimum": 1,
+        "maximum": 137,
+        "out_of_atomic_number_range": [
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137
+        ]
+      },
+      "claim_effect": "No chemical element meaning is assigned to these categorical IDs in this run."
+    }
+  ]
+}

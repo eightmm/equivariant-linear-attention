@@ -15,6 +15,9 @@ qm9 = [
     "rdkit>=2026.3.3",
     "torch-geometric>=2.8.0",
 ]
+pdbbind = [
+    "datasets>=4.4.1",
+]
 
 [project.scripts]
 equivariant-attention = "equivariant_attention:main"

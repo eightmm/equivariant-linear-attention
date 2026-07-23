@@ -1,0 +1,13 @@
+{
+  "correction_id": "cpu-cuda-memory-null-semantics-20260723",
+  "raw_artifacts_immutable": [
+    "cpu-smoke-result.json",
+    "cpu-fallback-result.json"
+  ],
+  "field": "arms[].peak_cuda_memory_bytes",
+  "raw_value": 0,
+  "correct_interpretation": null,
+  "reason": "The original runner used zero as a CPU sentinel. Independent review found that it could be misread as a measured CUDA allocation.",
+  "source_repair": "Future CPU runs emit null; CUDA runs still emit torch.cuda.max_memory_allocated.",
+  "claim_effect": "C4 CUDA memory remains not verified. No zero-memory claim is permitted."
+}

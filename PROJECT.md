@@ -2,6 +2,62 @@
 
 ## Status
 
+- PDBBind/ATOM3D-LBA extension confirmed on 2026-07-23 by the user's
+  instruction to download and proceed:
+  use the public `vector-institute/atom3d-lba` Parquet conversion of the
+  PDBBind 2019 refined-set ATOM3D LBA task for a bounded train-only overfit
+  sanity check. The source has 4,463 complexes and an ID30 train/validation/test
+  split, but the initial packet uses only 16 deterministic train rows. It keeps
+  only the provided pocket (`token_type_id=1`) and ligand
+  (`token_type_id=2`) copies, excludes the duplicated full-protein copy, uses
+  the pinned upstream atom-token category plus pocket/ligand identity as
+  invariant node input, and pools
+  the affinity prediction over ligand nodes after pocket-to-ligand transport.
+  The pK label is used exactly as supplied and train-target normalization is
+  fitted only on those 16 rows. The data remains under ignored `data/`, is not
+  redistributed or committed, and may be used here only after the user
+  confirms non-commercial research use under the upstream
+  CC-BY-NC-ND-4.0 terms.
+- The confirmed architecture intervention is limited to an opt-in persistent
+  symmetric-traceless `2e` hidden state with invariant gated residual/FFN
+  interaction, plus the already implemented edge-free multiscale global
+  spatial kernel. The data path adds an optional permutation-consistent
+  per-node readout mask; existing QM9/default calls remain unchanged.
+  General `l>2`, `2o`, chirality-sensitive parity channels, e3nn/spherical
+  harmonics, learned coordinate updates, and a new public model family are
+  excluded from this packet.
+- The confirmed experiment compares the edge-free attention candidate and the
+  private static EGNN control on the identical 16 complexes and features.
+  Overfit admission is finite training with train MAE at most `0.10 pK` within
+  3,000 updates; it is a wiring/capacity check, not an accuracy or
+  generalization claim. Once both arms reach the threshold, compare
+  time-to-threshold, synchronized step latency, and peak CUDA memory. The
+  packet uses no validation/test labels, caps cumulative GPU wall time at
+  1,800 seconds, and stops when both arms pass or the bound is exhausted. A
+  later full ID30 validation study requires a separate registered hypothesis
+  and approval.
+- The confirmed material envelope adds the optional `datasets` dependency,
+  download/cache about 473 MB from Hugging Face at a recorded immutable
+  revision, accept the optional graph/readout schema extension, and authorize
+  at most 30 GPU-minutes on one local GPU.
+- The 2026-07-23 implementation and train-only CPU fallback completed on the
+  frozen 16 rows. Both 3,000-step CPU arms missed the registered `0.10 pK`
+  numerical threshold: attention finished at `0.199863 pK` and private static
+  EGNN at `0.163732 pK`. This rejects the CPU fallback instantiation, while the
+  exact preregistered CUDA C3 remains not verified. Their best observed
+  50-step evaluations were
+  `0.151798 pK` (attention, step 2,950) and `0.163536 pK` (EGNN, step 2,850);
+  that post-outcome comparison is descriptive and does not rescue the failed
+  gate. On CPU, attention's median measured train step was `0.117964 s` versus
+  EGNN's `0.252309 s` over 382,530 supplied radius candidates, a descriptive
+  `2.139x` ratio. This single sequential timing excludes radius construction,
+  batch collation, and periodic full-train evaluation. CUDA C2 execution and
+  C3 overfit remain unverified; C4 is unfulfilled/rejected as registered, with
+  its underlying CUDA evidence not verified, because
+  the sandbox lacked driver access and the approved external execution was
+  blocked by the current Codex usage limit. No validation or test row was
+  evaluated. Evidence lives under
+  `artifacts/pdbbind-overfit-persistent2e-20260723/`.
 - Edge-free spatial-linear extension confirmed on 2026-07-23. The user
   authorized an opt-in, no-edge global transport mode plus bounded local GPU
   forward latency/peak-memory measurement. The registered intervention adds a
@@ -145,8 +201,9 @@
   and memory-cardinality settings of the same transport block rather than
   separate model classes.
 - Internal state: persistent scalar (`0e`) and polar-vector (`1o`) channels;
-  symmetric-traceless rank-2 (`2e`) moments and an optional radial-trace
-  scalar are transient within each block.
+  symmetric-traceless rank-2 (`2e`) moments are transient by default and may
+  also be carried as opt-in persistent hidden channels. The optional radial
+  trace remains transient within each block.
 - Outputs: tensor-only dictionary with plural keys `node_scalars`,
   `node_vectors`, `node_tensors`, `graph_scalars`, `graph_vectors`, and
   `graph_tensors`.

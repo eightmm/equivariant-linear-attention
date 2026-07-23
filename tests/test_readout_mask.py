@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import pytest
+import torch
+
+from equivariant_attention._egnn_baseline import _StaticEGNNBaseline
+from equivariant_attention.benchmarking import GraphSample, collate_graphs
+from equivariant_attention.moment import (
+    EquivariantAttention,
+    EquivariantAttentionConfig,
+)
+
+
+def _samples() -> tuple[GraphSample, GraphSample]:
+    first = GraphSample(
+        node_feats=torch.tensor(
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+            dtype=torch.float64,
+        ),
+        pos=torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.2, 0.0], [0.3, 1.1, -0.2]],
+            dtype=torch.float64,
+        ),
+        target=torch.tensor([1.0], dtype=torch.float64),
+        sample_id="first",
+        readout_mask=torch.tensor([False, True, True]),
+    )
+    second = GraphSample(
+        node_feats=torch.tensor(
+            [[0.5, 0.2], [0.1, 0.8]],
+            dtype=torch.float64,
+        ),
+        pos=torch.tensor(
+            [[-0.4, 0.0, 0.1], [0.7, -0.3, 0.2]],
+            dtype=torch.float64,
+        ),
+        target=torch.tensor([2.0], dtype=torch.float64),
+        sample_id="second",
+        readout_mask=torch.tensor([True, False]),
+    )
+    return first, second
+
+
+def _attention() -> EquivariantAttention:
+    return EquivariantAttention(
+        EquivariantAttentionConfig(
+            node_dim=2,
+            hidden_irreps="12x0e + 3x1o",
+            output_irreps="2x0e + 1x1o + 1x2e",
+            num_layers=2,
+            num_heads=3,
+            use_key_balancing=False,
+        )
+    ).double()
+
+
+def test_collate_and_to_preserve_readout_mask() -> None:
+    batch = collate_graphs(_samples())
+
+    assert torch.equal(
+        batch.readout_mask,
+        torch.tensor([False, True, True, True, False]),
+    )
+    moved = batch.to("cpu", dtype=torch.float32)
+    assert moved.readout_mask is not None
+    assert moved.readout_mask.dtype == torch.bool
+    assert torch.equal(moved.readout_mask, batch.readout_mask)
+
+
+def test_collate_rejects_mixed_or_empty_readout_masks() -> None:
+    first, second = _samples()
+    without = GraphSample(
+        node_feats=second.node_feats,
+        pos=second.pos,
+        target=second.target,
+        sample_id=second.sample_id,
+    )
+    with pytest.raises(ValueError, match="readout_mask"):
+        collate_graphs((first, without))
+
+    empty = GraphSample(
+        node_feats=second.node_feats,
+        pos=second.pos,
+        target=second.target,
+        sample_id=second.sample_id,
+        readout_mask=torch.zeros(2, dtype=torch.bool),
+    )
+    with pytest.raises(ValueError, match="at least one"):
+        collate_graphs((first, empty))
+
+
+def test_attention_masked_pool_matches_selected_node_mean() -> None:
+    batch = collate_graphs(_samples())
+    model = _attention()
+
+    output = model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+
+    assert batch.readout_mask is not None
+    for graph_index in range(2):
+        selected = batch.readout_mask & (batch.batch == graph_index)
+        assert torch.allclose(
+            output["graph_scalars"][graph_index],
+            output["node_scalars"][selected].mean(dim=0),
+        )
+        assert torch.allclose(
+            output["graph_vectors"][graph_index],
+            output["node_vectors"][selected].mean(dim=0),
+        )
+        assert torch.allclose(
+            output["graph_tensors"][graph_index],
+            output["node_tensors"][selected].mean(dim=0),
+        )
+
+
+def test_readout_mask_is_permutation_consistent_and_default_is_unchanged() -> None:
+    batch = collate_graphs(_samples())
+    model = _attention()
+    assert batch.readout_mask is not None
+    reference = model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    default = model(batch.node_feats, batch.pos, batch=batch.batch)
+    explicit_all = model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=torch.ones_like(batch.readout_mask),
+    )
+    permutation = torch.tensor([2, 0, 1, 4, 3])
+    moved = model(
+        batch.node_feats[permutation],
+        batch.pos[permutation],
+        batch=batch.batch[permutation],
+        readout_mask=batch.readout_mask[permutation],
+    )
+
+    for key in ("graph_scalars", "graph_vectors", "graph_tensors"):
+        assert torch.equal(default[key], explicit_all[key])
+        assert torch.allclose(reference[key], moved[key], atol=1e-10, rtol=1e-9)
+
+
+def test_readout_mask_validation_and_private_egnn_pooling() -> None:
+    batch = collate_graphs(_samples())
+    model = _StaticEGNNBaseline(
+        node_dim=2,
+        hidden_dim=8,
+        num_layers=2,
+    ).double()
+    assert batch.readout_mask is not None
+    output = model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    assert output["graph_scalars"].shape == (2, 1)
+
+    with pytest.raises(TypeError, match="boolean"):
+        model(
+            batch.node_feats,
+            batch.pos,
+            batch=batch.batch,
+            readout_mask=batch.readout_mask.long(),
+        )
+    invalid = batch.readout_mask.clone()
+    invalid[3] = False
+    with pytest.raises(ValueError, match="every graph"):
+        model(
+            batch.node_feats,
+            batch.pos,
+            batch=batch.batch,
+            readout_mask=invalid,
+        )

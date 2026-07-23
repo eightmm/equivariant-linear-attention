@@ -164,6 +164,46 @@ sum_j A_ijh a_jh ||x_j - x_i||^2
 The corresponding scalar slot is reserved in both configurations and is
 exactly zero when `use_radial_trace=False`.
 
+## Optional persistent `2e` state
+
+If `hidden_irreps` contains `C_2 x 2e`, node `i` carries a five-component
+symmetric-traceless state `H_i` in addition to scalar and polar-vector state.
+The five stored components represent a Cartesian matrix `T(H)` with
+`T=T^T`, `tr(T)=0`, and transform under every `R in O(3)` as
+
+```text
+T(H_i) -> R T(H_i) R^T.
+```
+
+For one channel, the bounded state used inside a block is
+
+```text
+B(H) = H / sqrt(1 + ||T(H)||_F^2 / 5).
+```
+
+Channel-only linear maps commute with this transformation. Let `M_i` be the
+block's transient rank-2 head moment and `sbar_i` its invariant normalized
+scalar state. The implemented residual update has the form
+
+```text
+Mcontext_i = M_i + W_to B(H_i)
+H'_i = H_i + alpha_H B(W_from M_i) * tanh(G_H(sbar_i)).
+```
+
+The scalar updater reads invariant contractions including
+`||T(Mcontext)||_F^2`, `q^T T(Mcontext) q`, and `||T(B(H))||_F^2`; the vector
+updater reads `T(Mcontext) q`. The pointwise equivariant FFN then applies a
+second invariant-gated channel mix,
+
+```text
+H''_i = H'_i + alpha_F B(W_F B(H'_i)) * tanh(G_F(sbar'_i)),
+```
+
+before its Frobenius norm is concatenated to the scalar FFN input. Therefore
+the hidden tensor state can affect a scalar objective while remaining
+reflection-even. No spherical harmonics or parity-odd tensor products are
+introduced, and this path does not accept external `2e/2o` node inputs.
+
 ## Global transport controls
 
 The learned mode uses the factorized kernel above. The uniform control replaces

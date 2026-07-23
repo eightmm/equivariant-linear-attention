@@ -36,11 +36,26 @@ def build_regression_model(
     use_pairwise_local_content: bool = False,
     pairwise_residual_scale_init: float = 0.1,
     use_edge_conditioned_local_transport: bool = False,
+    hidden_tensor_dim: int = 0,
 ) -> nn.Module:
+    if (
+        isinstance(hidden_tensor_dim, bool)
+        or not isinstance(hidden_tensor_dim, int)
+        or hidden_tensor_dim < 0
+    ):
+        raise ValueError("hidden_tensor_dim must be a nonnegative integer")
+    tensor_irreps = (
+        f" + {hidden_tensor_dim}x2e"
+        if hidden_tensor_dim
+        else ""
+    )
     model = EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=node_dim,
-            hidden_irreps=f"{hidden_dim}x0e + {max(1, hidden_dim // 16)}x1o",
+            hidden_irreps=(
+                f"{hidden_dim}x0e + {max(1, hidden_dim // 16)}x1o"
+                f"{tensor_irreps}"
+            ),
             output_irreps="1x0e",
             num_layers=num_layers,
             num_heads=num_heads,
@@ -71,8 +86,18 @@ def build_regression_model(
 
 
 def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
+    readout_kwargs = (
+        {}
+        if batch.readout_mask is None
+        else {"readout_mask": batch.readout_mask}
+    )
     if batch.edge_index is None:
-        out = model(batch.node_feats, batch.pos, batch=batch.batch)
+        out = model(
+            batch.node_feats,
+            batch.pos,
+            batch=batch.batch,
+            **readout_kwargs,
+        )
     else:
         out = model(
             batch.node_feats,
@@ -80,6 +105,7 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
             batch=batch.batch,
             edge_index=batch.edge_index,
             edge_index_is_validated=batch.edge_index_is_validated,
+            **readout_kwargs,
         )
     return out["graph_scalars"].reshape(batch.target.shape[0], -1)
 

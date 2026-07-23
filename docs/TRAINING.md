@@ -58,3 +58,20 @@ until a separately preregistered mechanism passes Stage 0.
 mixed-precision claims require the GPU smoke and run-specific environment
 metadata. Long training, schedulers, distributed execution, checkpoint
 selection, and resume are outside the current prototype contract.
+
+The bounded ATOM3D-LBA capacity check is a separate train-only runner:
+
+```bash
+uv sync --locked --extra qm9 --extra pdbbind
+uv run --locked --extra qm9 --extra pdbbind python \
+  scripts/run_registered_pdbbind_overfit.py \
+  artifacts/pdbbind-overfit-persistent2e-20260723/registered-result.json
+```
+
+It freezes 16 train complexes, batch size 2, AdamW at `1e-3`, no weight decay,
+gradient clipping at 1.0, at most 3,000 updates, and at most 1,800 cumulative
+seconds. The attention arm is edge-free GGG with four persistent `2e`
+channels; the private static EGNN gets directed 6-Angstrom radius candidates
+and the closest parameter-matched width. Success is train MAE at most
+`0.10 pK`. This is an overfit/wiring check only: it performs no validation or
+test evaluation and cannot support a generalization claim.
