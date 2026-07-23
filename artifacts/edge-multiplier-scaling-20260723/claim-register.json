@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C-201",
+      "text": "The authoritative generator deterministically emits duplicate-free directed graphs with exactly min(kN,N^2) edges, one self edge and exact receiver degree min(k,N).",
+      "permitted_inference": "implemented generator over validated positive integer inputs",
+      "status": "supported",
+      "evidence_refs": [
+        "implementation-record.json",
+        "verification-summary.json",
+        "cpu-smoke.json",
+        "gpu-grid.json"
+      ],
+      "required_support": 3,
+      "required_evidence": ["algorithm record", "unit tests", "saved grid invariants"],
+      "dependencies": [],
+      "falsifier": "any admitted input produces the wrong count or receiver degree, a duplicate, missing self edge, out-of-range endpoint, nondeterministic repeat, or wrong saturation",
+      "uncertainty": "the topology is receiver-regular synthetic structure, not a domain neighbor distribution",
+      "next_action": "add separate topology families only under a new registered scaling packet"
+    },
+    {
+      "id": "C-202",
+      "text": "Every authoritative N-by-k cell passes one identical prevalidated edge tensor to EC-LGL and private static EGNN, with fixed recorded model initialization and edge construction outside synchronized model timing.",
+      "permitted_inference": "the saved benchmark implementation and 24-cell CUDA execution",
+      "status": "supported",
+      "evidence_refs": [
+        "implementation-record.json",
+        "gpu-grid.json",
+        "execution-log.json"
+      ],
+      "required_support": 3,
+      "required_evidence": ["code path", "edge hashes/counts", "execution record"],
+      "dependencies": ["C-201"],
+      "falsifier": "a cell uses distinct edge tensors, times graph construction, omits a model result, or silently drops an admitted cell",
+      "uncertainty": "same edge tensor does not mean the two model equations perform identical computation",
+      "next_action": "retain explicit same-edge and different-computation labels"
+    },
+    {
+      "id": "C-203",
+      "text": "On the recorded RTX PRO 6000 FP32 forward workload with model seed fixed at 20260723, EC-LGL first crosses private static EGNN at N=8192,k=64 and is faster for all three confirmed graph seeds at k=64 and k=128.",
+      "permitted_inference": "this hardware, software state, model widths, one-graph workload, registered sizes and synchronized inference protocol",
+      "status": "supported",
+      "evidence_refs": [
+        "gpu-crossover-confirm.json",
+        "gpu-crossover-seed-20260724.json",
+        "gpu-crossover-seed-20260725.json",
+        "crossover-seed-summary.json",
+        "analysis.json"
+      ],
+      "required_support": 3,
+      "required_evidence": ["synchronized timings", "multiple topology seeds", "explicit computation boundary"],
+      "dependencies": ["C-201", "C-202"],
+      "falsifier": "any confirmed k=64 seed has EC-LGL/EGNN median ratio at least one, the edge hashes do not correspond to exact-degree graphs, or timing lacks synchronization",
+      "uncertainty": "the k=64 margin is only 1.2-1.6%; crossover location is hardware, implementation, dtype and shape dependent",
+      "next_action": "treat k=128 as the robust win and remeasure k=64 after any kernel or environment change"
+    },
+    {
+      "id": "C-204",
+      "text": "Optimizing only one scatter kernel is sufficient to make EC-LGL competitive across sparse and dense regimes.",
+      "permitted_inference": "none; this candidate conclusion is tested and rejected for the current evidence",
+      "status": "unsupported",
+      "evidence_refs": [
+        "analysis.json",
+        "high-density-profile.json",
+        "gpu-grid.json"
+      ],
+      "required_support": 2,
+      "required_evidence": ["operator profile", "fixed-N and fixed-E scaling"],
+      "dependencies": ["C-203"],
+      "falsifier": "not applicable to an unsupported sufficiency claim",
+      "uncertainty": "profiling identifies distributed costs but does not quantify the speedup from a future fused implementation",
+      "next_action": "separately target fixed/O(N) overhead, edge temporaries, accuracy stability and neighbor construction"
+    },
+    {
+      "id": "C-205",
+      "text": "The synthetic forward crossover establishes better molecule, protein or generic 3D point-cloud accuracy or end-to-end throughput.",
+      "permitted_inference": "none; external-validity boundary",
+      "status": "unsupported",
+      "evidence_refs": [
+        "scope.md",
+        "report.md",
+        "verification-summary.json"
+      ],
+      "required_support": 2,
+      "required_evidence": ["domain benchmark", "end-to-end timing and accuracy"],
+      "dependencies": ["C-203"],
+      "falsifier": "not applicable because no domain superiority claim is admitted",
+      "uncertainty": "graph construction, batching, backward, chirality, forces and domain transfer were not measured",
+      "next_action": "run separate domain-specific, split-aware accuracy and end-to-end systems packets"
+    }
+  ]
+}

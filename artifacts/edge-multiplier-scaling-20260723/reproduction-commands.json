@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "working_directory": "/home/jaemin/project/layer/equivariant-attention",
+  "environment": "existing project .venv; no dependency or lockfile change",
+  "commands": [
+    {
+      "id": "tests",
+      "argv": [
+        ".venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scaling_benchmark.py",
+        "tests/test_edge_conditioned_local.py",
+        "tests/test_egnn_baseline.py"
+      ]
+    },
+    {
+      "id": "cpu-smoke",
+      "argv": [
+        ".venv/bin/python",
+        "scripts/benchmark_sparse_scaling.py",
+        "--edge-multiplier-grid",
+        "--sizes",
+        "16",
+        "32",
+        "--edge-multipliers",
+        "2",
+        "4",
+        "--device",
+        "cpu",
+        "--seed",
+        "20260723",
+        "--model-seed",
+        "20260723",
+        "--warmup",
+        "0",
+        "--repeats",
+        "1",
+        "--max-wall-seconds",
+        "30",
+        "--metrics-out",
+        "artifacts/edge-multiplier-scaling-20260723/cpu-smoke.json"
+      ]
+    },
+    {
+      "id": "cuda-grid",
+      "argv": [
+        ".venv/bin/python",
+        "scripts/benchmark_sparse_scaling.py",
+        "--edge-multiplier-grid",
+        "--sizes",
+        "128",
+        "512",
+        "2048",
+        "8192",
+        "--edge-multipliers",
+        "4",
+        "8",
+        "16",
+        "32",
+        "64",
+        "128",
+        "--device",
+        "cuda",
+        "--seed",
+        "20260723",
+        "--model-seed",
+        "20260723",
+        "--warmup",
+        "3",
+        "--repeats",
+        "7",
+        "--max-wall-seconds",
+        "120",
+        "--metrics-out",
+        "artifacts/edge-multiplier-scaling-20260723/gpu-grid.json"
+      ]
+    },
+    {
+      "id": "cuda-crossover-seed-template",
+      "argv_template": [
+        ".venv/bin/python",
+        "scripts/benchmark_sparse_scaling.py",
+        "--edge-multiplier-grid",
+        "--sizes",
+        "8192",
+        "--edge-multipliers",
+        "64",
+        "128",
+        "32",
+        "--device",
+        "cuda",
+        "--seed",
+        "{20260723|20260724|20260725}",
+        "--model-seed",
+        "20260723",
+        "--warmup",
+        "10",
+        "--repeats",
+        "31",
+        "--max-wall-seconds",
+        "60",
+        "--metrics-out",
+        "{corresponding run-local gpu-crossover JSON}"
+      ],
+      "note": "The multiplier order intentionally reverses model execution order at the boundary relative to the full grid where applicable."
+    },
+    {
+      "id": "profile",
+      "argv": [
+        ".venv/bin/python",
+        "artifacts/edge-multiplier-scaling-20260723/profile_high_density.py",
+        "--output",
+        "artifacts/edge-multiplier-scaling-20260723/high-density-profile.json",
+        "--nodes",
+        "8192",
+        "--edge-multiplier",
+        "128",
+        "--seed",
+        "20260723",
+        "--model-seed",
+        "20260723",
+        "--warmup",
+        "5",
+        "--forwards",
+        "10"
+      ],
+      "note": "Profiler timings are diagnostic; synchronized benchmark medians remain authoritative."
+    },
+    {
+      "id": "fast-gate",
+      "argv": ["scripts/check.sh", "fast"]
+    },
+    {
+      "id": "gpu-gate",
+      "argv": ["scripts/check.sh", "gpu"]
+    }
+  ],
+  "test_evaluation": "not applicable; no dataset or task accuracy was evaluated"
+}

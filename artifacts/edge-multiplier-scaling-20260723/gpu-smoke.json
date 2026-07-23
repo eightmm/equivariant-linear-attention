@@ -1,0 +1,142 @@
+{
+  "benchmark": "same_edge_exact_multiplier_grid",
+  "candidate_parameters": 158537,
+  "cells": [
+    {
+      "candidate_edges_including_self": 512,
+      "cell_seed": 148261495,
+      "ec_lgl_to_egnn_latency_ratio": 7.992153893538943,
+      "edge_index_sha256": "c581b39b2e96787274105ed49b35ac07879c90d474ebceb98f1740895a6e4492",
+      "edge_multiplier": 4,
+      "effective_nonself_edges": 384,
+      "model_execution_order": [
+        "ec_lgl",
+        "static_egnn"
+      ],
+      "models": {
+        "ec_lgl": {
+          "median_ms": 5.426072995760478,
+          "peak_cuda_bytes_delta": 2037248,
+          "status": "completed"
+        },
+        "static_egnn": {
+          "median_ms": 0.67892498918809,
+          "peak_cuda_bytes_delta": 713216,
+          "status": "completed"
+        }
+      },
+      "nodes": 128,
+      "receiver_candidate_degree": {
+        "maximum": 4,
+        "mean": 4.0,
+        "minimum": 4,
+        "population_std": 0.0
+      },
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 1024,
+      "cell_seed": 148261883,
+      "ec_lgl_to_egnn_latency_ratio": 8.13079847420557,
+      "edge_index_sha256": "d6b7edd245da24f1a1f94c501ab220fa3a47251e4ac29a4211088b1aa8523558",
+      "edge_multiplier": 8,
+      "effective_nonself_edges": 896,
+      "model_execution_order": [
+        "static_egnn",
+        "ec_lgl"
+      ],
+      "models": {
+        "ec_lgl": {
+          "median_ms": 5.234298994764686,
+          "peak_cuda_bytes_delta": 2086400,
+          "status": "completed"
+        },
+        "static_egnn": {
+          "median_ms": 0.6437619886128232,
+          "peak_cuda_bytes_delta": 1477120,
+          "status": "completed"
+        }
+      },
+      "nodes": 128,
+      "receiver_candidate_degree": {
+        "maximum": 8,
+        "mean": 8.0,
+        "minimum": 8,
+        "population_std": 0.0
+      },
+      "status": "completed"
+    }
+  ],
+  "completed_cell_count": 2,
+  "device": "cuda",
+  "edge_generation": {
+    "construction_complexity": "O(E)",
+    "method": "seeded_per_receiver_affine_sender_permutation_without_replacement",
+    "self_edge_per_node": true,
+    "timed": false
+  },
+  "edge_multipliers": [
+    4,
+    8
+  ],
+  "egnn_parameters": 152065,
+  "elapsed_wall_seconds": 0.38448021200019866,
+  "failed_or_skipped_cell_count": 0,
+  "fits_by_nodes": {
+    "128": {
+      "ec_lgl": {
+        "intercept_ms": 5.6178469967562705,
+        "point_count": 2,
+        "r_squared": 1.0,
+        "slope_ms_per_million_candidate_edges": -374.5585956949071,
+        "status": "completed"
+      },
+      "first_same_edge_crossover_multiplier": null,
+      "latency_ratio_trend": {
+        "highest_multiplier": 8,
+        "highest_multiplier_ratio": 8.13079847420557,
+        "lowest_multiplier": 4,
+        "lowest_multiplier_ratio": 7.992153893538943,
+        "ratio_decreased": false,
+        "status": "completed"
+      },
+      "static_egnn": {
+        "intercept_ms": 0.7140879897633567,
+        "point_count": 2,
+        "r_squared": 1.0,
+        "slope_ms_per_million_candidate_edges": -68.67773549856793,
+        "status": "completed"
+      }
+    }
+  },
+  "graph_generator": "seeded_exact_receiver_regular_directed",
+  "graph_seed": 20260723,
+  "inference_boundary": {
+    "backward_or_training_inferred": false,
+    "domain_generalization_inferred": false,
+    "edge_construction_timed": false,
+    "forward_only": true,
+    "model_computations_identical": false,
+    "same_edge_tensor_for_models": true,
+    "task_accuracy_inferred": false
+  },
+  "max_wall_seconds": 10.0,
+  "model_dtype": "float32",
+  "model_seed": 20260723,
+  "model_state_sha256": {
+    "ec_lgl": "ca01fb66a20993511f011620152b37cf8876bdc03fb70ac7227497a953c3049e",
+    "static_egnn": "01315e6dd010cf0a7d6a56f27662702200a1800bbf37bff641ea1019da5ec760"
+  },
+  "prediction": {
+    "no_same_edge_crossover_through_registered_grid": true,
+    "ratio_decreased_for_every_node_size": false
+  },
+  "repeats": 2,
+  "same_edge_crossover_cells": [],
+  "schema_version": 1,
+  "seed": 20260723,
+  "sizes": [
+    128
+  ],
+  "warmup": 1
+}

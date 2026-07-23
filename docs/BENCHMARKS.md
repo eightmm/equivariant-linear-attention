@@ -298,6 +298,66 @@ uv run python scripts/benchmark_sparse_scaling.py --device cuda \
 Frozen scope, exact JSON results, screen arms, verification, and limitations are
 under `artifacts/ec-lgl-sparse-scaling-20260722/`.
 
+## Exact `E=kN` same-edge scaling (2026-07-23)
+
+The follow-up benchmark removes the earlier fixed-degree versus complete-edge
+ambiguity. For every `(N,k)` cell it constructs one deterministic directed
+graph with exactly `E=kN` candidate edges, including one self edge and exactly
+`k` incoming candidates per node, and passes that identical edge tensor to
+width-64 EC-LGL and width-91 private static EGNN. Graph construction is `O(E)`
+and excluded from timing. Model parameters are 158,537 and 152,065.
+
+All 24 registered cells for `N={128,512,2048,8192}` and
+`k={4,8,16,32,64,128}` completed on the RTX PRO 6000 Blackwell. The full grid
+used three warmups and seven synchronized repeats. A separate high-density
+confirmation fixed model seed 20260723 and varied three topology seeds, using
+ten warmups and 31 repeats per model:
+
+| N | k | candidate edges | EC-LGL mean | static EGNN mean | EC/EGNN range | EC wins/seeds |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8,192 | 32 | 262,144 | 8.615 ms | 5.400 ms | 1.593--1.597 | 0/3 |
+| 8,192 | 64 | 524,288 | 11.408 ms | 11.559 ms | 0.985--0.988 | 3/3 |
+| 8,192 | 128 | 1,048,576 | 17.127 ms | 25.365 ms | 0.673--0.678 | 3/3 |
+
+The preregistered no-crossover prediction was falsified; the first confirmed
+same-edge crossover is `N=8192,k=64`. The margin at `k=64` is small, so the
+stronger claim is the `k=128` high-density win. At seed 20260723 and `k=128`,
+peak CUDA allocation delta was about 1.410 GB for EC-LGL and 1.563 GB for EGNN.
+A local `k={32,64,128}` fit gave 10.832 versus 25.413 ms per million candidate
+edges, but its negative EGNN intercept forbids extrapolation to zero edges.
+
+This crossover is expected from the computation mix: EC-LGL uses two local
+edge stages plus one exact factorized `O(N)` global stage; EGNN uses three edge
+message stages. At low density the EC-LGL fixed/global/pointwise overhead still
+dominates by a large factor. At a fixed 262,144 total edges, increasing nodes
+from 2,048 to 8,192 raised EC-LGL latency 1.281x while EGNN changed 0.986x,
+which isolates the extra per-node work. Profiling shows EC-LGL cost distributed
+over gather, scatter, concatenation, GEMM and elementwise kernels, so optimizing
+only `index_add` is insufficient.
+
+The first generator revision used one affine traversal over globally flattened
+pairs. It met count/uniqueness checks but produced receiver-degree skew, so a
+new RED test required exact degree `k`; the original outputs are retained with
+an `affine-exploratory` label and every authoritative cell was rerun. This
+amendment occurred after inspecting initial timings and is explicitly part of
+the record.
+
+Reproduce the primary grid with:
+
+```bash
+uv run python scripts/benchmark_sparse_scaling.py --edge-multiplier-grid \
+  --sizes 128 512 2048 8192 --edge-multipliers 4 8 16 32 64 128 \
+  --device cuda --seed 20260723 --model-seed 20260723 \
+  --warmup 3 --repeats 7 \
+  --max-wall-seconds 120 --metrics-out artifacts/exact-edge-grid.json
+```
+
+The result is forward-only and excludes graph construction, backward/training,
+multi-graph batching and task accuracy. Synthetic topology does not establish
+molecule, protein or point-cloud quality. Raw grids, seed confirmation,
+profile, analysis and provenance are under
+`artifacts/edge-multiplier-scaling-20260723/`.
+
 ## Registered EGNN-parity result (2026-07-20)
 
 The confirmed packet kept static coordinates, width-64 LGL learned transport,

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py",
+  "exit_code": 1,
+  "result": "8 failed, 4 passed",
+  "expected_failure": true,
+  "missing_contracts": [
+    "seeded_exact_edge_index",
+    "run_edge_multiplier_benchmark"
+  ],
+  "interpretation": "The new exact-edge generator and N-by-k grid API did not exist before implementation; all pre-existing scaling tests remained green."
+}

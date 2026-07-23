@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "skill": "cx-compute-environment",
+  "uses": [
+    {
+      "schema_version": 1,
+      "skill": "cx-compute-environment",
+      "reference_id": "audited-wrapper",
+      "path": "catalog/codex-skills/cx-compute-environment/SKILL.md",
+      "sha256": "517f3cd25fe043c5aa0d59b9ac8ee542e4293f23d9979385aeb849a16cb6974a",
+      "read_reason": "Controlled locked-environment CPU/GPU probing and bounded local execution.",
+      "loaded_at": "2026-07-22T23:20:00Z",
+      "used_for": ["compute-environment.json", "gpu-access.json", "gpu-budget.json", "verification-summary.json"],
+      "sections": ["local execution"],
+      "search_terms": ["environment", "GPU", "budget"]
+    }
+  ]
+}

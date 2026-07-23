@@ -1,0 +1,173 @@
+{
+  "benchmark": "same_edge_exact_multiplier_grid",
+  "candidate_parameters": 158537,
+  "cells": [
+    {
+      "candidate_edges_including_self": 524288,
+      "cell_seed": 8212291507,
+      "ec_lgl_to_egnn_latency_ratio": 0.9595215992315628,
+      "edge_index_sha256": "a607c2c3eea6a54631cd62f7d630d76fb72f3046ef149dda391c0ed3bd6cf238",
+      "edge_multiplier": 64,
+      "effective_nonself_edges": 516096,
+      "model_execution_order": [
+        "ec_lgl",
+        "static_egnn"
+      ],
+      "models": {
+        "ec_lgl": {
+          "median_ms": 11.269538983469829,
+          "peak_cuda_bytes_delta": 712771584,
+          "status": "completed"
+        },
+        "static_egnn": {
+          "median_ms": 11.744956020265818,
+          "peak_cuda_bytes_delta": 780304896,
+          "status": "completed"
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 81,
+        "mean": 64.0,
+        "minimum": 57,
+        "population_std": 7.984527885033341
+      },
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 1048576,
+      "cell_seed": 8212297715,
+      "ec_lgl_to_egnn_latency_ratio": 0.6508814836017311,
+      "edge_index_sha256": "58501132003dcc09b37821dad8f8108dc0d603f3167c816e98c452112c830497",
+      "edge_multiplier": 128,
+      "effective_nonself_edges": 1040384,
+      "model_execution_order": [
+        "static_egnn",
+        "ec_lgl"
+      ],
+      "models": {
+        "ec_lgl": {
+          "median_ms": 16.737294994527474,
+          "peak_cuda_bytes_delta": 1410336768,
+          "status": "completed"
+        },
+        "static_egnn": {
+          "median_ms": 25.714812014484778,
+          "peak_cuda_bytes_delta": 1563132416,
+          "status": "completed"
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 130,
+        "mean": 128.0,
+        "minimum": 127,
+        "population_std": 0.7207851621669256
+      },
+      "status": "completed"
+    },
+    {
+      "candidate_edges_including_self": 262144,
+      "cell_seed": 8212288403,
+      "ec_lgl_to_egnn_latency_ratio": 1.5602986108942067,
+      "edge_index_sha256": "bf2f8656baf131a7bd5b8576e2b02236fab91214e65520aa29fcca753962bf6c",
+      "edge_multiplier": 32,
+      "effective_nonself_edges": 253952,
+      "model_execution_order": [
+        "ec_lgl",
+        "static_egnn"
+      ],
+      "models": {
+        "ec_lgl": {
+          "median_ms": 8.556054992368445,
+          "peak_cuda_bytes_delta": 363563008,
+          "status": "completed"
+        },
+        "static_egnn": {
+          "median_ms": 5.483600980369374,
+          "peak_cuda_bytes_delta": 388727296,
+          "status": "completed"
+        }
+      },
+      "nodes": 8192,
+      "receiver_candidate_degree": {
+        "maximum": 33,
+        "mean": 32.0,
+        "minimum": 31,
+        "population_std": 0.6905118685620111
+      },
+      "status": "completed"
+    }
+  ],
+  "completed_cell_count": 3,
+  "device": "cuda",
+  "edge_generation": {
+    "construction_complexity": "O(E)",
+    "method": "seeded_affine_nonself_pair_traversal_without_replacement",
+    "self_edge_per_node": true,
+    "timed": false
+  },
+  "edge_multipliers": [
+    64,
+    128,
+    32
+  ],
+  "egnn_parameters": 152065,
+  "elapsed_wall_seconds": 3.6397344690049067,
+  "failed_or_skipped_cell_count": 0,
+  "fits_by_nodes": {
+    "8192": {
+      "ec_lgl": {
+        "intercept_ms": 5.8221769868396205,
+        "point_count": 3,
+        "r_squared": 0.9999965784403391,
+        "slope_ms_per_million_candidate_edges": 10.406689240508426,
+        "status": "completed"
+      },
+      "first_same_edge_crossover_multiplier": 64,
+      "latency_ratio_trend": {
+        "highest_multiplier": 128,
+        "highest_multiplier_ratio": 0.6508814836017311,
+        "lowest_multiplier": 32,
+        "lowest_multiplier_ratio": 1.5602986108942067,
+        "ratio_decreased": true,
+        "status": "completed"
+      },
+      "static_egnn": {
+        "intercept_ms": -1.501327016740106,
+        "point_count": 3,
+        "r_squared": 0.9993027972555274,
+        "slope_ms_per_million_candidate_edges": 25.856753793629398,
+        "status": "completed"
+      }
+    }
+  },
+  "inference_boundary": {
+    "backward_or_training_inferred": false,
+    "domain_generalization_inferred": false,
+    "edge_construction_timed": false,
+    "forward_only": true,
+    "model_computations_identical": false,
+    "same_edge_tensor_for_models": true,
+    "task_accuracy_inferred": false
+  },
+  "max_wall_seconds": 60.0,
+  "model_dtype": "float32",
+  "prediction": {
+    "no_same_edge_crossover_through_registered_grid": false,
+    "ratio_decreased_for_every_node_size": true
+  },
+  "repeats": 31,
+  "same_edge_crossover_cells": [
+    {
+      "edge_multiplier": 64,
+      "nodes": 8192
+    }
+  ],
+  "schema_version": 1,
+  "seed": 20260723,
+  "sizes": [
+    8192
+  ],
+  "warmup": 10
+}

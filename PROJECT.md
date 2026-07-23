@@ -2,6 +2,24 @@
 
 ## Status
 
+- Exact-edge-multiplier scaling extension completed on 2026-07-23. The
+  benchmark now generates deterministic receiver-regular directed graphs with
+  exactly `E=kN` candidates, one self edge and exactly `k` incoming candidates
+  per node, then gives the same edge tensor to EC-LGL and private static EGNN.
+  All 24 CUDA cells for `N={128,512,2048,8192}` and
+  `k={4,8,16,32,64,128}` completed. At `N=8192`, 31-repeat confirmation over
+  three topology seeds with model seed 20260723 fixed found EC-LGL/EGNN
+  latency ratios of 1.593--1.597 at
+  `k=32`, 0.985--0.988 at `k=64`, and 0.673--0.678 at `k=128`; the first
+  measured same-edge crossover is therefore `k=64`, but the margin there is
+  small. This is forward-only, excludes graph construction, and does not alter
+  the failed QM9 accuracy decision or any default. The frozen/amended contract
+  and evidence are under `artifacts/edge-multiplier-scaling-20260723/`.
+- The first exact-edge generator used one flattened affine traversal. A
+  quality-control RED test found receiver-degree skew despite valid counts and
+  uniqueness, so those outputs are retained as `affine-exploratory` and the
+  authoritative grid was rerun with exact receiver degree. This amendment is
+  disclosed because it followed inspection of the initial timings.
 - Scaling-aware EC-LGL extension: the user's 2026-07-22 instruction to improve
   the model while accounting for the small/low-edge-count QM9 regime confirms
   local implementation, sparse edge plumbing, synthetic scaling/crossover

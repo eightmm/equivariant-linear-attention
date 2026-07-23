@@ -91,6 +91,21 @@ nondefault factorized-only controls are rejected instead of silently ignored.
 global geometry actually executed; local-only routes report
 `not_applicable_no_global_heads` regardless of the configured transport label.
 
+## Scaling benchmark
+
+`scripts/benchmark_sparse_scaling.py --edge-multiplier-grid` selects the exact
+same-edge model comparison. `--sizes` sets node counts and
+`--edge-multipliers` sets positive `k` values. The generator emits exactly
+`min(kN,N^2)` duplicate-free directed candidates with one self edge and exact
+receiver degree `min(k,N)`. `--seed` controls graph topology while
+`--model-seed` independently controls model initialization; both model-state
+hashes are recorded. `--warmup`, `--repeats`, and `--max-wall-seconds` bound timing.
+The JSON records edge hashes, execution order, receiver degree, synchronized
+median latency, CUDA peak allocation delta, per-node-count fits, failures and
+interpretation boundaries. Edge construction is deliberately outside the model
+timing. Re-run multiple `--seed` values with one fixed `--model-seed` when a
+crossover margin is small.
+
 `scripts/run_registered_transport_study.py` freezes the 2026-07-19 six-arm
 screen, fifteen-arm five-seed transport confirmation, conditional five-arm
 private EGNN comparison, exact QM9 data/split hashes, test-disabled policy, and

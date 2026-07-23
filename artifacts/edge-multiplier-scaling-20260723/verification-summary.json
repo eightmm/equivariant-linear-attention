@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "focused_tests": {
+    "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py tests/test_edge_conditioned_local.py tests/test_egnn_baseline.py",
+    "passed": 37,
+    "failed": 0
+  },
+  "scaling_tests": {
+    "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py",
+    "passed": 15,
+    "failed": 0
+  },
+  "quality_control_red": {
+    "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py -k requested_count",
+    "expected_exit_code": 1,
+    "result": "1 failed, 11 deselected before the receiver-regular repair",
+    "evidence": "topology-red-test.json"
+  },
+  "seed_separation_red": {
+    "command": ".venv/bin/python -m pytest -q tests/test_scaling_benchmark.py -k graph_seed_varies",
+    "expected_exit_code": 1,
+    "result": "1 failed, 12 deselected before graph/model seed separation",
+    "evidence": "seed-separation-red-test.json"
+  },
+  "format_and_lint": {
+    "commands": [
+      "uv run ruff check scripts/benchmark_sparse_scaling.py tests/test_scaling_benchmark.py artifacts/edge-multiplier-scaling-20260723/profile_high_density.py",
+      "uv run ruff format --check scripts/benchmark_sparse_scaling.py tests/test_scaling_benchmark.py artifacts/edge-multiplier-scaling-20260723/profile_high_density.py"
+    ],
+    "status": "passed"
+  },
+  "fast_gate": {
+    "command": "scripts/check.sh fast",
+    "status": "passed",
+    "tests_passed": 383,
+    "coverage_percent": 89.38,
+    "ruff": "passed",
+    "compileall": "passed",
+    "cpu_ml_smoke": "passed"
+  },
+  "gpu_gate": {
+    "command": "scripts/check.sh gpu",
+    "status": "passed",
+    "bf16_smoke": "passed",
+    "float32_smoke": "passed",
+    "device": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
+  },
+  "grid_gate": {
+    "planned_cells": 24,
+    "completed_cells": 24,
+    "failed_or_skipped_cells": 0,
+    "all_receiver_degrees_exact": true,
+    "all_edge_hashes_present": true,
+    "three_seed_high_density_confirmation_complete": true,
+    "model_state_hash_fixed_across_graph_seeds": true
+  },
+  "parameter_gate": {
+    "candidate_trainable": 158537,
+    "static_egnn_trainable": 152065,
+    "ratio": 1.0425607470489593,
+    "prior_ceiling": 1.05,
+    "status": "passed"
+  },
+  "not_verified": [
+    "backward or training throughput",
+    "neighbor graph construction",
+    "multi-graph batch scaling",
+    "task accuracy in this packet",
+    "molecule, protein or point-cloud transfer"
+  ],
+  "test_evaluated": false
+}

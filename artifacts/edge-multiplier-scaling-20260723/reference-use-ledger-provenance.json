@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "skill": "science-provenance",
+  "uses": [
+    {
+      "schema_version": 1,
+      "skill": "science-provenance",
+      "reference_id": "artifact-contract",
+      "path": "references/artifact-contract.md",
+      "sha256": "b762bdd86796642e0b098091c043efef750d0462761e09be45996d111897c73a",
+      "read_reason": "Defined manifest, claim, execution, hash, validation and review records.",
+      "loaded_at": "2026-07-22T23:20:00Z",
+      "used_for": ["manifest.json", "claim-register.json", "evidence-graph.json", "execution-log.json"],
+      "sections": ["required manifest fields", "bundle validation", "versioning"],
+      "search_terms": ["manifest", "hash", "review"]
+    }
+  ]
+}

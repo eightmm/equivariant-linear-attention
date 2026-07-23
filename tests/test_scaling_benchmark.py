@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 from typing import Any
 
+import pytest
 import torch
 
 
@@ -87,3 +88,154 @@ def test_tiny_scaling_run_records_resource_boundary_and_strict_json() -> None:
 def test_density_degrees_match_registered_controls() -> None:
     assert SCALING["density_degrees"](64) == [1, 4, 16, 64]
     assert SCALING["density_degrees"](512) == [1, 4, 16, 128, 512]
+
+
+def test_seeded_exact_edges_have_requested_count_and_are_reproducible() -> None:
+    build = SCALING["seeded_exact_edge_index"]
+
+    first = build(
+        17,
+        edge_multiplier=5,
+        seed=20260723,
+        device=torch.device("cpu"),
+    )
+    repeated = build(
+        17,
+        edge_multiplier=5,
+        seed=20260723,
+        device=torch.device("cpu"),
+    )
+    changed = build(
+        17,
+        edge_multiplier=5,
+        seed=20260724,
+        device=torch.device("cpu"),
+    )
+
+    assert first.shape == (2, 17 * 5)
+    assert torch.equal(first, repeated)
+    assert not torch.equal(first, changed)
+    assert int(first.min()) == 0
+    assert int(first.max()) == 16
+    assert torch.unique(first[0] * 17 + first[1]).numel() == first.shape[1]
+    self_nodes = first[0, first[0] == first[1]]
+    assert torch.equal(torch.sort(self_nodes).values, torch.arange(17))
+    assert torch.equal(torch.bincount(first[0]), torch.full((17,), 5))
+
+
+def test_seeded_exact_edges_saturate_at_complete_graph() -> None:
+    edge_index = SCALING["seeded_exact_edge_index"](
+        7,
+        edge_multiplier=100,
+        seed=3,
+        device=torch.device("cpu"),
+    )
+
+    assert edge_index.shape == (2, 49)
+    assert torch.unique(edge_index[0] * 7 + edge_index[1]).numel() == 49
+
+
+@pytest.mark.parametrize(
+    ("num_nodes", "edge_multiplier", "seed"),
+    [(0, 2, 1), (8, 0, 1), (8, 2, -1), (True, 2, 1), (8, True, 1)],
+)
+def test_seeded_exact_edges_reject_invalid_controls(
+    num_nodes: int,
+    edge_multiplier: int,
+    seed: int,
+) -> None:
+    with pytest.raises(ValueError):
+        SCALING["seeded_exact_edge_index"](
+            num_nodes,
+            edge_multiplier=edge_multiplier,
+            seed=seed,
+            device=torch.device("cpu"),
+        )
+
+
+def test_tiny_edge_multiplier_grid_uses_identical_exact_edges() -> None:
+    result = SCALING["run_edge_multiplier_benchmark"](
+        sizes=(12, 16),
+        edge_multipliers=(2, 4),
+        device="cpu",
+        seed=20260723,
+        warmup=0,
+        repeats=1,
+        max_wall_seconds=30.0,
+    )
+
+    assert result["schema_version"] == 1
+    assert result["benchmark"] == "same_edge_exact_multiplier_grid"
+    assert result["graph_generator"] == "seeded_exact_receiver_regular_directed"
+    assert result["graph_seed"] == 20260723
+    assert result["model_seed"] == 20260723
+    assert all(len(value) == 64 for value in result["model_state_sha256"].values())
+    assert result["sizes"] == [12, 16]
+    assert result["edge_multipliers"] == [2, 4]
+    assert len(result["cells"]) == 4
+    assert result["inference_boundary"]["edge_construction_timed"] is False
+    assert result["inference_boundary"]["same_edge_tensor_for_models"] is True
+    for cell in result["cells"]:
+        assert cell["status"] == "completed"
+        assert cell["candidate_edges_including_self"] == (
+            cell["nodes"] * cell["edge_multiplier"]
+        )
+        assert cell["effective_nonself_edges"] == (
+            cell["nodes"] * (cell["edge_multiplier"] - 1)
+        )
+        assert cell["receiver_candidate_degree"] == {
+            "minimum": cell["edge_multiplier"],
+            "maximum": cell["edge_multiplier"],
+            "mean": float(cell["edge_multiplier"]),
+            "population_std": 0.0,
+        }
+        assert len(cell["edge_index_sha256"]) == 64
+        assert set(cell["models"]) == {"ec_lgl", "static_egnn"}
+        assert cell["ec_lgl_to_egnn_latency_ratio"] > 0.0
+    assert set(result["fits_by_nodes"]) == {"12", "16"}
+    _assert_finite_json(result)
+    json.dumps(result, allow_nan=False)
+
+
+def test_graph_seed_varies_topology_without_varying_model_state() -> None:
+    common = {
+        "sizes": (12,),
+        "edge_multipliers": (4,),
+        "device": "cpu",
+        "model_seed": 20260723,
+        "warmup": 0,
+        "repeats": 1,
+        "max_wall_seconds": 30.0,
+    }
+
+    first = SCALING["run_edge_multiplier_benchmark"](seed=11, **common)
+    changed_graph = SCALING["run_edge_multiplier_benchmark"](seed=12, **common)
+    changed_model = SCALING["run_edge_multiplier_benchmark"](
+        seed=11,
+        **{**common, "model_seed": 20260724},
+    )
+
+    assert first["model_seed"] == changed_graph["model_seed"] == 20260723
+    assert first["graph_seed"] == 11
+    assert changed_graph["graph_seed"] == 12
+    assert (
+        first["cells"][0]["edge_index_sha256"]
+        != (changed_graph["cells"][0]["edge_index_sha256"])
+    )
+    assert first["model_state_sha256"] == changed_graph["model_state_sha256"]
+    assert first["model_state_sha256"] != changed_model["model_state_sha256"]
+
+
+@pytest.mark.parametrize("model_seed", [-1, True])
+def test_edge_multiplier_grid_rejects_invalid_model_seed(model_seed: int) -> None:
+    with pytest.raises(ValueError, match="model_seed"):
+        SCALING["run_edge_multiplier_benchmark"](
+            sizes=(12,),
+            edge_multipliers=(4,),
+            device="cpu",
+            seed=11,
+            model_seed=model_seed,
+            warmup=0,
+            repeats=1,
+            max_wall_seconds=30.0,
+        )

@@ -221,6 +221,17 @@ than EGNN when both used the same sparse edges. Its repeated QM9 screen mean was
 confirmation and the feature remains off by default. See
 [the scaling record](docs/BENCHMARKS.md#scaling-aware-ec-lgl-result-2026-07-22).
 
+The follow-up exact-`E=kN` benchmark controls the edge tensor directly on
+receiver-regular pseudo-random graphs. Across `N={128,512,2048,8192}` and
+`k={4,8,16,32,64,128}`, EC-LGL remained much slower at low density but crossed
+the same-edge private static EGNN at `N=8192,k=64`. A 31-repeat confirmation
+over three topology seeds with fixed model seed 20260723 gave mean
+EC-LGL/EGNN ratios 1.595, 0.987 and 0.675
+for `k=32,64,128`; the `k=64` advantage is only about 1.3%, while `k=128` is a
+clearer high-density systems win. This compares different model equations in
+forward-only execution and excludes neighbor construction and accuracy. See
+[the exact-edge record](docs/BENCHMARKS.md#exact-ekn-same-edge-scaling-2026-07-23).
+
 ```bash
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 --routing ggg
 uv run python scripts/train_compare.py --dataset synthetic --steps 10 \
@@ -240,6 +251,11 @@ uv run --locked python scripts/run_registered_coordinate_study.py \
 uv run python scripts/bench_attention.py --graphs 1 8 32 --nodes-per-graph 16 32
 uv run python scripts/benchmark_sparse_scaling.py --device cuda \
   --metrics-out artifacts/sparse-scaling.json
+uv run python scripts/benchmark_sparse_scaling.py --edge-multiplier-grid \
+  --sizes 128 512 2048 8192 --edge-multipliers 4 8 16 32 64 128 \
+  --device cuda --seed 20260723 --model-seed 20260723 \
+  --warmup 3 --repeats 7 \
+  --metrics-out artifacts/exact-edge-grid.json
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
 

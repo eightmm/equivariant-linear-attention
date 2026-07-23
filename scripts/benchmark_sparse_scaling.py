@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
+import hashlib
 import json
 import math
 from pathlib import Path
+import random
 import statistics
 import time
 from typing import Any
@@ -24,6 +26,7 @@ from equivariant_attention.training import build_regression_model
 
 
 DEFAULT_SIZES = (32, 64, 128, 256, 512, 1024, 2048, 4096)
+DEFAULT_EDGE_MULTIPLIERS = (4, 8, 16, 32, 64, 128)
 
 
 def bounded_ring_edge_index(
@@ -44,10 +47,112 @@ def bounded_ring_edge_index(
     return torch.stack([receiver, sender])
 
 
+def seeded_exact_edge_index(
+    num_nodes: int,
+    *,
+    edge_multiplier: int,
+    seed: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return exact seeded pseudo-random edges without replacement.
+
+    One self edge is emitted for every node. For each receiver, the remaining
+    senders follow an independently seeded affine permutation of that node's
+    nonself sender universe. This gives every receiver exactly
+    ``edge_multiplier`` candidate edges while keeping construction O(E),
+    deterministic, duplicate-free, and outside timed model execution.
+    """
+    if isinstance(num_nodes, bool) or not isinstance(num_nodes, int) or num_nodes <= 0:
+        raise ValueError("num_nodes must be a positive integer")
+    if (
+        isinstance(edge_multiplier, bool)
+        or not isinstance(edge_multiplier, int)
+        or edge_multiplier <= 0
+    ):
+        raise ValueError("edge_multiplier must be a positive integer")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a nonnegative integer")
+
+    admitted_multiplier = min(edge_multiplier, num_nodes)
+    self_nodes = torch.arange(num_nodes, device=device, dtype=torch.long)
+    if admitted_multiplier == 1 or num_nodes == 1:
+        return torch.stack([self_nodes, self_nodes])
+
+    nonself_universe = num_nodes - 1
+    nonself_per_receiver = admitted_multiplier - 1
+    generator = random.Random(seed)
+    if nonself_universe == 1:
+        offsets = torch.zeros(num_nodes, device=device, dtype=torch.long)
+        steps = torch.ones(num_nodes, device=device, dtype=torch.long)
+    else:
+        receiver_offsets: list[int] = []
+        receiver_steps: list[int] = []
+        for _ in range(num_nodes):
+            receiver_offsets.append(generator.randrange(nonself_universe))
+            step = generator.randrange(1, nonself_universe + 1)
+            while math.gcd(step, nonself_universe) != 1:
+                step = step % nonself_universe + 1
+            receiver_steps.append(step)
+        offsets = torch.tensor(receiver_offsets, device=device, dtype=torch.long)
+        steps = torch.tensor(receiver_steps, device=device, dtype=torch.long)
+
+    receiver = self_nodes[:, None].expand(-1, nonself_per_receiver).reshape(-1)
+    traversal = torch.arange(
+        nonself_per_receiver,
+        device=device,
+        dtype=torch.long,
+    )
+    compressed_sender = torch.remainder(
+        offsets[:, None] + steps[:, None] * traversal[None, :],
+        nonself_universe,
+    ).reshape(-1)
+    sender = compressed_sender + (compressed_sender >= receiver).to(torch.long)
+    return torch.stack(
+        [
+            torch.cat([self_nodes, receiver]),
+            torch.cat([self_nodes, sender]),
+        ]
+    )
+
+
+def _edge_index_sha256(edge_index: torch.Tensor) -> str:
+    materialized = (
+        edge_index.detach().to(device="cpu", dtype=torch.long).contiguous().numpy()
+    )
+    return hashlib.sha256(materialized.tobytes()).hexdigest()
+
+
+def _module_state_sha256(module: torch.nn.Module) -> str:
+    digest = hashlib.sha256()
+    for name, tensor in sorted(module.state_dict().items()):
+        materialized = tensor.detach().to(device="cpu").contiguous()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(materialized.dtype).encode("ascii"))
+        digest.update(json.dumps(list(materialized.shape)).encode("ascii"))
+        digest.update(materialized.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _receiver_degree_summary(
+    edge_index: torch.Tensor,
+    *,
+    num_nodes: int,
+) -> dict[str, float | int]:
+    degree = torch.bincount(edge_index[0], minlength=num_nodes).to(torch.float64)
+    return {
+        "minimum": int(degree.min().item()),
+        "maximum": int(degree.max().item()),
+        "mean": float(degree.mean().item()),
+        "population_std": float(degree.std(unbiased=False).item()),
+    }
+
+
 def density_degrees(num_nodes: int) -> list[int]:
     if isinstance(num_nodes, bool) or not isinstance(num_nodes, int) or num_nodes <= 0:
         raise ValueError("num_nodes must be a positive integer")
-    return sorted({1, min(4, num_nodes), min(16, num_nodes), max(1, num_nodes // 4), num_nodes})
+    return sorted(
+        {1, min(4, num_nodes), min(16, num_nodes), max(1, num_nodes // 4), num_nodes}
+    )
 
 
 def same_kernel_inputs(
@@ -70,9 +175,7 @@ def same_kernel_inputs(
     query_scalar = query_scalar / torch.linalg.vector_norm(
         query_scalar, dim=-1, keepdim=True
     )
-    key_scalar = key_scalar / torch.linalg.vector_norm(
-        key_scalar, dim=-1, keepdim=True
-    )
+    key_scalar = key_scalar / torch.linalg.vector_norm(key_scalar, dim=-1, keepdim=True)
     query_vector = torch.stack(
         [
             torch.cos(2.0 * math.pi * phase),
@@ -92,13 +195,9 @@ def same_kernel_inputs(
     query_vector = query_vector / torch.linalg.vector_norm(
         query_vector, dim=-1, keepdim=True
     )
-    key_vector = key_vector / torch.linalg.vector_norm(
-        key_vector, dim=-1, keepdim=True
-    )
+    key_vector = key_vector / torch.linalg.vector_norm(key_vector, dim=-1, keepdim=True)
     value_frequency = torch.arange(1, value_dim + 1, device=device, dtype=dtype)
-    values = torch.sin(
-        2.0 * math.pi * phase[:, None] * value_frequency[None, :] + 0.17
-    )
+    values = torch.sin(2.0 * math.pi * phase[:, None] * value_frequency[None, :] + 0.17)
     return query_scalar, key_scalar, query_vector, key_vector, values
 
 
@@ -142,9 +241,7 @@ def factorized_same_kernel(
     )
     result = query_scalar @ scalar_summary
     result = result + (kernel_floor + beta) * constant_summary.unsqueeze(0)
-    result = result + beta * torch.einsum(
-        "na,av->nv", query_vector, linear_summary
-    )
+    result = result + beta * torch.einsum("na,av->nv", query_vector, linear_summary)
     result = result + gamma * torch.einsum(
         "na,abv,nb->nv", query_vector, quadratic_summary, query_vector
     )
@@ -201,10 +298,13 @@ def _slope(rows: list[dict[str, Any]]) -> float:
     denominator = sum((value - x_mean) ** 2 for value in x)
     if denominator == 0.0:
         return 0.0
-    return sum(
-        (x_value - x_mean) * (y_value - y_mean)
-        for x_value, y_value in zip(x, y, strict=True)
-    ) / denominator
+    return (
+        sum(
+            (x_value - x_mean) * (y_value - y_mean)
+            for x_value, y_value in zip(x, y, strict=True)
+        )
+        / denominator
+    )
 
 
 def _same_kernel_section(
@@ -290,8 +390,7 @@ def _same_kernel_section(
     max_error = max(errors, default=0.0)
     return {
         "kernel_formula": (
-            "q0_dot_k0 + floor + beta*(1 + q1_dot_k1) "
-            "+ gamma*(q1_dot_k1)^2"
+            "q0_dot_k0 + floor + beta*(1 + q1_dot_k1) + gamma*(q1_dot_k1)^2"
         ),
         "normalization": "exact_row_sum",
         "max_abs_error": max_error,
@@ -315,9 +414,7 @@ def _model_inputs(
         torch.arange(num_nodes, device=device, dtype=torch.float32) + 0.5
     ) / num_nodes
     frequencies = torch.arange(1, 12, device=device, dtype=torch.float32)
-    node_feats = torch.sin(
-        2.0 * math.pi * phase[:, None] * frequencies[None, :] + 0.13
-    )
+    node_feats = torch.sin(2.0 * math.pi * phase[:, None] * frequencies[None, :] + 0.13)
     pos = 0.1 * torch.stack(
         [
             torch.cos(2.0 * math.pi * phase),
@@ -380,21 +477,29 @@ def _model_scaling_section(
     repeats: int,
 ) -> dict[str, Any]:
     torch.manual_seed(20260722)
-    candidate = build_regression_model(
-        node_dim=11,
-        hidden_dim=64,
-        num_layers=3,
-        num_heads=4,
-        local_head_counts=(4, 0, 4),
-        local_cutoff=2.5,
-        num_rbf=16,
-        use_edge_conditioned_local_transport=True,
-    ).to(device=device, dtype=torch.float32).eval()
-    egnn = _StaticEGNNBaseline(
-        node_dim=11,
-        hidden_dim=91,
-        num_layers=3,
-    ).to(device=device, dtype=torch.float32).eval()
+    candidate = (
+        build_regression_model(
+            node_dim=11,
+            hidden_dim=64,
+            num_layers=3,
+            num_heads=4,
+            local_head_counts=(4, 0, 4),
+            local_cutoff=2.5,
+            num_rbf=16,
+            use_edge_conditioned_local_transport=True,
+        )
+        .to(device=device, dtype=torch.float32)
+        .eval()
+    )
+    egnn = (
+        _StaticEGNNBaseline(
+            node_dim=11,
+            hidden_dim=91,
+            num_layers=3,
+        )
+        .to(device=device, dtype=torch.float32)
+        .eval()
+    )
     fixed_rows: list[dict[str, Any]] = []
     dense_rows: list[dict[str, Any]] = []
     for num_nodes in sizes:
@@ -483,8 +588,7 @@ def _model_scaling_section(
             row["candidate_degree"]
             for row in density_rows
             if row["model"] == "ec_lgl"
-            and row["median_ms"]
-            < density_egnn[row["candidate_degree"]]["median_ms"]
+            and row["median_ms"] < density_egnn[row["candidate_degree"]]["median_ms"]
         ),
         None,
     )
@@ -510,6 +614,352 @@ def _model_scaling_section(
         "runtime_loglog_slope_dense_egnn": _slope(dense_rows),
         "first_descriptive_dense_egnn_crossover_nodes": dense_crossover,
         "first_same_edge_density_crossover_degree": same_edge_crossover,
+    }
+
+
+def _latency_edge_fit(
+    cells: Sequence[dict[str, Any]],
+    *,
+    model_name: str,
+) -> dict[str, Any]:
+    points = [
+        (
+            float(cell["candidate_edges_including_self"]) / 1_000_000.0,
+            float(cell["models"][model_name]["median_ms"]),
+        )
+        for cell in cells
+        if cell.get("status") == "completed"
+        and cell["models"][model_name].get("status") == "completed"
+    ]
+    if len(points) < 2:
+        return {
+            "status": "insufficient_points",
+            "point_count": len(points),
+        }
+    x_mean = sum(point[0] for point in points) / len(points)
+    y_mean = sum(point[1] for point in points) / len(points)
+    denominator = sum((point[0] - x_mean) ** 2 for point in points)
+    if denominator == 0.0:
+        return {
+            "status": "insufficient_edge_variation",
+            "point_count": len(points),
+        }
+    slope = (
+        sum((x_value - x_mean) * (y_value - y_mean) for x_value, y_value in points)
+        / denominator
+    )
+    intercept = y_mean - slope * x_mean
+    residual_sum = sum(
+        (y_value - (intercept + slope * x_value)) ** 2 for x_value, y_value in points
+    )
+    total_sum = sum((y_value - y_mean) ** 2 for _, y_value in points)
+    r_squared = 1.0 if total_sum == 0.0 and residual_sum == 0.0 else 0.0
+    if total_sum > 0.0:
+        r_squared = 1.0 - residual_sum / total_sum
+    return {
+        "status": "completed",
+        "point_count": len(points),
+        "intercept_ms": float(intercept),
+        "slope_ms_per_million_candidate_edges": float(slope),
+        "r_squared": float(r_squared),
+    }
+
+
+def _timed_model_metrics(
+    *,
+    model: torch.nn.Module,
+    node_feats: torch.Tensor,
+    pos: torch.Tensor,
+    batch: torch.Tensor,
+    edge_index: torch.Tensor,
+    warmup: int,
+    repeats: int,
+) -> dict[str, Any]:
+    try:
+        row = _model_row(
+            model=model,
+            model_name="model",
+            node_feats=node_feats,
+            pos=pos,
+            batch=batch,
+            edge_index=edge_index,
+            comparison="same_seeded_exact_edge_set",
+            warmup=warmup,
+            repeats=repeats,
+        )
+    except torch.OutOfMemoryError as error:
+        if node_feats.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return {
+            "status": "failed",
+            "failure_class": "out_of_memory",
+            "message": str(error).splitlines()[0],
+        }
+    return {
+        "status": "completed",
+        "median_ms": row["median_ms"],
+        "peak_cuda_bytes_delta": row["peak_cuda_bytes_delta"],
+    }
+
+
+def run_edge_multiplier_benchmark(
+    *,
+    sizes: Sequence[int],
+    edge_multipliers: Sequence[int] = DEFAULT_EDGE_MULTIPLIERS,
+    device: str = "auto",
+    seed: int = 20260723,
+    model_seed: int = 20260723,
+    warmup: int = 3,
+    repeats: int = 7,
+    max_wall_seconds: float = 120.0,
+) -> dict[str, Any]:
+    """Benchmark both models on identical exact E=kN pseudo-random graphs."""
+    validated_sizes = list(sizes)
+    validated_multipliers = list(edge_multipliers)
+    if not validated_sizes or any(
+        isinstance(size, bool) or not isinstance(size, int) or size < 2
+        for size in validated_sizes
+    ):
+        raise ValueError("sizes must contain positive integers at least two")
+    if len(set(validated_sizes)) != len(validated_sizes):
+        raise ValueError("sizes must be unique")
+    if not validated_multipliers or any(
+        isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        for value in validated_multipliers
+    ):
+        raise ValueError("edge_multipliers must contain positive integers")
+    if len(set(validated_multipliers)) != len(validated_multipliers):
+        raise ValueError("edge_multipliers must be unique")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a nonnegative integer")
+    if (
+        isinstance(model_seed, bool)
+        or not isinstance(model_seed, int)
+        or model_seed < 0
+    ):
+        raise ValueError("model_seed must be a nonnegative integer")
+    if warmup < 0 or repeats <= 0:
+        raise ValueError("warmup must be nonnegative and repeats must be positive")
+    if (
+        isinstance(max_wall_seconds, bool)
+        or not isinstance(max_wall_seconds, (int, float))
+        or not math.isfinite(float(max_wall_seconds))
+        or max_wall_seconds <= 0
+    ):
+        raise ValueError("max_wall_seconds must be finite and positive")
+
+    resolved_device = _resolve_device(device)
+    torch.manual_seed(model_seed)
+    candidate = (
+        build_regression_model(
+            node_dim=11,
+            hidden_dim=64,
+            num_layers=3,
+            num_heads=4,
+            local_head_counts=(4, 0, 4),
+            local_cutoff=2.5,
+            num_rbf=16,
+            use_edge_conditioned_local_transport=True,
+        )
+        .to(device=resolved_device, dtype=torch.float32)
+        .eval()
+    )
+    egnn = (
+        _StaticEGNNBaseline(
+            node_dim=11,
+            hidden_dim=91,
+            num_layers=3,
+        )
+        .to(device=resolved_device, dtype=torch.float32)
+        .eval()
+    )
+
+    cells: list[dict[str, Any]] = []
+    started = time.perf_counter()
+    for size_index, num_nodes in enumerate(validated_sizes):
+        for multiplier_index, edge_multiplier in enumerate(validated_multipliers):
+            if edge_multiplier > num_nodes:
+                cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "edge_multiplier_exceeds_num_nodes",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+            if time.perf_counter() - started >= max_wall_seconds:
+                cells.append(
+                    {
+                        "status": "skipped",
+                        "reason": "wall_time_ceiling_reached",
+                        "nodes": num_nodes,
+                        "edge_multiplier": edge_multiplier,
+                    }
+                )
+                continue
+
+            cell_seed = seed + num_nodes * 1_000_003 + edge_multiplier * 97
+            node_feats, pos, batch = _model_inputs(
+                num_nodes,
+                device=resolved_device,
+            )
+            edge_index = seeded_exact_edge_index(
+                num_nodes,
+                edge_multiplier=edge_multiplier,
+                seed=cell_seed,
+                device=resolved_device,
+            )
+            model_order = [
+                ("ec_lgl", candidate),
+                ("static_egnn", egnn),
+            ]
+            if (size_index + multiplier_index) % 2:
+                model_order.reverse()
+            model_metrics = {
+                name: _timed_model_metrics(
+                    model=model,
+                    node_feats=node_feats,
+                    pos=pos,
+                    batch=batch,
+                    edge_index=edge_index,
+                    warmup=warmup,
+                    repeats=repeats,
+                )
+                for name, model in model_order
+            }
+            completed = all(
+                metrics["status"] == "completed" for metrics in model_metrics.values()
+            )
+            cell: dict[str, Any] = {
+                "status": "completed" if completed else "failed",
+                "nodes": num_nodes,
+                "edge_multiplier": edge_multiplier,
+                "cell_seed": cell_seed,
+                "candidate_edges_including_self": edge_index.shape[1],
+                "effective_nonself_edges": edge_index.shape[1] - num_nodes,
+                "edge_index_sha256": _edge_index_sha256(edge_index),
+                "receiver_candidate_degree": _receiver_degree_summary(
+                    edge_index,
+                    num_nodes=num_nodes,
+                ),
+                "model_execution_order": [name for name, _ in model_order],
+                "models": model_metrics,
+            }
+            if completed:
+                cell["ec_lgl_to_egnn_latency_ratio"] = (
+                    model_metrics["ec_lgl"]["median_ms"]
+                    / model_metrics["static_egnn"]["median_ms"]
+                )
+            cells.append(cell)
+            del node_feats, pos, batch, edge_index
+            if resolved_device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    fits_by_nodes: dict[str, Any] = {}
+    crossover_cells: list[dict[str, int]] = []
+    for num_nodes in validated_sizes:
+        node_cells = [
+            cell
+            for cell in cells
+            if cell.get("nodes") == num_nodes and cell.get("status") == "completed"
+        ]
+        node_cells.sort(key=lambda cell: cell["edge_multiplier"])
+        crossover_multiplier = next(
+            (
+                cell["edge_multiplier"]
+                for cell in node_cells
+                if cell["ec_lgl_to_egnn_latency_ratio"] < 1.0
+            ),
+            None,
+        )
+        if crossover_multiplier is not None:
+            crossover_cells.append(
+                {
+                    "nodes": num_nodes,
+                    "edge_multiplier": crossover_multiplier,
+                }
+            )
+        ratio_trend: dict[str, Any] = {"status": "insufficient_points"}
+        if len(node_cells) >= 2:
+            lowest = float(node_cells[0]["ec_lgl_to_egnn_latency_ratio"])
+            highest = float(node_cells[-1]["ec_lgl_to_egnn_latency_ratio"])
+            ratio_trend = {
+                "status": "completed",
+                "lowest_multiplier": node_cells[0]["edge_multiplier"],
+                "lowest_multiplier_ratio": lowest,
+                "highest_multiplier": node_cells[-1]["edge_multiplier"],
+                "highest_multiplier_ratio": highest,
+                "ratio_decreased": highest < lowest,
+            }
+        fits_by_nodes[str(num_nodes)] = {
+            "ec_lgl": _latency_edge_fit(node_cells, model_name="ec_lgl"),
+            "static_egnn": _latency_edge_fit(
+                node_cells,
+                model_name="static_egnn",
+            ),
+            "first_same_edge_crossover_multiplier": crossover_multiplier,
+            "latency_ratio_trend": ratio_trend,
+        }
+
+    elapsed = time.perf_counter() - started
+    completed_cells = sum(cell["status"] == "completed" for cell in cells)
+    return {
+        "schema_version": 1,
+        "benchmark": "same_edge_exact_multiplier_grid",
+        "graph_generator": "seeded_exact_receiver_regular_directed",
+        "device": str(resolved_device),
+        "model_dtype": "float32",
+        "seed": seed,
+        "graph_seed": seed,
+        "model_seed": model_seed,
+        "sizes": validated_sizes,
+        "edge_multipliers": validated_multipliers,
+        "warmup": warmup,
+        "repeats": repeats,
+        "max_wall_seconds": float(max_wall_seconds),
+        "elapsed_wall_seconds": float(elapsed),
+        "candidate_parameters": sum(
+            parameter.numel()
+            for parameter in candidate.parameters()
+            if parameter.requires_grad
+        ),
+        "egnn_parameters": sum(
+            parameter.numel()
+            for parameter in egnn.parameters()
+            if parameter.requires_grad
+        ),
+        "model_state_sha256": {
+            "ec_lgl": _module_state_sha256(candidate),
+            "static_egnn": _module_state_sha256(egnn),
+        },
+        "cells": cells,
+        "completed_cell_count": completed_cells,
+        "failed_or_skipped_cell_count": len(cells) - completed_cells,
+        "fits_by_nodes": fits_by_nodes,
+        "same_edge_crossover_cells": crossover_cells,
+        "prediction": {
+            "no_same_edge_crossover_through_registered_grid": not crossover_cells,
+            "ratio_decreased_for_every_node_size": all(
+                row["latency_ratio_trend"].get("ratio_decreased", False)
+                for row in fits_by_nodes.values()
+            ),
+        },
+        "edge_generation": {
+            "method": "seeded_per_receiver_affine_sender_permutation_without_replacement",
+            "construction_complexity": "O(E)",
+            "timed": False,
+            "self_edge_per_node": True,
+        },
+        "inference_boundary": {
+            "edge_construction_timed": False,
+            "same_edge_tensor_for_models": True,
+            "model_computations_identical": False,
+            "forward_only": True,
+            "backward_or_training_inferred": False,
+            "task_accuracy_inferred": False,
+            "domain_generalization_inferred": False,
+        },
     }
 
 
@@ -615,24 +1065,46 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--skip-model-benchmarks", action="store_true")
+    parser.add_argument("--edge-multiplier-grid", action="store_true")
+    parser.add_argument(
+        "--edge-multipliers",
+        nargs="+",
+        type=int,
+        default=list(DEFAULT_EDGE_MULTIPLIERS),
+    )
+    parser.add_argument("--seed", type=int, default=20260723)
+    parser.add_argument("--model-seed", type=int, default=20260723)
+    parser.add_argument("--max-wall-seconds", type=float, default=120.0)
     parser.add_argument("--metrics-out", type=Path, required=True)
     return parser.parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
-    result = run_scaling_benchmark(
-        sizes=args.sizes,
-        device=args.device,
-        dtype=args.dtype,
-        degree=args.degree,
-        same_kernel_dense_max=args.same_kernel_dense_max,
-        dense_egnn_max=args.dense_egnn_max,
-        density_size=args.density_size,
-        warmup=args.warmup,
-        repeats=args.repeats,
-        include_model_benchmarks=not args.skip_model_benchmarks,
-    )
+    if args.edge_multiplier_grid:
+        result = run_edge_multiplier_benchmark(
+            sizes=args.sizes,
+            edge_multipliers=args.edge_multipliers,
+            device=args.device,
+            seed=args.seed,
+            model_seed=args.model_seed,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            max_wall_seconds=args.max_wall_seconds,
+        )
+    else:
+        result = run_scaling_benchmark(
+            sizes=args.sizes,
+            device=args.device,
+            dtype=args.dtype,
+            degree=args.degree,
+            same_kernel_dense_max=args.same_kernel_dense_max,
+            dense_egnn_max=args.dense_egnn_max,
+            density_size=args.density_size,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            include_model_benchmarks=not args.skip_model_benchmarks,
+        )
     text = json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n"
     args.metrics_out.parent.mkdir(parents=True, exist_ok=True)
     args.metrics_out.write_text(text)

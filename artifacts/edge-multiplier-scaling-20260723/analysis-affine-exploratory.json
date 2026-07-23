@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-multiplier-scaling-20260723",
+  "planned_grid": {
+    "nodes": [128, 512, 2048, 8192],
+    "edge_multipliers": [4, 8, 16, 32, 64, 128],
+    "cell_count": 24,
+    "completed_cell_count": 24,
+    "failed_or_skipped_cell_count": 0
+  },
+  "prediction_assessment": {
+    "no_same_edge_crossover_through_k128": "not_met",
+    "latency_ratio_decreases_with_density_at_every_node_size": "met",
+    "overall": "mixed",
+    "reason": "A same-edge crossover appeared at N=8192 and k=64, while all four node sizes showed a lower EC-LGL/EGNN ratio at their highest than lowest registered multiplier."
+  },
+  "confirmed_crossover": {
+    "nodes": 8192,
+    "first_measured_edge_multiplier": 64,
+    "confirmation_warmup": 10,
+    "confirmation_repeats": 31,
+    "cells": [
+      {
+        "edge_multiplier": 32,
+        "candidate_edges_including_self": 262144,
+        "ec_lgl_median_ms": 8.556054992368445,
+        "static_egnn_median_ms": 5.483600980369374,
+        "ec_lgl_to_egnn_latency_ratio": 1.5602986108942067,
+        "ec_lgl_peak_cuda_bytes_delta": 363563008,
+        "static_egnn_peak_cuda_bytes_delta": 388727296
+      },
+      {
+        "edge_multiplier": 64,
+        "candidate_edges_including_self": 524288,
+        "ec_lgl_median_ms": 11.269538983469829,
+        "static_egnn_median_ms": 11.744956020265818,
+        "ec_lgl_to_egnn_latency_ratio": 0.9595215992315628,
+        "ec_lgl_peak_cuda_bytes_delta": 712771584,
+        "static_egnn_peak_cuda_bytes_delta": 780304896
+      },
+      {
+        "edge_multiplier": 128,
+        "candidate_edges_including_self": 1048576,
+        "ec_lgl_median_ms": 16.737294994527474,
+        "static_egnn_median_ms": 25.714812014484778,
+        "ec_lgl_to_egnn_latency_ratio": 0.6508814836017311,
+        "ec_lgl_peak_cuda_bytes_delta": 1410336768,
+        "static_egnn_peak_cuda_bytes_delta": 1563132416
+      }
+    ],
+    "latency_fit_over_k32_k64_k128": {
+      "ec_lgl_slope_ms_per_million_candidate_edges": 10.406689240508426,
+      "static_egnn_slope_ms_per_million_candidate_edges": 25.856753793629398,
+      "slope_ratio": 0.4024747005585996,
+      "ec_lgl_r_squared": 0.9999965784403391,
+      "static_egnn_r_squared": 0.9993027972555274,
+      "descriptive_fitted_crossover_edges": 474011.22360361594,
+      "descriptive_fitted_crossover_multiplier": 57.862698193800775,
+      "caution": "The fitted EGNN intercept is negative, so the line is descriptive only over the observed high-density range and must not be extrapolated to E=0."
+    }
+  },
+  "node_cost_control": {
+    "candidate_edges_including_self": 262144,
+    "rows": [
+      {
+        "nodes": 2048,
+        "edge_multiplier": 128,
+        "ec_lgl_median_ms": 6.586025003343821,
+        "static_egnn_median_ms": 5.517059995327145
+      },
+      {
+        "nodes": 8192,
+        "edge_multiplier": 32,
+        "ec_lgl_median_ms": 8.563840005081147,
+        "static_egnn_median_ms": 5.466903006890789
+      }
+    ],
+    "ec_lgl_node_scale_ratio": 1.3003048121944816,
+    "static_egnn_node_scale_ratio": 0.990908746963267,
+    "interpretation": "At fixed E, the larger-N EC-LGL row is about 30% slower while EGNN is unchanged within about 1%; this is consistent with EC-LGL's additional factorized O(N) global and pointwise work."
+  },
+  "profiler_diagnosis": {
+    "cell": "N=8192, k=128, E=1048576",
+    "profiled_forwards_per_model": 10,
+    "ec_lgl_aggregate_self_device_time_ms": 304.34280400000006,
+    "static_egnn_aggregate_self_device_time_ms": 494.13948600000015,
+    "ec_lgl_top_aten_device_time_ms": {
+      "index": 49.224831000000094,
+      "index_add": 28.667051999999785,
+      "cat": 21.301410999999927,
+      "addmm": 17.78378399999989,
+      "mul": 16.03126500000029
+    },
+    "static_egnn_top_aten_device_time_ms": {
+      "addmm": 89.83365800000003,
+      "cat": 72.88219499999998,
+      "silu": 29.912695000000188,
+      "index": 20.495088999999798,
+      "index_add": 17.359939000000114
+    },
+    "unique_operator_observed": false,
+    "boundary": "Profiler timings include instrumentation overhead and are diagnostic; gpu-grid.json and gpu-crossover-confirm.json are the latency authorities."
+  },
+  "optimization_decision": {
+    "fusion_alone_is_sufficient": false,
+    "priorities": [
+      {
+        "rank": 1,
+        "target": "fixed and per-node EC-LGL overhead",
+        "evidence": "Low-density EC-LGL remains near 5-7 ms while EGNN is near 0.6-1.0 ms; fixed E with 4x more nodes raises EC-LGL latency by about 30%.",
+        "candidate_actions": [
+          "compile or fuse pointwise/global/index/cat/reduction kernels",
+          "avoid repeated edge gathers and temporary concatenations",
+          "benchmark graph batching separately from one giant graph"
+        ]
+      },
+      {
+        "rank": 2,
+        "target": "high-density edge memory and materialization",
+        "evidence": "At N=8192,k=128 EC-LGL peaks at 1.410 GB and profiler time is distributed across gather, scatter, concat, GEMM and elementwise work rather than one scatter call.",
+        "candidate_actions": [
+          "fused or chunked edge-conditioned transport",
+          "reuse gathered receiver/sender features across message branches",
+          "reduce temporary edge-feature width without changing the registered function"
+        ]
+      },
+      {
+        "rank": 3,
+        "target": "accuracy stability",
+        "evidence": "The previous QM9 EC-LGL screen regressed by 0.090015 eV and showed degree-sensitive clipping; systems speed does not repair predictive quality.",
+        "candidate_actions": [
+          "zero-initialized degree-normalized EC residual",
+          "separate accuracy confirmation from systems optimization"
+        ]
+      },
+      {
+        "rank": 4,
+        "target": "end-to-end neighbor pipeline",
+        "evidence": "All current timings exclude graph construction.",
+        "candidate_actions": [
+          "cell-list/radius or bounded-kNN construction",
+          "report construction, transfer and model forward separately"
+        ]
+      }
+    ]
+  },
+  "inference_boundary": {
+    "same_edge_tensor": true,
+    "same_computation": false,
+    "reason": "EC-LGL uses two local edge-conditioned stages plus one exact factorized global stage; EGNN uses three edge-message stages.",
+    "forward_only": true,
+    "edge_construction_timed": false,
+    "training_or_accuracy_inferred": false,
+    "domain_generalization_inferred": false
+  }
+}

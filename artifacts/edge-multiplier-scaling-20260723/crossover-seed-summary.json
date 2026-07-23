@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "run_id": "edge-multiplier-scaling-20260723",
+  "nodes": 8192,
+  "seeds": [20260723, 20260724, 20260725],
+  "model_seed": 20260723,
+  "model_state_sha256": {
+    "ec_lgl": "ca01fb66a20993511f011620152b37cf8876bdc03fb70ac7227497a953c3049e",
+    "static_egnn": "01315e6dd010cf0a7d6a56f27662702200a1800bbf37bff641ea1019da5ec760"
+  },
+  "warmup": 10,
+  "repeats_per_model_per_cell": 31,
+  "graph_generator": "seeded_exact_receiver_regular_directed",
+  "source_artifacts": [
+    "gpu-crossover-confirm.json",
+    "gpu-crossover-seed-20260724.json",
+    "gpu-crossover-seed-20260725.json"
+  ],
+  "cells": [
+    {
+      "edge_multiplier": 32,
+      "candidate_edges_including_self": 262144,
+      "ec_lgl_median_ms_mean": 8.614916985000795,
+      "ec_lgl_median_ms_range": [8.613494981545955, 8.616933977464214],
+      "static_egnn_median_ms_mean": 5.4001463383125765,
+      "static_egnn_median_ms_range": [5.394050007453188, 5.405712989158928],
+      "latency_ratio_mean": 1.5953132475632676,
+      "latency_ratio_range": [1.5934059020188793, 1.5974887080315958],
+      "ec_lgl_faster_seed_count": 0
+    },
+    {
+      "edge_multiplier": 64,
+      "candidate_edges_including_self": 524288,
+      "ec_lgl_median_ms_mean": 11.40827099637439,
+      "ec_lgl_median_ms_range": [11.39653500285931, 11.42627900117077],
+      "static_egnn_median_ms_mean": 11.559012006424988,
+      "static_egnn_median_ms_range": [11.538218008354306, 11.575857002753764],
+      "latency_ratio_mean": 0.9869607974732401,
+      "latency_ratio_range": [0.9845089655261121, 0.9881941021427582],
+      "ec_lgl_faster_seed_count": 3
+    },
+    {
+      "edge_multiplier": 128,
+      "candidate_edges_including_self": 1048576,
+      "ec_lgl_median_ms_mean": 17.126744001870975,
+      "ec_lgl_median_ms_range": [17.121801007306203, 17.13384100003168],
+      "static_egnn_median_ms_mean": 25.364611676195636,
+      "static_egnn_median_ms_range": [25.275850028265268, 25.46998401521705],
+      "latency_ratio_mean": 0.6752282099736294,
+      "latency_ratio_range": [0.6727071752300693, 0.6775079761560975],
+      "ec_lgl_faster_seed_count": 3
+    }
+  ],
+  "seed_20260723_local_high_density_fit": {
+    "ec_lgl_slope_ms_per_million_candidate_edges": 10.831891494866854,
+    "static_egnn_slope_ms_per_million_candidate_edges": 25.41265000020689,
+    "slope_ratio": 0.4262401400396522,
+    "ec_lgl_r_squared": 0.9999558759781988,
+    "static_egnn_r_squared": 0.9992760890883734,
+    "descriptive_fitted_crossover_edges": 495886.7174658627,
+    "descriptive_fitted_crossover_multiplier": 60.53304656565707,
+    "caution": "The static-EGNN intercept is negative, so this line is descriptive only over k=32,64,128 and must not be extrapolated to E=0."
+  },
+  "interpretation": "With model initialization fixed and only graph topology varied, the measured k=64 crossover reproduced for all three registered graph seeds, but its advantage is only 1.2-1.5%; k=128 is the robust high-density win in this packet."
+}
