@@ -40,6 +40,21 @@ def _inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return node_feats, pos, batch, edge_index
 
 
+def _constant_sender_transport() -> moment._GatedEquivariantLocalTransport:
+    transport = moment._GatedEquivariantLocalTransport(
+        scalars=4,
+        vectors=1,
+        num_heads=1,
+        num_rbf=4,
+        eps=1e-12,
+    ).double()
+    with torch.no_grad():
+        for parameter in transport.parameters():
+            parameter.zero_()
+        transport.edge_mlp[-1].bias[transport.head_dim + 2] = 1.0
+    return transport
+
+
 def test_gated_local_defaults_are_exactly_backward_compatible() -> None:
     torch.manual_seed(2401)
     default = _model()
@@ -190,6 +205,97 @@ def test_gated_local_is_output_and_gradient_continuous_at_cutoff() -> None:
         atol=2e-3,
         rtol=2e-3,
     )
+
+
+def test_gated_local_singleton_message_attenuates_to_cutoff_with_finite_gradients() -> (
+    None
+):
+    transport = _constant_sender_transport()
+    scalars = torch.zeros(2, 4, dtype=torch.float64)
+    vectors = torch.zeros(2, 1, 3, dtype=torch.float64)
+    vectors[1, 0, 0] = 1.0
+    batch = torch.zeros(2, dtype=torch.long)
+    edge_index = torch.tensor([[0, 1, 0], [0, 1, 1]])
+    ratios = (0.5, 0.7, 0.9, 0.95, 0.99, 1.0)
+    observed: list[float] = []
+
+    for ratio in ratios:
+        pos = torch.tensor(
+            [[0.0, 0.0, 0.0], [2.5 * ratio, 0.0, 0.0]],
+            dtype=torch.float64,
+            requires_grad=True,
+        )
+        geometry = moment._local_geometry(
+            pos,
+            batch,
+            num_graphs=1,
+            cutoff=2.5,
+            num_rbf=4,
+            edge_index=edge_index,
+        )
+        vector_message = transport(
+            scalars,
+            vectors,
+            geometry,
+            num_nodes=2,
+        )[1]
+        magnitude = vector_message[0, 0, 0]
+        gradient = torch.autograd.grad(magnitude, pos)[0]
+        cutoff = moment._cosine_of_squared_distance_cutoff(
+            torch.tensor(ratio**2, dtype=torch.float64)
+        )
+        expected = torch.tanh(torch.tensor(1.0, dtype=torch.float64))
+        expected = expected * cutoff / torch.sqrt(1.0 + cutoff)
+
+        assert torch.allclose(magnitude, expected, atol=1e-12, rtol=1e-11)
+        assert torch.isfinite(vector_message).all()
+        assert torch.isfinite(gradient).all()
+        observed.append(magnitude.detach().item())
+
+    assert all(left > right for left, right in zip(observed, observed[1:]))
+    assert observed[-1] == 0.0
+
+
+@pytest.mark.parametrize("degree", [1, 2, 4, 8])
+def test_gated_local_unit_weight_neighbors_scale_as_soft_mass(
+    degree: int,
+) -> None:
+    transport = _constant_sender_transport()
+    num_nodes = degree + 1
+    scalars = torch.zeros(num_nodes, 4, dtype=torch.float64)
+    vectors = torch.zeros(num_nodes, 1, 3, dtype=torch.float64)
+    vectors[1:, 0, 0] = 1.0
+    pos = torch.zeros(num_nodes, 3, dtype=torch.float64)
+    batch = torch.zeros(num_nodes, dtype=torch.long)
+    nodes = torch.arange(num_nodes)
+    edge_index = torch.stack(
+        [
+            torch.cat([nodes, torch.zeros(degree, dtype=torch.long)]),
+            torch.cat([nodes, torch.arange(1, num_nodes)]),
+        ]
+    )
+    geometry = moment._local_geometry(
+        pos,
+        batch,
+        num_graphs=1,
+        cutoff=2.5,
+        num_rbf=4,
+        edge_index=edge_index,
+    )
+
+    vector_message = transport(
+        scalars,
+        vectors,
+        geometry,
+        num_nodes=num_nodes,
+    )[1]
+    expected = (
+        degree
+        * torch.tanh(torch.tensor(1.0, dtype=torch.float64))
+        / torch.sqrt(torch.tensor(1.0 + degree, dtype=torch.float64))
+    )
+
+    assert torch.allclose(vector_message[0, 0, 0], expected, atol=1e-12, rtol=1e-11)
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,61 @@
+{
+  "packet_id": "hybrid-local-global-20260724/soft-normalization-v2",
+  "status": "completed",
+  "soft_normalization": {
+    "cutoff_mass": "C_i = sum_j f_c(u_ij)",
+    "formula": "sum_j f_c(u_ij) message_ij / sqrt(1 + C_i)",
+    "squared_cutoff_role": "diagnostic feature only where applicable",
+    "singleton_attenuation_verified": true,
+    "unit_weight_degree_scaling_verified": "d / sqrt(1 + d)",
+    "finite_cutoff_coordinate_gradients_verified": true,
+    "zero_edge_reduction_verified": true,
+    "cuda_bfloat16_interaction_forward_backward_verified": true
+  },
+  "qm9_screen": {
+    "target": "gap",
+    "unit": "eV",
+    "seed": 42,
+    "steps": 500,
+    "test_evaluated": false,
+    "common_base_initial_state_sha256": "fbd65bda6d83ab34477d8abd2a199a4069c7b3023987b21317a3d516ec9feff5",
+    "arms": {
+      "incumbent": {
+        "val_mae": 0.7092869794845581,
+        "parameter_count": 153285,
+        "clip_fraction": 0.91,
+        "mean_pre_clip_grad_norm": 5.4347735340595245,
+        "peak_cuda_memory_bytes": 180059136
+      },
+      "grouped": {
+        "val_mae": 0.7375260040283204,
+        "parameter_count": 153285,
+        "clip_fraction": 0.91,
+        "mean_pre_clip_grad_norm": 4.824713386595249,
+        "peak_cuda_memory_bytes": 181526528
+      },
+      "gated": {
+        "val_mae": 0.6838421976089477,
+        "parameter_count": 160559,
+        "clip_fraction": 0.88,
+        "mean_pre_clip_grad_norm": 4.507073836624622,
+        "peak_cuda_memory_bytes": 207725056
+      },
+      "gated_grouped": {
+        "val_mae": 0.6476373584747315,
+        "parameter_count": 160559,
+        "clip_fraction": 0.908,
+        "mean_pre_clip_grad_norm": 5.15225801306963,
+        "peak_cuda_memory_bytes": 209174016
+      }
+    },
+    "gated_only_improvement_vs_incumbent": 0.02544478187561039,
+    "combined_improvement_vs_incumbent": 0.06164962100982663,
+    "grouped_effect_without_gated": -0.02823902454376226,
+    "grouped_improvement_on_gated": 0.03620483913421624,
+    "factorial_interaction_improvement": 0.0644438636779785,
+    "combined_improvement_over_grouped": 0.08988864555358889,
+    "selected_arm": "gated_grouped",
+    "selection_reason": "combined interaction exceeds the registered 0.010 eV margin"
+  },
+  "claim_boundary": "single-seed validation architecture screen; no multi-seed, test, or generalization claim"
+}

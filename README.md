@@ -120,8 +120,10 @@ Its per-head edge MLP sees the current receiver/sender scalar states, existing
 RBF distances, and invariant contractions of the current vectors with each
 other and the relative direction. It emits gated scalar, receiver-vector,
 sender-vector, relative-vector, and symmetric-traceless rank-2 messages,
-aggregates them using the smooth effective degree
-`sum(f_cutoff**2)`, and exposes smooth cutoff mass/effective degree explicitly.
+aggregates them as `sum(f_cutoff * message) / sqrt(1 + sum(f_cutoff))`, and
+exposes smooth cutoff mass/effective degree explicitly. The squared-cutoff
+statistic remains a learned diagnostic rather than the divisor, so a singleton
+message still decays to zero at the radial boundary.
 `use_grouped_invariant_normalization=True`
 separately standardizes scalar-message, angular, and persistent-tensor
 invariant families before their existing shared update. Both switches are

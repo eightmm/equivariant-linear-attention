@@ -199,7 +199,9 @@ def test_run_config_records_pairwise_local_content_and_mass_contract() -> None:
     assert config["pairwise_local_formula"] == (
         "shared_receiver_sender_rbf_mlp_plus_degree_and_cutoff_mass"
     )
-    assert config["pairwise_local_aggregation"] == "cutoff_sum_over_sqrt_degree"
+    assert config["pairwise_local_aggregation"] == (
+        "cutoff_sum_over_sqrt_one_plus_cutoff_mass"
+    )
     assert model.config.use_pairwise_local_content is True
     assert config["pairwise_residual_scale_init"] == 0.1
     assert any("local_pairwise_content" in name for name, _ in model.named_parameters())
@@ -233,7 +235,7 @@ def test_run_config_records_edge_conditioned_degree_normalization() -> None:
 
     assert config["edge_conditioned_local_transport"] is True
     assert config["edge_conditioned_local_aggregation"] == (
-        "cutoff_sum_over_sqrt_receiver_degree"
+        "cutoff_sum_over_sqrt_one_plus_cutoff_mass"
     )
     assert model.config.normalize_edge_conditioned_local_by_sqrt_degree is True
 
@@ -254,7 +256,7 @@ def test_run_config_records_gated_local_and_grouped_normalization() -> None:
 
     assert config["gated_local_transport"] is True
     assert config["gated_local_aggregation"] == (
-        "cutoff_sum_over_sqrt_degree_plus_explicit_mass"
+        "cutoff_sum_over_sqrt_one_plus_cutoff_mass_plus_explicit_mass"
     )
     assert config["grouped_invariant_normalization"] is True
     assert model.config.use_gated_local_transport is True

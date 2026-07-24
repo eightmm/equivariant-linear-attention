@@ -1954,7 +1954,7 @@ def _run_config(
         "learn_local_radial_gate": args.learn_local_radial_gate,
         "edge_conditioned_local_transport": (args.edge_conditioned_local_transport),
         "edge_conditioned_local_aggregation": (
-            "cutoff_sum_over_sqrt_receiver_degree"
+            "cutoff_sum_over_sqrt_one_plus_cutoff_mass"
             if args.edge_conditioned_local_sqrt_degree
             else (
                 "cutoff_sum"
@@ -1969,7 +1969,7 @@ def _run_config(
             else "not_applicable"
         ),
         "gated_local_aggregation": (
-            "cutoff_sum_over_sqrt_degree_plus_explicit_mass"
+            "cutoff_sum_over_sqrt_one_plus_cutoff_mass_plus_explicit_mass"
             if args.gated_local_transport
             else "not_applicable"
         ),
@@ -1988,7 +1988,7 @@ def _run_config(
             else "not_applicable"
         ),
         "pairwise_local_aggregation": (
-            "cutoff_sum_over_sqrt_degree"
+            "cutoff_sum_over_sqrt_one_plus_cutoff_mass"
             if args.pairwise_local_content
             else "not_applicable"
         ),

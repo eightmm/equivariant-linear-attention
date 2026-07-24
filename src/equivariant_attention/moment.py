@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite, sqrt
+from math import isfinite, prod, sqrt
 import warnings
 
 import torch
@@ -1146,7 +1146,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
                 vector_base,
                 relative,
                 tensor,
-                effective_degree,
+                cutoff_mass,
             ) = _fused_index_sum(
                 receiver,
                 num_nodes,
@@ -1154,13 +1154,13 @@ class _EdgeConditionedLocalTransport(nn.Module):
                 vector_edge_message,
                 relative_edge_message,
                 tensor_edge_message,
-                cutoff.square().unsqueeze(-1),
+                cutoff.unsqueeze(-1),
             )
-            inverse_sqrt_degree = (effective_degree.squeeze(-1) + self.eps).rsqrt()
-            scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
-            vector_base = vector_base * inverse_sqrt_degree[:, None, None]
-            relative = relative * inverse_sqrt_degree[:, None, None]
-            tensor = tensor * inverse_sqrt_degree[:, None, None]
+            inverse_sqrt_mass = (1.0 + cutoff_mass.squeeze(-1)).rsqrt()
+            scalar_message = scalar_message * inverse_sqrt_mass[:, None, None]
+            vector_base = vector_base * inverse_sqrt_mass[:, None, None]
+            relative = relative * inverse_sqrt_mass[:, None, None]
+            tensor = tensor * inverse_sqrt_mass[:, None, None]
         else:
             scalar_message, vector_base, relative, tensor = _fused_index_sum(
                 receiver,
@@ -1292,11 +1292,11 @@ class _GatedEquivariantLocalTransport(nn.Module):
         )
         cutoff_mass = cutoff_mass.squeeze(-1)
         effective_degree = effective_degree.squeeze(-1)
-        inverse_sqrt_degree = (effective_degree + self.eps).rsqrt()
-        scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
-        vector_base = vector_base * inverse_sqrt_degree[:, None, None]
-        relative = relative * inverse_sqrt_degree[:, None, None]
-        tensor = tensor * inverse_sqrt_degree[:, None, None]
+        inverse_sqrt_mass = (1.0 + cutoff_mass).rsqrt()
+        scalar_message = scalar_message * inverse_sqrt_mass[:, None, None]
+        vector_base = vector_base * inverse_sqrt_mass[:, None, None]
+        relative = relative * inverse_sqrt_mass[:, None, None]
+        tensor = tensor * inverse_sqrt_mass[:, None, None]
 
         scalar_message = _stable_layer_norm(
             self.scalar_message_norm,
@@ -1374,7 +1374,7 @@ class _LocalPairwiseContent(nn.Module):
         )
         cutoff_mass = cutoff_mass.squeeze(-1)
         effective_degree = effective_degree.squeeze(-1)
-        normalized = aggregated / (effective_degree + self.eps).sqrt()[:, None, None]
+        normalized = aggregated / (1.0 + cutoff_mass).sqrt()[:, None, None]
         mass_features = torch.stack(
             [torch.log1p(cutoff_mass), torch.log1p(effective_degree)],
             dim=-1,
@@ -1435,7 +1435,9 @@ class _InteractionReadout(nn.Module):
             batch,
             num_graphs=num_graphs,
         )
-        node_state = _stable_layer_norm(self.node_norm, scalars)
+        node_state = _stable_layer_norm(self.node_norm, scalars).to(
+            dtype=scalars.dtype
+        )
         entity_state = self.entity_projection(node_state)
         ligand_pool = _scatter_mean(
             entity_state[ligand_mask],
@@ -1497,16 +1499,16 @@ class _InteractionReadout(nn.Module):
             )
             edge_direction = displacement.to(dtype=reduction_dtype)
             cross_batch = batch[receiver]
-            cross_pool, polar_moments, effective_mass = _fused_index_sum(
+            cross_pool, polar_moments, cutoff_mass = _fused_index_sum(
                 cross_batch,
                 num_graphs,
                 cutoff[:, None] * cross_content.to(dtype=reduction_dtype),
                 cutoff[:, None, None]
                 * torch.tanh(polar_gate).to(dtype=reduction_dtype).unsqueeze(-1)
                 * edge_direction.unsqueeze(1),
-                cutoff.square().unsqueeze(-1),
+                cutoff.unsqueeze(-1),
             )
-            inverse_mass = (effective_mass.squeeze(-1) + self.eps).rsqrt()
+            inverse_mass = (1.0 + cutoff_mass.squeeze(-1)).rsqrt()
             cross_pool = cross_pool * inverse_mass[:, None]
             polar_moments = polar_moments * inverse_mass[:, None, None]
 
@@ -1520,7 +1522,10 @@ class _InteractionReadout(nn.Module):
             ],
             dim=-1,
         )
-        hidden = self.context(_stable_layer_norm(self.context_norm, context))
+        context_state = _stable_layer_norm(self.context_norm, context).to(
+            dtype=scalars.dtype
+        )
+        hidden = self.context(context_state)
         return self.output(hidden)
 
 
@@ -1851,7 +1856,7 @@ def _fused_index_sum(
     if any(value.shape[0] != edge_count for value in values):
         raise ValueError("all fused values must share the index length")
     shapes = [value.shape[1:] for value in values]
-    widths = [value.reshape(edge_count, -1).shape[1] for value in values]
+    widths = [prod(shape) for shape in shapes]
     packed = torch.cat(
         [value.reshape(edge_count, width) for value, width in zip(values, widths)],
         dim=-1,

@@ -26,11 +26,16 @@ under coordinate updates, and affinity readout that ignored the pocket except
 through the backbone. Automatic GitHub Actions runs were also removed; the
 workflow is manual-only.
 
-The gated, normalized edge-conditioned, and pairwise local paths now use
-`S_i=sum_j f_c(u_ij)^2` for normalization and smooth mass features. Gated local
-message families and their two mass statistics share one packed receiver
-reduction. A matched full-train-step CUDA profiler used the exact same graph,
-model seed, and initial-state hash on base commit `626275a` and the follow-up:
+The first follow-up used `S_i=sum_j f_c(u_ij)^2` as the divisor and as a smooth
+mass feature. A later review exposed that, for a singleton edge, this makes
+`f_c/sqrt(f_c^2+eps)` almost constant and therefore cancels the intended radial
+attenuation. Soft-normalization v2 supersedes only that divisor with
+`sqrt(1 + C_i)`, `C_i=sum_j f_c(u_ij)`, while retaining the squared statistic
+as a learned diagnostic where applicable. Gated local message families and
+their two mass statistics still share one packed receiver reduction. The
+original matched full-train-step CUDA profiler used the exact same graph,
+model seed, and initial-state hash on base commit `626275a` and the first
+follow-up:
 
 | implementation | `aten::index_add` calls / 3 steps | forward device time | peak CUDA allocation |
 |---|---:|---:|---:|
@@ -66,7 +71,63 @@ default. This run establishes wiring and optimization behavior only; it says
 nothing about affinity generalization or chirality benefit. Raw outputs and
 the frozen scope are in `artifacts/model-feedback-followup-20260724/`.
 
+## Soft-normalization v2 and 2x2 attribution (2026-07-24)
+
+The second feedback pass found a stronger defect in the first smooth
+normalizer: with one retained edge,
+`f_c/sqrt(f_c^2+eps)` is approximately one over almost the entire radial
+interval. The cutoff therefore stopped selecting distance even though value
+and derivative continuity at the endpoint still passed. The corrected local
+and interaction aggregation is
+
+```text
+C_i = sum_j f_c(u_ij),
+m_i = sum_j f_c(u_ij) phi_ij / sqrt(1 + C_i).
+```
+
+The gated and pairwise paths retain `sum_j f_c(u_ij)^2` only as an explicit
+smooth concentration feature. A deterministic singleton sweep at cutoff ratios
+`0.5, 0.7, 0.9, 0.95, 0.99, 1.0` now decreases monotonically to exactly zero
+with finite coordinate gradients. Equal unit-weight messages scale as
+`d/sqrt(1+d)`. The packed zero-edge reducer was also repaired for the exact
+cutoff case. Stable-normalized interaction states are cast back to the model
+dtype before their linear projections; direct CUDA bfloat16 forward/backward
+is finite.
+
+The corrected strict-CUDA QM9 `gap` screen used the same seed 42, 500 updates,
+cached 110,000/10,000 random-row split, identical raw features and candidates,
+and no test evaluation. All four arms share one common-base initialization
+hash:
+
+| gated | grouped | parameters | validation MAE | delta vs incumbent | mean pre-clip norm | clipped | peak CUDA |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| off | off | 153,285 | 0.709287 eV | 0 | 5.435 | 455/500 | 180.1 MB |
+| off | on | 153,285 | 0.737526 eV | +0.028239 eV | 4.825 | 455/500 | 181.5 MB |
+| on | off | 160,559 | 0.683842 eV | -0.025445 eV | 4.507 | 440/500 | 207.7 MB |
+| on | on | 160,559 | 0.647637 eV | -0.061650 eV | 5.152 | 454/500 | 209.2 MB |
+
+Grouped normalization alone regressed, while the corrected gated transport
+alone improved. Adding grouped normalization on top of gated transport improved
+another `0.036205 eV`; the 2x2 difference-in-differences corresponds to a
+`0.064444 eV` favorable interaction. Combined beat grouped-only by
+`0.089889 eV`, well above the registered `0.010 eV` interaction threshold.
+The earlier interpretation that the package gain might be grouped-only is
+therefore rejected on this screen. The combined arm remains the selected
+candidate, now with component attribution; it is still opt-in because this is
+one short validation seed and not a multi-seed or test result.
+
+The emitted gated-arm `run_config` used the pre-correction descriptive string
+`cutoff_sum_over_sqrt_degree_plus_explicit_mass`, although the hashed executed
+source already used `sqrt(1+C)`. The label is corrected in subsequent source;
+the raw record is retained unchanged and the evidence-only correction is
+documented beside it. Scope, raw arms, and summary are in
+`artifacts/hybrid-local-global-20260724/soft-normalization-v2/`.
+
 ## Same-feature gated hybrid outcome (2026-07-24)
+
+This is the retained historical result under the first `sqrt(sum f_c^2)`
+divisor. The corrected 2x2 screen above supersedes it for current-model
+selection, but the original outcome remains part of the experiment record.
 
 This packet held raw node features, coordinates, targets, split, optimizer,
 readout, and sparse candidates fixed. The candidate changed only learned

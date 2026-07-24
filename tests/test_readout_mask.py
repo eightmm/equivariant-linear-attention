@@ -258,6 +258,44 @@ def test_interaction_readout_requires_ligand_and_pocket_roles() -> None:
         )
 
 
+def test_interaction_readout_supports_direct_bfloat16_forward_and_backward() -> None:
+    batch = collate_graphs(_samples()).to("cpu", dtype=torch.bfloat16)
+    assert batch.readout_mask is not None
+    module = moment._InteractionReadout(
+        scalars=12,
+        output_scalars=2,
+        num_rbf=8,
+        cutoff=2.5,
+        eps=1e-8,
+    ).to(dtype=torch.bfloat16)
+    with torch.no_grad():
+        module.output.weight.normal_()
+    scalars = torch.randn(
+        batch.node_feats.shape[0],
+        12,
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    graph_counts = torch.bincount(batch.batch, minlength=2)
+
+    output = module(
+        scalars,
+        batch.pos.float(),
+        batch.batch,
+        batch.readout_mask,
+        num_graphs=2,
+        graph_counts=graph_counts,
+        edge_index=None,
+        edge_index_is_validated=False,
+    )
+    output.float().square().sum().backward()
+
+    assert output.dtype == torch.bfloat16
+    assert torch.isfinite(output).all()
+    assert scalars.grad is not None
+    assert torch.isfinite(scalars.grad).all()
+
+
 def test_parity_even_triple_features_preserve_global_reflection() -> None:
     torch.manual_seed(1703)
     polar_moments = torch.randn(4, 6, 3, dtype=torch.float64)

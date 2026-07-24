@@ -225,3 +225,46 @@ def test_pairwise_local_content_is_continuous_at_cutoff() -> None:
         atol=2e-3,
         rtol=2e-3,
     )
+
+
+def test_pairwise_singleton_content_uses_cutoff_mass_and_attenuates() -> None:
+    module = moment._LocalPairwiseContent(
+        head_dim=4,
+        num_rbf=4,
+        residual_scale_init=1.0,
+        eps=1e-12,
+    ).double()
+    with torch.no_grad():
+        for parameter in module.parameters():
+            parameter.zero_()
+        module.edge_mlp[-1].bias.fill_(1.0)
+        module.residual_scale.fill_(1.0)
+    query = torch.zeros(2, 1, 4, dtype=torch.float64)
+    key = torch.zeros(2, 1, 4, dtype=torch.float64)
+    batch = torch.zeros(2, dtype=torch.long)
+    edge_index = torch.tensor([[0, 1, 0], [0, 1, 1]])
+
+    for ratio in (0.5, 0.7, 0.9, 0.95, 0.99, 1.0):
+        pos = torch.tensor(
+            [[0.0, 0.0, 0.0], [2.5 * ratio, 0.0, 0.0]],
+            dtype=torch.float64,
+            requires_grad=True,
+        )
+        geometry = moment._local_geometry(
+            pos,
+            batch,
+            num_graphs=1,
+            cutoff=2.5,
+            num_rbf=4,
+            edge_index=edge_index,
+        )
+        output = module(query, key, geometry, num_nodes=2)
+        gradient = torch.autograd.grad(output.sum(), pos)[0]
+        cutoff = moment._cosine_of_squared_distance_cutoff(
+            torch.tensor(ratio**2, dtype=torch.float64)
+        )
+        expected = cutoff / torch.sqrt(1.0 + cutoff)
+
+        assert torch.allclose(output[0], expected.expand_as(output[0]), atol=1e-12)
+        assert torch.isfinite(output).all()
+        assert torch.isfinite(gradient).all()

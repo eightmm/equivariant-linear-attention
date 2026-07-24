@@ -2,14 +2,35 @@
 
 ## Status
 
-- Model-feedback follow-up implemented on 2026-07-24. Automatic GitHub Actions
+- Soft-normalization v2 was implemented and screened on 2026-07-24. The
+  previous divisor `sqrt(sum_j f_c^2 + eps)` cancelled radial attenuation for
+  a singleton edge. Normalized edge-conditioned, gated, pairwise, and
+  interaction aggregations now use
+  `sum_j f_c message / sqrt(1 + sum_j f_c)`; the squared-cutoff statistic is
+  retained only as an explicit concentration feature where applicable. Exact
+  cutoff zero-edge reduction and direct BF16 interaction-readout dtype handling
+  are also repaired. Singleton radial sweeps, `d/sqrt(1+d)` scaling, finite
+  coordinate gradients, affected symmetry suites, and direct CUDA BF16
+  forward/backward pass.
+- The strict seed-42/500-update QM9 2x2 attribution screen gave validation MAE
+  `0.709287/0.737526/0.683842/0.647637 eV` for
+  incumbent/grouped-only/gated-only/gated-plus-grouped. Grouped-only regressed,
+  corrected gated-only improved by `0.025445 eV`, and the combined arm improved
+  by `0.061650 eV` at `1.04745x` parameters. Adding grouped normalization on
+  the gated path improved another `0.036205 eV`, with a favorable factorial
+  interaction of `0.064444 eV`; therefore the earlier grouped-only alternative
+  is rejected for this screen. The combined arm remains opt-in pending
+  multi-seed confirmation. Test labels were not evaluated. Evidence is in
+  `artifacts/hybrid-local-global-20260724/soft-normalization-v2/`.
+- The first model-feedback follow-up was implemented on 2026-07-24. Automatic
+  GitHub Actions
   triggers are disabled; the CPU workflow is available only through manual
   `workflow_dispatch`, while `scripts/check.sh fast` remains the local release
-  gate. The gated, normalized edge-conditioned, and pairwise local paths now
-  normalize with smooth effective degree `sum_j f_c(u_ij)^2` and expose only
-  smooth cutoff statistics, removing the raw-degree discontinuity at the
-  cutoff. Their edge contributions are packed into one receiver reduction per
-  stage. Against base commit `626275a`, the matched CUDA profiler reduced
+  gate. That version normalized gated, normalized edge-conditioned, and
+  pairwise local paths with smooth effective degree `sum_j f_c(u_ij)^2`; this
+  divisor is superseded by soft-normalization v2 above. Its edge contributions
+  were packed into one receiver reduction per stage. Against base commit
+  `626275a`, the matched CUDA profiler reduced
   `aten::index_add` calls from 75 to 45 over three train steps; forward device
   time and peak allocation changed by `+2.3%/+3.3%`, so this is a launch-count
   reduction, not a demonstrated latency or memory win.

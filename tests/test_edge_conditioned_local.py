@@ -116,7 +116,7 @@ def test_edge_conditioned_sum_matches_explicit_dense_reference() -> None:
         assert torch.allclose(observed, reference, atol=1e-12, rtol=1e-11)
 
 
-def test_edge_conditioned_soft_degree_matches_explicit_receiver_reference() -> None:
+def test_edge_conditioned_soft_mass_matches_explicit_receiver_reference() -> None:
     torch.manual_seed(1212)
     baseline = moment._EdgeConditionedLocalTransport(
         scalars=8,
@@ -158,15 +158,15 @@ def test_edge_conditioned_soft_degree_matches_explicit_receiver_reference() -> N
     nonself = receiver != sender
     receiver = receiver[nonself]
     cutoff = moment._cosine_of_squared_distance_cutoff(squared_distance[nonself])
-    effective_degree = cutoff.new_zeros(4).index_add(
+    cutoff_mass = cutoff.new_zeros(4).index_add(
         0,
         receiver,
-        cutoff.square(),
+        cutoff,
     )
 
     for raw, observed in zip(raw_outputs, actual, strict=True):
         divisor = (
-            (effective_degree + normalized.eps)
+            (1.0 + cutoff_mass)
             .sqrt()
             .reshape(4, *((1,) * (raw.ndim - 1)))
         )

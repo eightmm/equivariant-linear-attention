@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the frozen same-feature QM9 screen for gated local/global attention."""
+"""Run the frozen same-feature QM9 gated x grouped attribution screen."""
 
 from __future__ import annotations
 
@@ -17,14 +17,17 @@ import time
 from collections.abc import Mapping, Sequence
 
 
-PACKET_ID = "hybrid-local-global-20260724"
+PACKET_ID = "hybrid-local-global-20260724/soft-normalization-v2"
 MAX_STEPS = 500
 MAX_GPU_SECONDS = 300.0
 MINIMUM_IMPROVEMENT_EV = 0.010
 MAXIMUM_REGRESSION_EV = 0.020
 MAXIMUM_PARAMETER_RATIO = 1.05
+GROUPED_SIMPLICITY_TOLERANCE_EV = 0.005
+COMBINED_INTERACTION_MARGIN_EV = 0.010
 ARMS = {
     "incumbent": (),
+    "grouped": ("--grouped-invariant-normalization",),
     "gated": ("--gated-local-transport",),
     "gated_grouped": (
         "--gated-local-transport",
@@ -132,6 +135,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "minimum_improvement_eV": MINIMUM_IMPROVEMENT_EV,
         "maximum_regression_eV": MAXIMUM_REGRESSION_EV,
         "maximum_parameter_ratio": MAXIMUM_PARAMETER_RATIO,
+        "grouped_simplicity_tolerance_eV": GROUPED_SIMPLICITY_TOLERANCE_EV,
+        "combined_interaction_margin_eV": COMBINED_INTERACTION_MARGIN_EV,
         "test_evaluated": False,
         "commands": commands,
     }
@@ -152,6 +157,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _validate_record(record, arm=arm, steps=args.steps)
         records[arm] = record
 
+    paired_base_hashes = {
+        str(record["paired_base_initial_state_sha256"]) for record in records.values()
+    }
+    if len(paired_base_hashes) != 1:
+        raise RuntimeError("QM9 arms do not share a common base initialization")
     decision = screen_decision(records)
     summary = {
         **plan,
@@ -167,6 +177,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "clip_fraction": record["gradient_clipping"]["clip_fraction"],
                 "mean_pre_clip_grad_norm": record["gradient_clipping"][
                     "pre_clip_grad_norm_mean"
+                ],
+                "max_pre_clip_grad_norm": record["gradient_clipping"][
+                    "pre_clip_grad_norm_max"
                 ],
                 "initial_state_sha256": record["initial_state_sha256"],
                 "paired_base_initial_state_sha256": record[
@@ -191,7 +204,7 @@ def screen_decision(
     incumbent_mae = float(incumbent["val_mae"])
     incumbent_parameters = int(incumbent["parameter_count"])
     candidates: list[dict[str, object]] = []
-    for arm in ("gated", "gated_grouped"):
+    for arm in ("grouped", "gated", "gated_grouped"):
         record = records[arm]
         mae = float(record["val_mae"])
         delta = mae - incumbent_mae
@@ -224,6 +237,29 @@ def screen_decision(
     diagnostic_selected = (
         min(diagnostic, key=lambda item: item["val_mae_eV"]) if diagnostic else None
     )
+    grouped_mae = float(records["grouped"]["val_mae"])
+    gated_mae = float(records["gated"]["val_mae"])
+    combined_mae = float(records["gated_grouped"]["val_mae"])
+    combined_improvement_over_grouped = grouped_mae - combined_mae
+    combined_improvement_over_gated = gated_mae - combined_mae
+    factorial_interaction_improvement = -(
+        combined_mae - gated_mae - grouped_mae + incumbent_mae
+    )
+    grouped_within_simplicity_tolerance = (
+        grouped_mae - combined_mae <= GROUPED_SIMPLICITY_TOLERANCE_EV
+    )
+    combined_interaction_supported = (
+        combined_improvement_over_grouped >= COMBINED_INTERACTION_MARGIN_EV
+    )
+    if grouped_within_simplicity_tolerance:
+        attribution_status = "grouped_only_preferred"
+        attribution_selected_arm = "grouped"
+    elif combined_interaction_supported:
+        attribution_status = "combined_interaction_supported"
+        attribution_selected_arm = "gated_grouped"
+    else:
+        attribution_status = "inconclusive_between_grouped_and_combined"
+        attribution_selected_arm = None
     return {
         "incumbent_val_mae_eV": incumbent_mae,
         "candidates": candidates,
@@ -232,6 +268,19 @@ def screen_decision(
             None if diagnostic_selected is None else diagnostic_selected["arm"]
         ),
         "promotion_screen_passed": selected is not None,
+        "grouped_val_mae_eV": grouped_mae,
+        "combined_val_mae_eV": combined_mae,
+        "combined_improvement_over_grouped_eV": (
+            combined_improvement_over_grouped
+        ),
+        "combined_improvement_over_gated_eV": combined_improvement_over_gated,
+        "factorial_interaction_improvement_eV": factorial_interaction_improvement,
+        "grouped_within_simplicity_tolerance": (
+            grouped_within_simplicity_tolerance
+        ),
+        "combined_interaction_supported": combined_interaction_supported,
+        "attribution_status": attribution_status,
+        "attribution_selected_arm": attribution_selected_arm,
     }
 
 
@@ -250,8 +299,8 @@ def _validate_record(
     config = record.get("run_config")
     if not isinstance(config, Mapping):
         raise RuntimeError(f"{arm} is missing run_config")
-    expected_gated = arm != "incumbent"
-    expected_grouped = arm == "gated_grouped"
+    expected_gated = arm in {"gated", "gated_grouped"}
+    expected_grouped = arm in {"grouped", "gated_grouped"}
     expected = {
         "routing": "lgl",
         "precompute_local_edges": True,

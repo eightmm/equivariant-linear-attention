@@ -335,21 +335,24 @@ m^T_i = sum_j f_c(u_ij) tanh(g^T_ij) ST(d_ij).
 ```
 
 When `normalize_edge_conditioned_local_by_sqrt_degree` is enabled, let the
-smooth effective degree be
+smooth cutoff mass be
 
 ```text
-S_i = sum_j f_c(u_ij)^2.
+C_i = sum_j f_c(u_ij).
 ```
 
 Every message family above is replaced by
 
 ```text
-mtilde_i = m_i / sqrt(S_i + eps).
+mtilde_i = m_i / sqrt(1 + C_i).
 ```
 
-`S_i` is shared across heads and message types and introduces no learned
-parameter. Unlike a raw candidate count, it and its first coordinate derivative
-vanish continuously when an edge reaches the cutoff. The default remains the
+`C_i` is shared across heads and message types and introduces no learned
+parameter. The additive one keeps the divisor finite when all edges vanish and,
+critically, prevents a singleton factor `f_c` from cancelling against its own
+normalizer. Thus both the message and its first coordinate derivative vanish
+continuously when an edge reaches the cutoff. The historical public flag name
+is retained for checkpoint/CLI compatibility; the default remains the
 unnormalized sum.
 
 Self edges are excluded from these four sums because self information remains
@@ -400,18 +403,18 @@ be the smooth cutoff mass and effective degree. The equivariant aggregates are
 
 ```text
 m^0_ih = LN_h(
-    sum_j f_c(u_ij) sigmoid(g^s_ijh) a_ijh / sqrt(S_i + eps)
+    sum_j f_c(u_ij) sigmoid(g^s_ijh) a_ijh / sqrt(1 + C_i)
 ) + reshape_h(W_m [log(1 + C_i), log(1 + S_i)]),
 
 m^v_ih = sum_j f_c(u_ij) [
     tanh(g^i_ijh) v_ih + tanh(g^j_ijh) v_jh
-] / sqrt(S_i + eps),
+] / sqrt(1 + C_i),
 
 m^r_ih = sum_j f_c(u_ij) tanh(g^r_ijh) d_ij
-    / sqrt(S_i + eps),
+    / sqrt(1 + C_i),
 
 m^T_ih = sum_j f_c(u_ij) tanh(g^T_ijh) ST(d_ij)
-    / sqrt(S_i + eps).
+    / sqrt(1 + C_i).
 ```
 
 Every MLP input and gate is invariant under `O(3)`. Multiplying invariant
@@ -424,7 +427,10 @@ block. Scalar, vector, relative-vector, tensor, `C_i`, and `S_i` contributions
 are packed into one receiver `index_add` per gated local stage. This reduces
 scatter launch count but temporarily materializes the packed edge value; it is
 an implementation tradeoff rather than a claim of lower latency or memory on
-every graph.
+every graph. `S_i` remains an explicit smooth concentration diagnostic for the
+learned mass projection; it no longer controls message normalization. For `d`
+unit-weight equal messages the aggregate scales as `d/sqrt(1+d)`, while a
+singleton is attenuated as `f_c/sqrt(1+f_c)`.
 
 When `use_grouped_invariant_normalization` is enabled, define parameter-free
 last-axis standardization `G(x)`. Before the incumbent learned update
@@ -464,7 +470,7 @@ The added scalar message is
 
 ```text
 m_pair_ih = alpha (
-    sum_j f_c(u_ij) e_ijh / sqrt(s_i + eps)
+    sum_j f_c(u_ij) e_ijh / sqrt(1 + c_i)
     + W_mass [log(1+c_i), log(1+s_i)]
 ).
 ```
@@ -541,10 +547,10 @@ invariant edge MLP produces content `e_ij` and six gates `g_ija`. The
 cross-interface content and polar moments are
 
 ```text
-c_g = sum_(i<-j in cross_g) f_c(u_ij) e_ij / sqrt(S_g + eps),
+c_g = sum_(i<-j in cross_g) f_c(u_ij) e_ij / sqrt(1 + C_g),
 P_ga = sum_(i<-j in cross_g) f_c(u_ij) tanh(g_ija) d_ij
-       / sqrt(S_g + eps),
-S_g = sum_(i<-j in cross_g) f_c(u_ij)^2.
+       / sqrt(1 + C_g),
+C_g = sum_(i<-j in cross_g) f_c(u_ij).
 ```
 
 Two scalar triple products of the polar moments are pseudoscalars. The scalar
