@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -21,6 +22,64 @@ _TRAIN_FILES = (
     "data/train-00001-of-00002.parquet",
 )
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
+def segment_balanced_knn_edge_index(
+    pos: torch.Tensor,
+    segment_mask: torch.Tensor,
+    *,
+    intra_k: int,
+    cross_k: int,
+    cutoff: float,
+) -> torch.Tensor:
+    """Build self plus bounded same/cross-segment directed candidates."""
+    if pos.ndim != 2 or pos.shape[1] != 3:
+        raise ValueError("pos must have shape (N, 3)")
+    if pos.shape[0] == 0:
+        raise ValueError("pos must contain at least one node")
+    if not torch.is_floating_point(pos) or not bool(torch.isfinite(pos).all()):
+        raise ValueError("pos must be finite and floating point")
+    if segment_mask.dtype != torch.bool or segment_mask.shape != (pos.shape[0],):
+        raise ValueError("segment_mask must be boolean with shape (N,)")
+    if segment_mask.device != pos.device:
+        raise ValueError("segment_mask and pos must use the same device")
+    for name, value in (("intra_k", intra_k), ("cross_k", cross_k)):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{name} must be nonnegative")
+    if (
+        isinstance(cutoff, bool)
+        or not isinstance(cutoff, (int, float))
+        or not math.isfinite(float(cutoff))
+        or float(cutoff) <= 0.0
+    ):
+        raise ValueError("cutoff must be finite and positive")
+
+    distance = torch.cdist(pos, pos)
+    node_index = torch.arange(pos.shape[0], device=pos.device)
+    receivers: list[torch.Tensor] = []
+    senders: list[torch.Tensor] = []
+    for receiver in range(pos.shape[0]):
+        selected = [node_index.new_tensor([receiver])]
+        nonself = node_index != receiver
+        within = distance[receiver] < float(cutoff)
+        same_segment = segment_mask == segment_mask[receiver]
+        for relation_mask, maximum in (
+            (same_segment, intra_k),
+            (~same_segment, cross_k),
+        ):
+            candidates = node_index[nonself & within & relation_mask]
+            if maximum and candidates.numel():
+                candidate_distance = distance[receiver, candidates]
+                if candidates.numel() > maximum:
+                    boundary = torch.kthvalue(candidate_distance, maximum).values
+                    candidates = candidates[candidate_distance <= boundary]
+                selected.append(candidates)
+        sender = torch.cat(selected)
+        receivers.append(torch.full_like(sender, receiver))
+        senders.append(sender)
+    return torch.stack([torch.cat(receivers), torch.cat(senders)])
 
 
 def atom3d_lba_row_to_sample(

@@ -83,6 +83,8 @@ class EquivariantAttentionConfig:
     pairwise_residual_scale_init: float = 0.1
     use_edge_conditioned_local_transport: bool = False
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False
+    use_gated_local_transport: bool = False
+    use_grouped_invariant_normalization: bool = False
     scalar_content_mode: str = "unit"
     use_tensor_product_kernel: bool = False
     tensor_kernel_init: float = 0.05
@@ -123,6 +125,20 @@ class EquivariantAttention(nn.Module):
                     "edge-conditioned local transport requires each local stage "
                     "to use all heads"
                 )
+        if config.use_gated_local_transport:
+            if self.hidden_irreps.vectors != config.num_heads:
+                raise ValueError(
+                    "gated local transport requires hidden vector channels "
+                    "to equal num_heads"
+                )
+            if any(
+                local_heads not in {0, config.num_heads}
+                for local_heads in local_head_counts
+            ):
+                raise ValueError(
+                    "gated local transport requires each local stage "
+                    "to use all heads"
+                )
 
         self.scalar_in = nn.Linear(config.node_dim, self.hidden_irreps.scalars)
         self.global_scalar_in = nn.Linear(3, self.hidden_irreps.scalars, bias=False)
@@ -158,6 +174,10 @@ class EquivariantAttention(nn.Module):
                     ),
                     normalize_edge_conditioned_local_by_sqrt_degree=(
                         config.normalize_edge_conditioned_local_by_sqrt_degree
+                    ),
+                    use_gated_local_transport=config.use_gated_local_transport,
+                    use_grouped_invariant_normalization=(
+                        config.use_grouped_invariant_normalization
                     ),
                     scalar_content_mode=config.scalar_content_mode,
                     use_tensor_product_kernel=config.use_tensor_product_kernel,
@@ -444,6 +464,8 @@ class _EquivariantMomentLayer(nn.Module):
         learn_local_radial_gate: bool,
         use_edge_conditioned_local_transport: bool,
         normalize_edge_conditioned_local_by_sqrt_degree: bool,
+        use_gated_local_transport: bool,
+        use_grouped_invariant_normalization: bool,
         scalar_content_mode: str,
         use_tensor_product_kernel: bool,
         tensor_kernel_init: float,
@@ -509,6 +531,16 @@ class _EquivariantMomentLayer(nn.Module):
             if use_edge_conditioned_local_transport and local_head_count
             else None
         )
+        self.gated_local = None
+        if use_gated_local_transport and local_head_count:
+            # Candidate-only modules must not shift any incumbent initialization.
+            with torch.random.fork_rng(devices=[]):
+                self.gated_local = _GatedEquivariantLocalTransport(
+                    scalars=scalars,
+                    vectors=vectors,
+                    num_heads=local_head_count,
+                    num_rbf=num_rbf,
+                )
 
         self.norm = nn.LayerNorm(scalars)
         self.query_scalar = nn.Linear(scalars, scalars)
@@ -571,6 +603,9 @@ class _EquivariantMomentLayer(nn.Module):
             nn.Parameter(torch.tensor(float(residual_scale_init))) if tensors else None
         )
         invariant_dim = scalars + 6 * num_heads + tensors
+        self.use_grouped_invariant_normalization = (
+            use_grouped_invariant_normalization
+        )
         self.scalar_update_norm = nn.LayerNorm(invariant_dim)
         self.scalar_update = nn.Sequential(
             nn.Linear(invariant_dim, scalars),
@@ -721,7 +756,16 @@ class _EquivariantMomentLayer(nn.Module):
         message_groups: list[tuple[torch.Tensor, ...]] = []
         if self.local_head_count:
             local = slice(0, self.local_head_count)
-            if self.edge_conditioned_local is not None:
+            if self.gated_local is not None:
+                if local_geometry is None:
+                    raise RuntimeError("gated local transport requires local geometry")
+                local_messages = self.gated_local(
+                    s_norm,
+                    bounded_vectors,
+                    local_geometry,
+                    num_nodes=n_nodes,
+                )
+            elif self.edge_conditioned_local is not None:
                 if local_geometry is None:
                     raise RuntimeError(
                         "edge-conditioned local transport requires local geometry"
@@ -872,8 +916,7 @@ class _EquivariantMomentLayer(nn.Module):
             + self.tensor_mix.to(dtype=moment_dtype)[None, :, None] * tensor_vector
         )
 
-        invariant_parts = [
-            scalar_message,
+        angular_invariants = [
             query_base_dot,
             query_relative_dot,
             relative_square,
@@ -881,8 +924,21 @@ class _EquivariantMomentLayer(nn.Module):
             query_tensor_dot,
             radial_trace,
         ]
-        if self.tensors:
-            invariant_parts.append(_st_frobenius_square(bounded_persistent_tensor))
+        persistent_invariants = (
+            _st_frobenius_square(bounded_persistent_tensor)
+            if self.tensors
+            else None
+        )
+        if self.use_grouped_invariant_normalization:
+            scalar_message = _stable_group_norm(scalar_message)
+            angular = _stable_group_norm(torch.cat(angular_invariants, dim=-1))
+            invariant_parts = [scalar_message, angular]
+            if persistent_invariants is not None:
+                invariant_parts.append(_stable_group_norm(persistent_invariants))
+        else:
+            invariant_parts = [scalar_message, *angular_invariants]
+            if persistent_invariants is not None:
+                invariant_parts.append(persistent_invariants)
         scalar_invariants = torch.cat(invariant_parts, dim=-1)
         normalized_invariants = _stable_layer_norm(
             self.scalar_update_norm, scalar_invariants
@@ -1058,6 +1114,155 @@ class _EdgeConditionedLocalTransport(nn.Module):
             vector_base = vector_base * inverse_sqrt_degree[:, None, None]
             relative = relative * inverse_sqrt_degree[:, None, None]
             tensor = tensor * inverse_sqrt_degree[:, None, None]
+        radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
+        return scalar_message, vector_base, relative, tensor, radial_trace
+
+
+class _GatedEquivariantLocalTransport(nn.Module):
+    """Same-feature nonlinear local transport with bounded-degree aggregation."""
+
+    def __init__(
+        self,
+        *,
+        scalars: int,
+        vectors: int,
+        num_heads: int,
+        num_rbf: int,
+    ) -> None:
+        super().__init__()
+        if scalars % num_heads:
+            raise ValueError("scalars must be divisible by num_heads")
+        if vectors != num_heads:
+            raise ValueError("gated local transport requires vectors == num_heads")
+        self.scalars = scalars
+        self.num_heads = num_heads
+        self.head_dim = scalars // num_heads
+        hidden_dim = max(32, 2 * self.head_dim)
+        edge_input_dim = 2 * self.head_dim + num_rbf + 5
+        edge_output_dim = self.head_dim + 5
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(edge_input_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, edge_output_dim),
+        )
+        self.scalar_message_norm = nn.LayerNorm(self.head_dim)
+        self.mass_projection = nn.Linear(2, scalars, bias=False)
+
+    def forward(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+        local_geometry: tuple[torch.Tensor, ...],
+        *,
+        num_nodes: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        receiver, sender, displacement, squared_distance, rbf = local_geometry
+        nonself = receiver != sender
+        receiver = receiver[nonself]
+        sender = sender[nonself]
+        displacement = displacement[nonself]
+        squared_distance = squared_distance[nonself]
+        rbf = rbf[nonself]
+
+        scalar_heads = scalars.reshape(num_nodes, self.num_heads, self.head_dim)
+        dtype = _moment_dtype(scalars, vectors, displacement)
+        receiver_vector = vectors[receiver].to(dtype=dtype)
+        sender_vector = vectors[sender].to(dtype=dtype)
+        edge_direction = displacement.to(dtype=dtype).unsqueeze(1)
+        vector_invariants = torch.stack(
+            [
+                (receiver_vector * sender_vector).sum(dim=-1),
+                receiver_vector.square().sum(dim=-1),
+                sender_vector.square().sum(dim=-1),
+                (receiver_vector * edge_direction).sum(dim=-1),
+                (sender_vector * edge_direction).sum(dim=-1),
+            ],
+            dim=-1,
+        )
+        rbf_features = rbf.to(dtype=scalars.dtype).unsqueeze(1).expand(
+            -1, self.num_heads, -1
+        )
+        edge_features = torch.cat(
+            [
+                scalar_heads[receiver],
+                scalar_heads[sender],
+                rbf_features,
+                vector_invariants.to(dtype=scalars.dtype),
+            ],
+            dim=-1,
+        )
+        edge_output = self.edge_mlp(edge_features)
+        scalar_edge, scalar_gate, receiver_gate, sender_gate, relative_gate, tensor_gate = (
+            torch.split(
+                edge_output,
+                [self.head_dim, 1, 1, 1, 1, 1],
+                dim=-1,
+            )
+        )
+
+        cutoff = _cosine_of_squared_distance_cutoff(
+            squared_distance.to(dtype=dtype)
+        )
+        weights = cutoff.unsqueeze(-1).expand(-1, self.num_heads)
+        scalar_message = _edge_sum(
+            weights,
+            (
+                scalar_edge * torch.sigmoid(scalar_gate)
+            ).to(dtype=dtype),
+            receiver,
+            num_nodes,
+        )
+        vector_base = _edge_sum(
+            weights,
+            (
+                torch.tanh(receiver_gate).to(dtype=dtype) * receiver_vector
+                + torch.tanh(sender_gate).to(dtype=dtype) * sender_vector
+            ),
+            receiver,
+            num_nodes,
+        )
+        relative = _edge_sum(
+            weights,
+            torch.tanh(relative_gate).to(dtype=dtype) * edge_direction,
+            receiver,
+            num_nodes,
+        )
+        tensor = _edge_sum(
+            weights,
+            torch.tanh(tensor_gate).to(dtype=dtype)
+            * _symmetric_traceless_features(
+                displacement.to(dtype=dtype)
+            ).unsqueeze(1),
+            receiver,
+            num_nodes,
+        )
+
+        degree = cutoff.new_zeros(num_nodes).index_add(
+            0,
+            receiver,
+            torch.ones_like(cutoff),
+        )
+        cutoff_mass = cutoff.new_zeros(num_nodes).index_add(0, receiver, cutoff)
+        inverse_sqrt_degree = degree.clamp_min(1.0).rsqrt()
+        scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
+        vector_base = vector_base * inverse_sqrt_degree[:, None, None]
+        relative = relative * inverse_sqrt_degree[:, None, None]
+        tensor = tensor * inverse_sqrt_degree[:, None, None]
+
+        scalar_message = _stable_layer_norm(
+            self.scalar_message_norm,
+            scalar_message,
+        )
+        mass_features = torch.stack(
+            [torch.log1p(degree), torch.log1p(cutoff_mass)],
+            dim=-1,
+        )
+        mass_message = self.mass_projection(
+            mass_features.to(dtype=scalars.dtype)
+        ).reshape(num_nodes, self.num_heads, self.head_dim)
+        scalar_message = scalar_message + mass_message.to(dtype=dtype)
         radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
         return scalar_message, vector_base, relative, tensor, radial_trace
 
@@ -3107,6 +3312,17 @@ def _stable_layer_norm(layer: nn.LayerNorm, value: torch.Tensor) -> torch.Tensor
     )
 
 
+def _stable_group_norm(value: torch.Tensor) -> torch.Tensor:
+    dtype = _moment_dtype(value)
+    return F.layer_norm(
+        value.to(dtype=dtype),
+        (value.shape[-1],),
+        None,
+        None,
+        1e-5,
+    )
+
+
 def _moment_dtype(*values: torch.Tensor) -> torch.dtype:
     return (
         torch.float64
@@ -3141,6 +3357,8 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_pairwise_local_content",
         "use_edge_conditioned_local_transport",
         "normalize_edge_conditioned_local_by_sqrt_degree",
+        "use_gated_local_transport",
+        "use_grouped_invariant_normalization",
         "use_tensor_product_kernel",
         "use_memory_interaction",
         "use_radial_trace",
@@ -3191,6 +3409,31 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             )
     if config.use_pairwise_local_content and not any(local_head_counts):
         raise ValueError("use_pairwise_local_content requires at least one local head")
+    if config.use_gated_local_transport:
+        if not any(local_head_counts):
+            raise ValueError("gated local transport requires at least one local head")
+        if any(
+            local_heads not in {0, config.num_heads}
+            for local_heads in local_head_counts
+        ):
+            raise ValueError(
+                "gated local transport requires all-local or all-global stages"
+            )
+        if config.use_edge_conditioned_local_transport:
+            raise ValueError(
+                "gated local transport cannot be combined with "
+                "edge-conditioned local transport"
+            )
+        if config.use_pairwise_local_content:
+            raise ValueError(
+                "gated local transport cannot be combined with "
+                "pairwise local content"
+            )
+        if config.learn_local_radial_gate:
+            raise ValueError(
+                "gated local transport cannot be combined with the "
+                "legacy learned local radial gate"
+            )
     if config.use_edge_conditioned_local_transport:
         if not any(local_head_counts):
             raise ValueError(

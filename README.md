@@ -104,6 +104,20 @@ channel count equals the head count. It cannot be combined with the legacy
 pairwise-content or learned-radial controls. This path is opt-in: its scaling
 contract passed, but its repeated 500-step QM9 accuracy screen failed.
 
+`use_gated_local_transport=True` selects the newer same-feature local operator.
+Its per-head edge MLP sees the current receiver/sender scalar states, existing
+RBF distances, and invariant contractions of the current vectors with each
+other and the relative direction. It emits gated scalar, receiver-vector,
+sender-vector, relative-vector, and symmetric-traceless rank-2 messages,
+aggregates them by `sum/sqrt(receiver_degree)`, and exposes log degree and
+smooth cutoff mass explicitly. `use_grouped_invariant_normalization=True`
+separately standardizes scalar-message, angular, and persistent-tensor
+invariant families before their existing shared update. Both switches are
+disabled by default and add no raw atom, bond, residue, or label feature.
+Their exact equations and matched real-data result are in
+[the derivation](docs/LAYER_MATH.md#gated-same-feature-local-transport) and
+[the evaluation record](docs/EVALUATION.md#same-feature-gated-hybrid-outcome-2026-07-24).
+
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:
 
@@ -188,6 +202,16 @@ scaffold or cold-target generalization. Historical experiments remain in
 Any route containing a global head is not a size-consistent interatomic
 potential. The intended role is a bounded-size property probe or a global
 context block within the same local/global architecture.
+
+The 2026-07-24 same-feature hybrid screen is the first bounded packet in which
+the gated-local plus grouped-normalization package beat its matched incumbent:
+QM9 seed-42/500-update validation MAE improved from `0.709287` to
+`0.683609 eV`. On 16 train-only ATOM3D-LBA complexes, it reached
+`0.10 pK` in 1,050 updates versus 1,800 for the incumbent; the private static
+EGNN missed the threshold at 3,000. All three affinity arms consumed the same
+153,029 candidates. This does not establish multi-seed QM9 robustness or
+affinity generalization, and the candidate remained about `5.55x` slower per
+step than EGNN on these small complexes, so the switches remain opt-in.
 
 The earlier registered validation-only comparison found M=1 `lgl` better than
 matched M=1 `ggg` on all three seeds (mean gap-MAE improvement 0.052774 eV),

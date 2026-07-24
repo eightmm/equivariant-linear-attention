@@ -2,6 +2,35 @@
 
 ## Status
 
+- Same-feature gated local/global packet confirmed on 2026-07-24. Raw node
+  features, coordinates, splits, targets, and matched sparse candidates remain
+  identical across compared models; only the architecture may change. The two
+  opt-in interventions are a width-matched gated equivariant local edge
+  transport and grouped invariant-family pre-normalization before the incumbent
+  update. The exact edge-free `O(N)` global channel remains unchanged. The
+  frozen QM9 screen, conditional train-only ATOM3D-LBA/PDBBind capacity check,
+  feature-parity rules, thresholds, no-test boundary, and 900-second local-GPU
+  ceiling are recorded in
+  `artifacts/hybrid-local-global-20260724/scope.md`.
+- The packet completed on strict CUDA without validation/test access outside
+  its frozen boundaries. On the seed-42 500-update QM9 `gap` screen, incumbent,
+  gated-only, and gated-plus-grouped validation MAEs were
+  `0.709287/0.749135/0.683609 eV`. Thus gated transport alone regressed, while
+  the combined package improved over the incumbent by `0.025678 eV` at
+  `1.04745x` parameters. Mean pre-clip norm fell by `30.61%`, satisfying the
+  optimization diagnostic, but clipping remained `455/500` for both incumbent
+  and selected package. The result supports the combined interaction, not an
+  isolated gated-local or grouped-normalization effect.
+- On the identical 16 cached ATOM3D-LBA train complexes, identical raw
+  features, and identical 153,029 directed candidates, the combined package
+  reached the frozen `0.10 pK` overfit threshold in 1,050 updates/27.60 s,
+  versus 1,800/49.82 s for the incumbent. The near-parameter private static
+  EGNN ended at `0.116225 pK` after 3,000 updates and missed the threshold.
+  This is capacity/convergence evidence only: the selected package used
+  `1.50x` incumbent peak CUDA allocation and its median step was `5.55x`
+  slower than EGNN. It establishes neither affinity generalization nor
+  small-graph systems superiority. The feature remains opt-in pending
+  multi-seed QM9 and leakage-controlled affinity validation.
 - Architecture-v2 packet confirmed on 2026-07-23 by the user's instruction to
   implement substantial equivariant-linear-attention improvements and validate
   them on real data. The two opt-in interventions are: (1) bounded-magnitude

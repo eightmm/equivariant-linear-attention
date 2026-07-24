@@ -11,6 +11,7 @@ from equivariant_attention.pdbbind import (
     ATOM3D_LBA_REPO,
     atom3d_lba_row_to_sample,
     load_atom3d_lba_samples,
+    segment_balanced_knn_edge_index,
 )
 
 
@@ -162,3 +163,72 @@ def test_loader_rejects_nontrain_split_and_duplicate_indices(tmp_path: object) -
             indices=(0, 0),
             revision=_REVISION,
         )
+
+
+def test_segment_balanced_knn_uses_same_sparse_topology_under_permutation() -> None:
+    pos = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [0.9, 0.0, 0.0],
+            [2.2, 0.1, 0.0],
+            [0.2, 1.1, 0.0],
+            [1.6, 1.4, 0.3],
+        ],
+        dtype=torch.float64,
+    )
+    ligand = torch.tensor([False, False, False, True, True])
+    edges = segment_balanced_knn_edge_index(
+        pos,
+        ligand,
+        intra_k=1,
+        cross_k=1,
+        cutoff=4.0,
+    )
+
+    receiver, sender = edges
+    assert edges.shape == (2, 15)
+    for node in range(5):
+        selected = sender[receiver == node]
+        assert node in selected
+        nonself = selected[selected != node]
+        assert (ligand[nonself] == ligand[node]).sum() == 1
+        assert (ligand[nonself] != ligand[node]).sum() == 1
+
+    permutation = torch.tensor([3, 0, 4, 2, 1])
+    inverse = torch.argsort(permutation)
+    permuted_edges = segment_balanced_knn_edge_index(
+        pos[permutation],
+        ligand[permutation],
+        intra_k=1,
+        cross_k=1,
+        cutoff=4.0,
+    )
+    restored = permutation[permuted_edges]
+    reference_codes = torch.sort(receiver * 5 + sender).values
+    restored_codes = torch.sort(restored[0] * 5 + restored[1]).values
+    assert torch.equal(restored_codes, reference_codes)
+    assert torch.equal(inverse[permutation], torch.arange(5))
+
+
+def test_segment_balanced_knn_keeps_self_and_respects_cutoff() -> None:
+    pos = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [10.0, 0.0, 0.0]]
+    )
+    ligand = torch.tensor([False, False, True])
+    edges = segment_balanced_knn_edge_index(
+        pos,
+        ligand,
+        intra_k=2,
+        cross_k=2,
+        cutoff=1.0,
+    )
+    receiver, sender = edges
+
+    assert {(int(i), int(j)) for i, j in edges.T} == {
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+        (2, 2),
+    }
+    assert torch.equal(receiver[receiver == sender], torch.arange(3))

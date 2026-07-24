@@ -281,6 +281,9 @@ def main() -> None:
     metrics["local_radial_gradient_parameters"] = _named_gradient_parameter_diagnostics(
         model, "local_radial"
     )
+    metrics["gated_local_gradient_parameters"] = (
+        _named_gradient_parameter_diagnostics(model, "gated_local")
+    )
     metrics["node_count_strata"] = _node_count_strata_metrics(
         model,
         dataset,
@@ -390,6 +393,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "of incoming non-self candidate degree"
         ),
     )
+    parser.add_argument("--gated-local-transport", action="store_true")
+    parser.add_argument("--grouped-invariant-normalization", action="store_true")
     parser.add_argument("--precompute-local-edges", action="store_true")
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
     parser.add_argument("--memory-interaction", action="store_true")
@@ -475,6 +480,8 @@ def _build_benchmark_model(
             "pairwise_residual_scale_init": 0.1,
             "edge_conditioned_local_transport": False,
             "edge_conditioned_local_sqrt_degree": False,
+            "gated_local_transport": False,
+            "grouped_invariant_normalization": False,
             "hidden_tensor_dim": 0,
             "scalar_content_mode": "unit",
             "tensor_product_kernel": False,
@@ -532,6 +539,10 @@ def _build_benchmark_model(
         use_edge_conditioned_local_transport=(args.edge_conditioned_local_transport),
         normalize_edge_conditioned_local_by_sqrt_degree=(
             args.edge_conditioned_local_sqrt_degree
+        ),
+        use_gated_local_transport=args.gated_local_transport,
+        use_grouped_invariant_normalization=(
+            args.grouped_invariant_normalization
         ),
         hidden_tensor_dim=args.hidden_tensor_dim,
         scalar_content_mode=args.scalar_content_mode,
@@ -838,6 +849,7 @@ def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
             "vector_out.",
             "tensor_out.",
         ),
+        excluded_infixes=(".gated_local.",),
     )
 
 
@@ -845,11 +857,14 @@ def _state_hashes(
     model: torch.nn.Module,
     *,
     excluded_prefixes: tuple[str, ...] = (),
+    excluded_infixes: tuple[str, ...] = (),
 ) -> dict[str, str]:
     state_digest = hashlib.sha256()
     schema_digest = hashlib.sha256()
     for name, tensor in model.state_dict().items():
-        if name.startswith(excluded_prefixes):
+        if name.startswith(excluded_prefixes) or any(
+            infix in name for infix in excluded_infixes
+        ):
             continue
         metadata = json.dumps(
             [name, str(tensor.dtype), list(tensor.shape)],
@@ -1937,6 +1952,20 @@ def _run_config(
                 if args.edge_conditioned_local_transport
                 else "not_applicable"
             )
+        ),
+        "gated_local_transport": args.gated_local_transport,
+        "gated_local_formula": (
+            "same_feature_per_head_mlp_with_scalar_vector_relative_tensor_gates"
+            if args.gated_local_transport
+            else "not_applicable"
+        ),
+        "gated_local_aggregation": (
+            "cutoff_sum_over_sqrt_degree_plus_explicit_mass"
+            if args.gated_local_transport
+            else "not_applicable"
+        ),
+        "grouped_invariant_normalization": (
+            args.grouped_invariant_normalization
         ),
         "precompute_local_edges": args.precompute_local_edges,
         "local_candidate_builder": (

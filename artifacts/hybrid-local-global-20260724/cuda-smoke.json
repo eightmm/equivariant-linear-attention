@@ -1,0 +1,298 @@
+{
+  "amp_dtype": "none",
+  "attention_residual_scales": {
+    "scalar": [
+      0.057957861572504044,
+      0.05795787647366524,
+      0.05751151219010353
+    ],
+    "vector": [
+      0.0576024055480957,
+      0.05756894126534462,
+      0.05776238068938255
+    ]
+  },
+  "bounded_diagnostics": {
+    "effective_rank": {
+      "enabled": false,
+      "max_matrix_size": 128
+    },
+    "enabled": false,
+    "instrumentation": {
+      "connected": [],
+      "unconnected": [
+        "runtime_query_key_activations",
+        "attention_weights",
+        "memory_assignments_and_coupling"
+      ]
+    },
+    "local_validation_sample_count": 32,
+    "schema_version": 1,
+    "status": "disabled"
+  },
+  "coordinate_diagnostics": {
+    "active": false,
+    "centroid_drift_max_angstrom": 0.0,
+    "displacement_max_angstrom": 0.0,
+    "displacement_rms_angstrom": 0.0,
+    "enabled": false,
+    "excluded_from_elapsed_seconds": true,
+    "excluded_from_peak_cuda_memory_bytes": true,
+    "layers": [],
+    "node_count": 21,
+    "registered_step_max_angstrom": 0.25,
+    "sample_count": 3,
+    "schema_version": 1,
+    "selection": "validation_split_order_prefix"
+  },
+  "coordinate_gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_gradient_parameter_count": 0,
+    "parameter_count": 0,
+    "parameters_with_gradient_count": 0
+  },
+  "dataset": "synthetic",
+  "elapsed_seconds": 0.6492392810000638,
+  "ffn_residual_scales": {
+    "scalar": [
+      0.05795788764953613,
+      0.05751193314790726,
+      0.05795673280954361
+    ],
+    "vector": [
+      0.05773385986685753,
+      0.05751914530992508,
+      0.05773502588272095
+    ]
+  },
+  "final_state_sha256": "f24495a7fc97bc4d4b68efa231e836ba7ae8127b36099aba69be4bccc2121c04",
+  "gated_local_gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_gradient_parameter_count": 7048,
+    "parameter_count": 7274,
+    "parameters_with_gradient_count": 7274,
+    "trainable_parameter_count": 7274
+  },
+  "gradient_clipping": {
+    "clip_fraction": 1.0,
+    "clip_threshold": 1.0,
+    "clipped_step_count": 2,
+    "measurement_point": "before_clipping",
+    "pre_clip_grad_norm_last": 4.193226337432861,
+    "pre_clip_grad_norm_max": 4.193226337432861,
+    "pre_clip_grad_norm_mean": 2.852522134780884,
+    "step_count": 2
+  },
+  "gradient_norms": {
+    "all": 0.9999996766178904,
+    "beta_raw": 1.0595171464388266e-10,
+    "gamma_raw": 1.3065327955016382e-12
+  },
+  "gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "measurement_point": "after_final_training_backward_clip_and_optimizer_step",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_definition": "finite_gradient_not_equal_zero",
+    "nonzero_gradient_parameter_count": 131312,
+    "parameter_tensors_with_gradient_count": 120,
+    "parameters_with_gradient_count": 131882
+  },
+  "initial_state_sha256": "a18bec3afdd3bc8fb3396e2958b02fd615026a6e5b4349fcc992a4b17cc2573e",
+  "initialization_hash_version": "canonical_state_dict_v1",
+  "kernel_parameters": {
+    "beta.max": 0.050000861287117004,
+    "beta.mean": 0.050000275795658425,
+    "beta.min": 0.05000000074505806,
+    "gamma.max": 0.050000838935375214,
+    "gamma.mean": 0.050000280141830444,
+    "gamma.min": 0.05000000074505806
+  },
+  "local_radial_gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_gradient_parameter_count": 0,
+    "parameter_count": 204,
+    "parameters_with_gradient_count": 0,
+    "trainable_parameter_count": 0
+  },
+  "model": "factorized_moment",
+  "model_seed": 42,
+  "node_count_strata": {
+    "excluded_from_elapsed_seconds": true,
+    "excluded_from_peak_cuda_memory_bytes": true,
+    "metrics": {
+      "1-16": {
+        "mae": 0.05784040689468384,
+        "observed_max_nodes": 8,
+        "observed_min_nodes": 6,
+        "rmse": 0.06808639243888204,
+        "sample_count": 3
+      }
+    },
+    "registered_upper_bounds": [
+      16,
+      32,
+      64,
+      128,
+      512,
+      2048
+    ],
+    "schema_version": 1,
+    "split": "validation"
+  },
+  "nonzero_gradient_parameter_count": 131312,
+  "paired_base_initial_state_sha256": "906ceb38a2846c8b530125c8161851ba6824ab4cb32e4361c88b9b8b9d8293e0",
+  "paired_base_state_schema_sha256": "2360010ec60fc804276f92e8f6e828ac53e5dcb6567670a917f5b81a2d745b5c",
+  "pairwise_local_gradient_parameters": {
+    "count_unit": "scalar_parameter_elements",
+    "nonfinite_gradient_parameter_count": 0,
+    "nonzero_gradient_parameter_count": 0,
+    "parameter_count": 0,
+    "parameters_with_gradient_count": 0,
+    "trainable_parameter_count": 0
+  },
+  "pairwise_local_residual_scale": "not_applicable",
+  "parameter_count": 160367,
+  "peak_cuda_memory_bytes": 71201792,
+  "reproducibility": {
+    "cublas_workspace_config": ":4096:8",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "deterministic_algorithms": true,
+    "deterministic_warn_only": false,
+    "mode": "strict",
+    "seed": 42
+  },
+  "run_config": {
+    "alignment_constant_retained": true,
+    "alignment_linear_term": true,
+    "amp_dtype": "none",
+    "attention": "factorized_moment",
+    "balance_cycles": 1,
+    "batch_size": 4,
+    "bounded_diagnostics": false,
+    "comparison_role": "equivariant_attention_candidate",
+    "coordinate_update_count": 0,
+    "coordinate_update_formula": "not_applicable",
+    "coordinate_update_max_step_angstrom": "not_applicable",
+    "coordinate_updates": false,
+    "data_root": "data/qm9",
+    "dataset": "synthetic",
+    "dataset_seed": 42,
+    "determinism": "strict",
+    "device": "cuda",
+    "diagnostic_effective_rank": false,
+    "diagnostic_max_nodes": 128,
+    "diagnostic_sample_count": 32,
+    "edge_conditioned_local_aggregation": "not_applicable",
+    "edge_conditioned_local_transport": false,
+    "ffn_hidden_ratio": 2.0,
+    "gated_local_aggregation": "cutoff_sum_over_sqrt_degree_plus_explicit_mass",
+    "gated_local_formula": "same_feature_per_head_mlp_with_scalar_vector_relative_tensor_gates",
+    "gated_local_transport": true,
+    "geometry_recomputed_per_layer": false,
+    "global_attention_formula": "factorized_learned_kernel",
+    "global_geometry_executed": true,
+    "global_key_balancing": "one_cycle",
+    "global_transport_executed": true,
+    "global_transport_mode": "learned",
+    "grad_clip": 1.0,
+    "graph_size_scaled_positive_baseline": false,
+    "graph_size_scaled_terms": [],
+    "graph_size_unscaled_terms": [
+      "content",
+      "alignment_quadratic"
+    ],
+    "grouped_invariant_normalization": true,
+    "hemm_admission_status": "disabled",
+    "hidden_dim": 64,
+    "hidden_tensor_dim": 0,
+    "kernel_floor_mode": "fixed",
+    "kernel_formula": "a_dot_b + c + beta*(1 + delta*t) + gamma*t^2",
+    "kernel_scaling_formula_version": "positive_baseline_v1",
+    "kernel_version": 3,
+    "key_balancing": true,
+    "learn_local_radial_gate": false,
+    "linear_kernel_init": 0.05,
+    "local_candidate_builder": "forward_same_graph_cartesian_fallback",
+    "local_cutoff": 2.5,
+    "local_head_counts": [
+      4,
+      0,
+      4
+    ],
+    "lr": 0.0003,
+    "memory_assignment_scale": 2.5,
+    "memory_assignment_temperature": 1.0,
+    "memory_count": 1,
+    "memory_interaction": false,
+    "memory_interaction_cutoff": 2.5,
+    "model": "factorized_moment",
+    "model_seed": 42,
+    "num_heads": 4,
+    "num_layers": 3,
+    "num_rbf": 16,
+    "num_samples": 16,
+    "official_reproduction": false,
+    "pairwise_local_aggregation": "not_applicable",
+    "pairwise_local_content": false,
+    "pairwise_local_formula": "not_applicable",
+    "pairwise_residual_scale_init": 0.1,
+    "precompute_local_edges": false,
+    "qm9_target_index": 4,
+    "radial_trace": false,
+    "routing": "lgl",
+    "scalar_content_mode": "unit",
+    "scalar_content_norm_bound": 1.0,
+    "split_seed": 42,
+    "steps": 2,
+    "target_normalized": true,
+    "tensor_kernel_init": 0.05,
+    "tensor_kernel_max": 1.0,
+    "tensor_product_kernel": false,
+    "tensor_product_kernel_formula": "not_applicable",
+    "test_evaluated": false,
+    "train_size": 10,
+    "val_size": 3,
+    "weight_decay": 0.01
+  },
+  "source_sha256": "368de277dbd5dc21e76b0ba12236d4ad37e7f485d73d499e4c5cb604342249f3",
+  "split_hashes": {
+    "test": "c7801ea7b7f98a31ffae7143acea9fd9b4218dd6aa9d1c53e496452327be5261",
+    "train": "c61d7aa36c3627ee9d138e7c45b98b2d31f42b4dc90d67c821e888e75552f3f2",
+    "validation": "693779d8881318cf5cc7c34c9e8c4003d1586dd72aebce880c4ec7ffa4182059"
+  },
+  "split_kind": "seeded_random_row_warm_start",
+  "split_seed": 42,
+  "state_schema_sha256": "10065fb16a1606fab3853261c2e5adeedc895ebb707cec208d45b5428261287a",
+  "steps": 2,
+  "target_normalized": true,
+  "target_normalizer": {
+    "mean": [
+      0.14344266057014465
+    ],
+    "std": [
+      0.09663473069667816
+    ]
+  },
+  "tensor_kernel_parameters": {
+    "status": "not_applicable"
+  },
+  "test_evaluated": false,
+  "test_size": 3,
+  "train_loss": 0.6829926371574402,
+  "train_probe": {
+    "batch_size": 4,
+    "mae": 0.08144542276859283,
+    "rmse": 0.09658770857923352,
+    "sample_count": 10,
+    "selection": "train_split_order_prefix"
+  },
+  "train_size": 10,
+  "trainable_parameter_count": 160163,
+  "val_mae": 0.05784040689468384,
+  "val_rmse": 0.06808639243888204,
+  "val_size": 3
+}

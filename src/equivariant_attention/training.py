@@ -37,6 +37,8 @@ def build_regression_model(
     pairwise_residual_scale_init: float = 0.1,
     use_edge_conditioned_local_transport: bool = False,
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False,
+    use_gated_local_transport: bool = False,
+    use_grouped_invariant_normalization: bool = False,
     hidden_tensor_dim: int = 0,
     scalar_content_mode: str = "unit",
     use_tensor_product_kernel: bool = False,
@@ -73,6 +75,10 @@ def build_regression_model(
             use_edge_conditioned_local_transport=use_edge_conditioned_local_transport,
             normalize_edge_conditioned_local_by_sqrt_degree=(
                 normalize_edge_conditioned_local_by_sqrt_degree
+            ),
+            use_gated_local_transport=use_gated_local_transport,
+            use_grouped_invariant_normalization=(
+                use_grouped_invariant_normalization
             ),
             scalar_content_mode=scalar_content_mode,
             use_tensor_product_kernel=use_tensor_product_kernel,

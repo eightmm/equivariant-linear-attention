@@ -18,6 +18,56 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Same-feature gated hybrid outcome (2026-07-24)
+
+This packet held raw node features, coordinates, targets, split, optimizer,
+readout, and sparse candidates fixed. The candidate changed only learned
+interaction: a nonlinear per-head equivariant local transport and
+parameter-free normalization of invariant families. Candidate-only module
+construction used an RNG fork, and the common incumbent state hash was
+identical across all three QM9 arms.
+
+The strict-CUDA QM9 `gap` screen used seed 42, 500 updates, the cached
+110,000/10,000 random-row train/validation split, precomputed 2.5-Angstrom
+candidates, and no test evaluation:
+
+| arm | parameters | validation MAE | delta vs incumbent | mean pre-clip norm | clipped |
+|---|---:|---:|---:|---:|---:|
+| incumbent LGL | 153,285 | 0.709287 eV | 0 | 5.435 | 455/500 |
+| gated local | 160,559 | 0.749135 eV | +0.039848 eV | 4.463 | 445/500 |
+| gated + grouped normalization | 160,559 | 0.683609 eV | -0.025678 eV | 3.771 | 455/500 |
+
+Gated transport alone failed the accuracy guard. The combined package passed
+the frozen `0.010 eV` improvement and `1.05x` parameter gates. It also reduced
+mean pre-clip norm by `30.61%`, passing the optimization diagnostic through
+that branch, although clipping frequency did not improve. Since grouped-only
+was not an arm, this is a package-level result rather than clean component
+attribution. Peak CUDA allocation rose from 180.1 MB to 208.0 MB (`1.155x`).
+The single short elapsed measurement is descriptive only.
+
+The selected package then ran on cached ATOM3D-LBA/PDBBind-derived train rows
+0--15. All arms received identical atom/segment features, coordinates,
+ligand-only readout masks, labels, batches, and 153,029 segment-balanced
+directed candidates with self edges. The candidate/EGNN parameter counts were
+168,815/167,260:
+
+| arm | threshold result | final observed train MAE | median step | peak CUDA |
+|---|---:|---:|---:|---:|
+| incumbent LGL | pass at 1,800 steps / 49.82 s | 0.085251 pK | 25.00 ms | 268.9 MB |
+| gated + grouped LGL | pass at 1,050 / 27.60 s | 0.098200 pK | 23.63 ms | 402.2 MB |
+| private static EGNN | miss at 3,000 | 0.116225 pK | 4.26 ms | 326.1 MB |
+
+The candidate required `41.7%` fewer updates and `44.6%` less wall time than
+the incumbent to first cross `0.10 pK`, while strict rerun final-state hashes
+and metrics were identical. This supports wiring and finite-sample capacity.
+It is not an affinity-accuracy result: validation and test were never read,
+the 16 rows are not an independent split, and threshold stopping makes final
+MAEs unsuitable for model ranking. The candidate also remained `5.55x` slower
+per step than EGNN and used more memory on these small complexes. A full ID30
+or target/cluster-disjoint validation study and multi-seed QM9 confirmation
+remain separate gates. Raw results and hashes are in
+`artifacts/hybrid-local-global-20260724/`.
+
 ## Bounded-content and persistent-`2e` kernel outcome (2026-07-23)
 
 Two exact-factorization-compatible options were added behind disabled-by-

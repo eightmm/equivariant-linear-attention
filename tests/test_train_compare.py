@@ -238,6 +238,30 @@ def test_run_config_records_edge_conditioned_degree_normalization() -> None:
     assert model.config.normalize_edge_conditioned_local_by_sqrt_degree is True
 
 
+def test_run_config_records_gated_local_and_grouped_normalization() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--gated-local-transport",
+            "--grouped-invariant-normalization",
+        ]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["gated_local_transport"] is True
+    assert config["gated_local_aggregation"] == (
+        "cutoff_sum_over_sqrt_degree_plus_explicit_mass"
+    )
+    assert config["grouped_invariant_normalization"] is True
+    assert model.config.use_gated_local_transport is True
+    assert model.config.use_grouped_invariant_normalization is True
+    assert any("gated_local" in name for name, _ in model.named_parameters())
+
+
 def test_run_config_records_architecture_v2_kernel_controls() -> None:
     symbols = _script_symbols()
     args = symbols["parse_args"](

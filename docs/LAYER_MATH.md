@@ -356,6 +356,78 @@ neighbor construction are deliberately outside that claim. The original
 registered operator uses the default unnormalized sum; the square-root-degree
 variant remains opt-in pending its registered diagnostic screen.
 
+### Gated same-feature local transport
+
+The newer opt-in local transport changes only how the same node states and
+geometry interact. It does not add a raw atom, bond, residue, segment, or label
+feature. For head `h`, split the normalized scalar state into
+`sbar_ih in R^d`, retain one polar vector `v_ih in R^3`, and assemble
+
+```text
+z_ijh = [
+    sbar_ih,
+    sbar_jh,
+    rho(u_ij),
+    <v_ih, v_jh>,
+    ||v_ih||^2,
+    ||v_jh||^2,
+    <v_ih, d_ij>,
+    <v_jh, d_ij>
+].
+```
+
+A shared per-head MLP produces scalar content and five scalar gates:
+
+```text
+[a_ijh, g^s_ijh, g^i_ijh, g^j_ijh, g^r_ijh, g^T_ijh]
+    = MLP(z_ijh).
+```
+
+Self edges are excluded. Let `D_i` be the retained nonself candidate count and
+`C_i = sum_j f_c(u_ij)` its smooth cutoff mass. The equivariant aggregates are
+
+```text
+m^0_ih = LN_h(
+    sum_j f_c(u_ij) sigmoid(g^s_ijh) a_ijh / sqrt(max(D_i, 1))
+) + reshape_h(W_m [log(1 + D_i), log(1 + C_i)]),
+
+m^v_ih = sum_j f_c(u_ij) [
+    tanh(g^i_ijh) v_ih + tanh(g^j_ijh) v_jh
+] / sqrt(max(D_i, 1)),
+
+m^r_ih = sum_j f_c(u_ij) tanh(g^r_ijh) d_ij
+    / sqrt(max(D_i, 1)),
+
+m^T_ih = sum_j f_c(u_ij) tanh(g^T_ijh) ST(d_ij)
+    / sqrt(max(D_i, 1)).
+```
+
+Every MLP input and gate is invariant under `O(3)`. Multiplying invariant
+gates by polar vectors, relative polar vectors, or even-parity
+symmetric-traceless tensors preserves the required transformation law.
+Receiver sums are invariant to edge order and consistent under node
+permutation. At fixed width, the local path is `O(E_local)` after candidates
+are built, while an LGL stack retains the exact `O(N)` factorized global
+block.
+
+When `use_grouped_invariant_normalization` is enabled, define parameter-free
+last-axis standardization `G(x)`. Before the incumbent learned update
+LayerNorm, its invariant input becomes
+
+```text
+concat(
+    G(m^0),
+    G(concat(all angular vector/tensor contractions)),
+    G(persistent-tensor Frobenius invariants)  if present
+).
+```
+
+This prevents one invariant family from setting the scale of every other
+family while leaving the learned update and all equivariant value paths
+unchanged. Because the registered experiment tested gated-only and
+gated-plus-grouped but not grouped-only, its performance supports the combined
+package and does not identify either component as sufficient by itself.
+
 The opt-in pairwise-content repair leaves those equivariant moments unchanged
 and adds one invariant scalar message. Let `qbar_ih` and `kbar_jh` be the raw
 scalar query/key projections before positive-feature normalization, and let

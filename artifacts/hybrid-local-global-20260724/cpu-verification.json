@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "focused": {
+    "command": "uv run --locked pytest -q tests/test_gated_local_transport.py tests/test_pdbbind_lba.py tests/test_train_compare.py",
+    "passed": 71,
+    "failed": 0
+  },
+  "fast_gate": {
+    "command": "scripts/check.sh fast",
+    "passed": 491,
+    "failed": 0,
+    "coverage_percent": 88.65,
+    "ruff": "passed",
+    "compileall": "passed",
+    "ml_smoke": "passed_cpu_float64"
+  },
+  "cpu_optimizer_smoke": {
+    "artifact": "cpu-smoke.json",
+    "artifact_sha256": "3a37c29a77a43e1cd66c5df4d0290f0cc11854d3ec556ddbc047ab411517b878",
+    "updates": 3,
+    "nonfinite_gradient_parameters": 0,
+    "gated_local_nonzero_gradient_elements": 17832,
+    "test_evaluated": false
+  },
+  "parameter_contract": {
+    "incumbent": 153285,
+    "gated_grouped": 160559,
+    "candidate_over_incumbent": 1.0474540887888573,
+    "maximum_ratio": 1.05,
+    "passed": true
+  },
+  "compute_environment": {
+    "artifact": "compute-environment.json",
+    "artifact_sha256": "e7ad9ee724d6c4ca4a527d2f116639b498f590ec928193bcf16e27ca728cec06",
+    "torch": "2.12.1+cu130",
+    "torch_cuda_available": true,
+    "torch_cuda_device_count": 1,
+    "torch_cuda_device": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "note": "nvidia-smi was unavailable inside the compute-probe subprocess, while the pinned project PyTorch runtime reported one available CUDA device"
+  }
+}

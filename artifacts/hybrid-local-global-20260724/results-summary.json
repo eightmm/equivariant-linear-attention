@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "packet_id": "hybrid-local-global-20260724",
+  "produced_at": "2026-07-24T13:34:14+09:00",
+  "base_git_sha": "c0a02e1243072fd2838ddd2591eae38673bb2720",
+  "status": "completed",
+  "raw_feature_contract": "identical within each matched lane",
+  "selected_package": {
+    "use_gated_local_transport": true,
+    "use_grouped_invariant_normalization": true,
+    "default_enabled": false
+  },
+  "qm9": {
+    "dataset": "QM9 gap",
+    "model_seed": 42,
+    "steps": 500,
+    "test_evaluated": false,
+    "incumbent_val_mae_eV": 0.7092869794845581,
+    "gated_val_mae_eV": 0.7491350908279419,
+    "gated_grouped_val_mae_eV": 0.6836089756011963,
+    "selected_improvement_eV": 0.025678003883361833,
+    "parameter_ratio": 1.0474540887888573,
+    "mean_pre_clip_norm_reduction_fraction": 0.3061058860750597,
+    "incumbent_clip_fraction": 0.91,
+    "selected_clip_fraction": 0.91,
+    "selected_peak_cuda_memory_ratio": 1.1553921484994796,
+    "promotion_screen_passed": true,
+    "claim": "single-seed validation screen only"
+  },
+  "atom3d_lba": {
+    "dataset": "vector-institute/atom3d-lba",
+    "dataset_revision": "f93dd2d150a47c270f624620f84e07451a158705",
+    "split": "train",
+    "sample_count": 16,
+    "test_evaluated": false,
+    "identical_edge_count_with_self": 153029,
+    "threshold_train_mae_pK": 0.1,
+    "incumbent": {
+      "parameter_count": 161541,
+      "threshold_step": 1800,
+      "time_to_threshold_seconds": 49.82462691699993,
+      "train_mae_pK": 0.08525055646896362,
+      "median_step_seconds": 0.025003604500170695,
+      "peak_cuda_memory_bytes": 268899328,
+      "passed": true
+    },
+    "selected": {
+      "parameter_count": 168815,
+      "threshold_step": 1050,
+      "time_to_threshold_seconds": 27.595727979999992,
+      "train_mae_pK": 0.09819996356964111,
+      "median_step_seconds": 0.02362983949979025,
+      "peak_cuda_memory_bytes": 402225152,
+      "passed": true
+    },
+    "private_static_egnn": {
+      "official_reproduction": false,
+      "parameter_count": 167260,
+      "threshold_step": null,
+      "steps_completed": 3000,
+      "train_mae_pK": 0.11622494459152222,
+      "median_step_seconds": 0.004259974500200769,
+      "peak_cuda_memory_bytes": 326054400,
+      "passed": false
+    },
+    "selected_step_reduction_fraction_vs_incumbent": 0.41666666666666663,
+    "selected_time_reduction_fraction_vs_incumbent": 0.44614280753230373,
+    "selected_latency_ratio_vs_egnn": 5.546943883977849,
+    "claim": "train-only wiring and finite-sample capacity"
+  },
+  "artifact_sha256": {
+    "scope.md": "465a8a51cabe2e3ea632e10e622906a1565649a9569488bad0d8ee0e1b78f6d6",
+    "qm9-screen/summary.json": "c3effc80e657b6d969ea809c882e6ab6ee841d745494eb6b76fdcfac32194848",
+    "pdbbind-overfit.json": "aca24ce4d7efe2812372f5b63159905eac1d1c313d53f7515514184ac5266d15",
+    "cuda-smoke.json": "b81f0d498f4361572adcb130658f29991dfd60ba4b48afac04693085aeb8fb89",
+    "cpu-verification.json": "0bdc6ab657f796cf00beea894f074eed230feb762dab99639a87b162c3bdcfa1"
+  },
+  "limitations": [
+    "QM9 is one model seed and an adaptively reused random-row validation split",
+    "ATOM3D-LBA is 16 train rows with no validation or test evaluation",
+    "private EGNN is not an official reproduction",
+    "threshold-stopped final train MAEs are not a generalization ranking",
+    "segment-balanced candidate construction is quadratic outside the model hot path",
+    "current scalar outputs cannot distinguish isolated mirror pairs"
+  ]
+}
