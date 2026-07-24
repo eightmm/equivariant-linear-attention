@@ -1,0 +1,581 @@
+{
+  "device": "cuda",
+  "dtype": "float32",
+  "edge_index_sha256": "cfc11b8d83eb28b41132383eb094b42a2b4d62e059969ec136904e0c0de0fd4c",
+  "edge_index_supplied": true,
+  "edge_multiplier": 64,
+  "final_loss": 0.5434731841087341,
+  "gradient_validation": {
+    "all_finite": true,
+    "nonzero_elements": 131376
+  },
+  "graph_seed": 20260723,
+  "initial_state_sha256": "21ca283b0536c7d75fceb24658374111df16f143b20f98b7bd311dc850f3023c",
+  "limitations": {
+    "operator_times_are_diagnostic_not_benchmark_latency": true,
+    "post_registered_outcome_diagnostic": true,
+    "profiler_overhead_included": true
+  },
+  "model": "gated_static",
+  "model_seed": 20260723,
+  "nodes": 2048,
+  "operators": [
+    {
+      "count": 96,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 4552.573999999957,
+      "device_memory_usage_bytes": -1113784320,
+      "device_time_total_us": 6258.269000000171,
+      "name": "autograd::engine::evaluate_function: AddmmBackward0",
+      "self_cpu_time_total_us": 514.8669999999001,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 207,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 2313.76700000002,
+      "device_memory_usage_bytes": 1514153472,
+      "device_time_total_us": 5245.436000000047,
+      "name": "aten::mm",
+      "self_cpu_time_total_us": 1640.4479999998402,
+      "self_device_time_total_us": 5245.436000000047
+    },
+    {
+      "count": 96,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 2960.38500000002,
+      "device_memory_usage_bytes": 1509428736,
+      "device_time_total_us": 5164.698000000033,
+      "name": "AddmmBackward0",
+      "self_cpu_time_total_us": 373.27000000002226,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 1701,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 9298.720999999796,
+      "device_memory_usage_bytes": 2493333504,
+      "device_time_total_us": 3795.372999999996,
+      "name": "aten::mul",
+      "self_cpu_time_total_us": 6110.356999999734,
+      "self_device_time_total_us": 3795.372999999996
+    },
+    {
+      "count": 192,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1428.6960000000827,
+      "device_memory_usage_bytes": 1051901952,
+      "device_time_total_us": 3476.4749999998867,
+      "name": "aten::cat",
+      "self_cpu_time_total_us": 917.8240000001051,
+      "self_device_time_total_us": 3476.4749999998867
+    },
+    {
+      "count": 63,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 3057.7410000000336,
+      "name": "void at::native::vectorized_gather_kernel<16, long>(char*, char*, long*, int, long, long, long, long, bool)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 3057.7410000000336
+    },
+    {
+      "count": 603,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 4968.279999999917,
+      "device_memory_usage_bytes": 156539904,
+      "device_time_total_us": 2995.0700000001334,
+      "name": "aten::sum",
+      "self_cpu_time_total_us": 3074.2299999997663,
+      "self_device_time_total_us": 2883.8940000001776
+    },
+    {
+      "count": 399,
+      "cpu_memory_usage_bytes": -360,
+      "cpu_time_total_us": 6612.66199999996,
+      "device_memory_usage_bytes": -821498880,
+      "device_time_total_us": 2834.5890000000654,
+      "name": "autograd::engine::evaluate_function: MulBackward0",
+      "self_cpu_time_total_us": 1409.2379999999685,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 36,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 2787.429999999983,
+      "name": "void at::native::(anonymous namespace)::CatArrayBatchedCopy<at::native::(anonymous namespace)::OpaqueType<4u>, unsigned int, 3, 64, 64>(at::native::(anonymous namespace)::OpaqueType<4u>*, at::native::(anonymous namespace)::CatArrInputTensorMetadata<at::native::(anonymous namespace)::OpaqueType<4u>, unsigned int, 64, 64>, at::native::(anonymous namespace)::TensorSizeStride<unsigned int, 4u>, int, unsigned int)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 2787.429999999983
+    },
+    {
+      "count": 942,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 2746.2270000000444,
+      "name": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1})",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 2746.2270000000444
+    },
+    {
+      "count": 87,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 2481.787000000041,
+      "device_memory_usage_bytes": 581394432,
+      "device_time_total_us": 2653.5950000000057,
+      "name": "aten::index",
+      "self_cpu_time_total_us": 602.3819999999841,
+      "self_device_time_total_us": 2367.6689999999962
+    },
+    {
+      "count": 153,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 2760.0229999999674,
+      "device_memory_usage_bytes": 1125801984,
+      "device_time_total_us": 2605.9469999999947,
+      "name": "aten::linear",
+      "self_cpu_time_total_us": 258.49199999993016,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 3,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 2605.1150000000125,
+      "name": "Optimizer.step#AdamW.step",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 2605.1150000000125
+    },
+    {
+      "count": 144,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1845.4970000000044,
+      "device_memory_usage_bytes": 1121083392,
+      "device_time_total_us": 2581.3380000000034,
+      "name": "aten::addmm",
+      "self_cpu_time_total_us": 1503.5179999999964,
+      "self_device_time_total_us": 2581.3380000000034
+    },
+    {
+      "count": 30,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 2097.353999999961,
+      "name": "void magma_sgemmEx_kernel<float, float, float, true, false, 6, 4, 6, 3, 4>(int, int, int, BatchedTensor, int, BatchedTensor, int, BatchedTensor, int, BatchedTensor, int, int, int, float const*, float const*, float, float, int, cublasLtEpilogue_t, int, void const*, long)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 2097.353999999961
+    },
+    {
+      "count": 75,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 929.5219999999799,
+      "device_memory_usage_bytes": 5462016,
+      "device_time_total_us": 1803.7770000000346,
+      "name": "aten::index_add",
+      "self_cpu_time_total_us": 400.7249999999267,
+      "self_device_time_total_us": 1734.8120000000035
+    },
+    {
+      "count": 18,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1763.1200000000026,
+      "device_memory_usage_bytes": -374734848,
+      "device_time_total_us": 1732.7539999999062,
+      "name": "autograd::engine::evaluate_function: IndexBackward0",
+      "self_cpu_time_total_us": 69.84800000001997,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 18,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1654.717999999979,
+      "device_memory_usage_bytes": 6881280,
+      "device_time_total_us": 1721.938999999922,
+      "name": "IndexBackward0",
+      "self_cpu_time_total_us": 41.86500000000524,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 399,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 3661.2090000000426,
+      "device_memory_usage_bytes": 1311771648,
+      "device_time_total_us": 1718.901000000118,
+      "name": "MulBackward0",
+      "self_cpu_time_total_us": 580.3230000001677,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 18,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1431.1169999999984,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1706.8009999999158,
+      "name": "aten::_index_put_impl_",
+      "self_cpu_time_total_us": 375.6340000001255,
+      "self_device_time_total_us": 1212.9659999998767
+    },
+    {
+      "count": 426,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1653.2960000000958,
+      "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, float, 4, 4> >(at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, float, 4, 4>)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1653.2960000000958
+    },
+    {
+      "count": 42,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1568.0870000000068,
+      "name": "void cutlass::Kernel2<cutlass_80_simt_sgemm_64x64_8x5_nt_align1>(cutlass_80_simt_sgemm_64x64_8x5_nt_align1::Params)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1568.0870000000068
+    },
+    {
+      "count": 21,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1535.7719999999754,
+      "name": "void cutlass::Kernel2<cutlass_80_simt_sgemm_32x128_8x5_nt_align1>(cutlass_80_simt_sgemm_32x128_8x5_nt_align1::Params)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1535.7719999999754
+    },
+    {
+      "count": 183,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1944.431999999988,
+      "device_memory_usage_bytes": 133708800,
+      "device_time_total_us": 1401.199000000015,
+      "name": "aten::bmm",
+      "self_cpu_time_total_us": 1462.4499999999662,
+      "self_device_time_total_us": 1401.199000000015
+    },
+    {
+      "count": 18,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1289.4540000000197,
+      "name": "void cutlass::Kernel2<cutlass_80_simt_sgemm_64x128_8x5_nn_align1>(cutlass_80_simt_sgemm_64x128_8x5_nn_align1::Params)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1289.4540000000197
+    },
+    {
+      "count": 39,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1150.3740000000116,
+      "name": "void at::native::indexFuncLargeIndex<float, long, unsigned int, 2, 2, -2, true, 4, at::native::(anonymous namespace)::ReduceAdd>(at::cuda::detail::TensorInfo<float, unsigned int>, at::cuda::detail::TensorInfo<float const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long, long, at::native::(anonymous namespace)::ReduceAdd const&, float, at::cuda::detail::IntDivider<unsigned int>)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1150.3740000000116
+    },
+    {
+      "count": 723,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 3822.406,
+      "device_memory_usage_bytes": 130750464,
+      "device_time_total_us": 1145.323999999946,
+      "name": "aten::div",
+      "self_cpu_time_total_us": 2495.2880000000805,
+      "self_device_time_total_us": 1145.323999999946
+    },
+    {
+      "count": 129,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1105.1520000000346,
+      "name": "void at::native::reduce_kernel<128, 4, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, float, 4, 4> >(at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, float, 4, 4>)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1105.1520000000346
+    },
+    {
+      "count": 57,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1643.0750000000153,
+      "device_memory_usage_bytes": -23774208,
+      "device_time_total_us": 1094.3999999999833,
+      "name": "autograd::engine::evaluate_function: BmmBackward0",
+      "self_cpu_time_total_us": 186.5930000000444,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 57,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1456.4819999999709,
+      "device_memory_usage_bytes": 109132800,
+      "device_time_total_us": 1094.3999999999833,
+      "name": "BmmBackward0",
+      "self_cpu_time_total_us": 182.4699999999466,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 483,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 2655.7819999999415,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1077.4550000000509,
+      "name": "aten::copy_",
+      "self_cpu_time_total_us": 1110.583999999928,
+      "self_device_time_total_us": 1077.4550000000509
+    },
+    {
+      "count": 30,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 333.90000000001237,
+      "device_memory_usage_bytes": -829784064,
+      "device_time_total_us": 1036.035000000018,
+      "name": "autograd::engine::evaluate_function: SiluBackward0",
+      "self_cpu_time_total_us": 86.25099999996019,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 30,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 247.64900000005218,
+      "device_memory_usage_bytes": 819462144,
+      "device_time_total_us": 1036.035000000018,
+      "name": "SiluBackward0",
+      "self_cpu_time_total_us": 32.16900000003443,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 30,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 215.48000000001775,
+      "device_memory_usage_bytes": 819462144,
+      "device_time_total_us": 1036.035000000018,
+      "name": "aten::silu_backward",
+      "self_cpu_time_total_us": 142.81300000001647,
+      "self_device_time_total_us": 1036.035000000018
+    },
+    {
+      "count": 21,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 1014.850000000024,
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::(anonymous namespace)::silu_backward_kernel(at::TensorIteratorBase&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(float, float)#1}, std::array<char*, 3ul> >(int, at::native::(anonymous namespace)::silu_backward_kernel(at::TensorIteratorBase&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(float, float)#1}, std::array<char*, 3ul>)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 1014.850000000024
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1240.3470000000198,
+      "device_memory_usage_bytes": -8775168,
+      "device_time_total_us": 1001.6069999999927,
+      "name": "autograd::engine::evaluate_function: IndexAddBackward0",
+      "self_cpu_time_total_us": 145.47000000004118,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 135,
+      "cpu_memory_usage_bytes": -264,
+      "cpu_time_total_us": 4714.446000000011,
+      "device_memory_usage_bytes": -10028544,
+      "device_time_total_us": 1000.772000000059,
+      "name": "autograd::engine::evaluate_function: DivBackward0",
+      "self_cpu_time_total_us": 593.7830000001486,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1084.2929999999797,
+      "device_memory_usage_bytes": 433938432,
+      "device_time_total_us": 997.4469999999928,
+      "name": "IndexAddBackward0",
+      "self_cpu_time_total_us": 86.47299999989264,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 869.369000000057,
+      "device_memory_usage_bytes": 433938432,
+      "device_time_total_us": 997.4469999999928,
+      "name": "aten::index_select",
+      "self_cpu_time_total_us": 284.5520000000579,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 353.5099999999875,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 997.4469999999928,
+      "name": "aten::gather",
+      "self_cpu_time_total_us": 225.55599999995684,
+      "self_device_time_total_us": 997.4469999999928
+    },
+    {
+      "count": 54,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1314.859000000015,
+      "device_memory_usage_bytes": -36237312,
+      "device_time_total_us": 886.9690000000519,
+      "name": "autograd::engine::evaluate_function: NativeLayerNormBackward0",
+      "self_cpu_time_total_us": 246.95100000000457,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 54,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 999.8280000000123,
+      "device_memory_usage_bytes": 27168768,
+      "device_time_total_us": 863.2260000000388,
+      "name": "NativeLayerNormBackward0",
+      "self_cpu_time_total_us": 115.22000000002663,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 54,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 884.6079999999856,
+      "device_memory_usage_bytes": 27168768,
+      "device_time_total_us": 863.2260000000388,
+      "name": "aten::native_layer_norm_backward",
+      "self_cpu_time_total_us": 284.04600000012215,
+      "self_device_time_total_us": 832.5040000000008
+    },
+    {
+      "count": 135,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 3269.5189999999347,
+      "device_memory_usage_bytes": 36472320,
+      "device_time_total_us": 751.7680000000983,
+      "name": "DivBackward0",
+      "self_cpu_time_total_us": 587.5829999998605,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 462,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 733.3349999999418,
+      "name": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::DivFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::DivFunctor<float> > const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::DivFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::DivFunctor<float> > const&)::{lambda(int)#1})",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 733.3349999999418
+    },
+    {
+      "count": 231,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 726.8080000000418,
+      "name": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 726.8080000000418
+    },
+    {
+      "count": 579,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 720.8279999999172,
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctor_add<float>, std::array<char*, 3ul> >(int, at::native::CUDAFunctor_add<float>, std::array<char*, 3ul>)",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 720.8279999999172
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1960.7200000000266,
+      "device_memory_usage_bytes": -3145728,
+      "device_time_total_us": 683.4539999999142,
+      "name": "autograd::engine::evaluate_function: AmaxBackward0",
+      "self_cpu_time_total_us": 145.45599999999467,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 48,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1815.264000000032,
+      "device_memory_usage_bytes": 7274496,
+      "device_time_total_us": 683.4539999999142,
+      "name": "AmaxBackward0",
+      "self_cpu_time_total_us": 247.79200000006313,
+      "self_device_time_total_us": 0.0
+    },
+    {
+      "count": 156,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 1564.378000000027,
+      "device_memory_usage_bytes": 515014656,
+      "device_time_total_us": 623.1910000000507,
+      "name": "aten::clone",
+      "self_cpu_time_total_us": 287.09600000011915,
+      "self_device_time_total_us": 0.0
+    }
+  ],
+  "peak_cuda_bytes": 1257324544,
+  "profiled_steps": 3,
+  "schema_version": 1,
+  "stages": {
+    "stage.backward": {
+      "count": 3,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 0.0,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 2.688000000009197,
+      "name": "stage.backward",
+      "self_cpu_time_total_us": 0.0,
+      "self_device_time_total_us": 2.688000000009197
+    },
+    "stage.forward": {
+      "count": 3,
+      "cpu_memory_usage_bytes": 624,
+      "cpu_time_total_us": 43670.26000000001,
+      "device_memory_usage_bytes": 3431044608,
+      "device_time_total_us": 15422.601999999973,
+      "name": "stage.forward",
+      "self_cpu_time_total_us": 9304.770999999926,
+      "self_device_time_total_us": 0.0
+    },
+    "stage.loss": {
+      "count": 3,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 200.1030000000028,
+      "device_memory_usage_bytes": 3072,
+      "device_time_total_us": 12.383999999987282,
+      "name": "stage.loss",
+      "self_cpu_time_total_us": 76.23800000000847,
+      "self_device_time_total_us": 0.0
+    },
+    "stage.optimizer_step": {
+      "count": 3,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 4215.634999999995,
+      "device_memory_usage_bytes": 0,
+      "device_time_total_us": 102.46800000002258,
+      "name": "stage.optimizer_step",
+      "self_cpu_time_total_us": 67.26399999999558,
+      "self_device_time_total_us": 0.0
+    },
+    "stage.zero_grad": {
+      "count": 3,
+      "cpu_memory_usage_bytes": 0,
+      "cpu_time_total_us": 363.77500000000225,
+      "device_memory_usage_bytes": -1684992,
+      "device_time_total_us": 0.0,
+      "name": "stage.zero_grad",
+      "self_cpu_time_total_us": 64.91199999998648,
+      "self_device_time_total_us": 0.0
+    }
+  },
+  "status": "completed",
+  "warmup": 2
+}

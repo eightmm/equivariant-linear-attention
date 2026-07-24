@@ -32,6 +32,7 @@ def build_regression_model(
     use_radial_trace: bool = False,
     global_transport_mode: str = "learned",
     coordinate_updates: bool = False,
+    coordinate_neighbor_policy: str = "error",
     use_multiscale_spatial_kernel: bool = False,
     use_pairwise_local_content: bool = False,
     pairwise_residual_scale_init: float = 0.1,
@@ -39,6 +40,7 @@ def build_regression_model(
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False,
     use_gated_local_transport: bool = False,
     use_grouped_invariant_normalization: bool = False,
+    readout_mode: str = "mean",
     hidden_tensor_dim: int = 0,
     scalar_content_mode: str = "unit",
     use_tensor_product_kernel: bool = False,
@@ -77,9 +79,8 @@ def build_regression_model(
                 normalize_edge_conditioned_local_by_sqrt_degree
             ),
             use_gated_local_transport=use_gated_local_transport,
-            use_grouped_invariant_normalization=(
-                use_grouped_invariant_normalization
-            ),
+            use_grouped_invariant_normalization=(use_grouped_invariant_normalization),
+            readout_mode=readout_mode,
             scalar_content_mode=scalar_content_mode,
             use_tensor_product_kernel=use_tensor_product_kernel,
             tensor_kernel_init=tensor_kernel_init,
@@ -91,6 +92,7 @@ def build_regression_model(
             memory_interaction_cutoff=memory_interaction_cutoff,
             use_radial_trace=use_radial_trace,
             coordinate_updates=coordinate_updates,
+            coordinate_neighbor_policy=coordinate_neighbor_policy,
             use_multiscale_spatial_kernel=use_multiscale_spatial_kernel,
         )
     )

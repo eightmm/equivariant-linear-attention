@@ -15,6 +15,8 @@ _MEMORY_ROUTER_DIM = 8
 _MEMORY_ROUTER_LOGIT_SCALE = 4.0
 _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
 _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
+_COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
+_READOUT_MODES = frozenset({"interaction", "mean", "sum"})
 
 
 def routing_head_counts(
@@ -78,6 +80,7 @@ class EquivariantAttentionConfig:
     eps: float = 1e-12
     global_transport_mode: str = "learned"
     coordinate_updates: bool = False
+    coordinate_neighbor_policy: str = "error"
     use_multiscale_spatial_kernel: bool = False
     use_pairwise_local_content: bool = False
     pairwise_residual_scale_init: float = 0.1
@@ -85,6 +88,7 @@ class EquivariantAttentionConfig:
     normalize_edge_conditioned_local_by_sqrt_degree: bool = False
     use_gated_local_transport: bool = False
     use_grouped_invariant_normalization: bool = False
+    readout_mode: str = "mean"
     scalar_content_mode: str = "unit"
     use_tensor_product_kernel: bool = False
     tensor_kernel_init: float = 0.05
@@ -136,8 +140,7 @@ class EquivariantAttention(nn.Module):
                 for local_heads in local_head_counts
             ):
                 raise ValueError(
-                    "gated local transport requires each local stage "
-                    "to use all heads"
+                    "gated local transport requires each local stage to use all heads"
                 )
 
         self.scalar_in = nn.Linear(config.node_dim, self.hidden_irreps.scalars)
@@ -229,6 +232,17 @@ class EquivariantAttention(nn.Module):
             tensor_out_channels,
             self.output_irreps.tensors,
         )
+        self.interaction_readout = (
+            _InteractionReadout(
+                scalars=self.hidden_irreps.scalars,
+                output_scalars=self.output_irreps.scalars,
+                num_rbf=config.num_rbf,
+                cutoff=config.local_cutoff,
+                eps=config.eps,
+            )
+            if config.readout_mode == "interaction"
+            else None
+        )
 
     def forward(
         self,
@@ -255,6 +269,12 @@ class EquivariantAttention(nn.Module):
             num_graphs=num_graphs,
             graph_counts=graph_counts,
         )
+        if self.interaction_readout is not None:
+            _validate_interaction_roles(
+                readout_mask,
+                batch,
+                num_graphs=num_graphs,
+            )
         scalars = self.scalar_in(node_feats)
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
         persistent_tensor = (
@@ -265,8 +285,21 @@ class EquivariantAttention(nn.Module):
         transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
         has_local_heads = any(layer.local_head_count for layer in self.layers)
-        if edge_index is not None and not has_local_heads:
-            raise ValueError("edge_index requires at least one layer with local heads")
+        if edge_index is not None and not (
+            has_local_heads or self.interaction_readout is not None
+        ):
+            raise ValueError("edge_index requires local heads or interaction readout")
+        resolved_edge_index = edge_index
+        resolved_edge_index_is_validated = edge_index_is_validated
+        if self.config.coordinate_updates and edge_index is not None:
+            if self.config.coordinate_neighbor_policy == "error":
+                raise ValueError(
+                    "coordinate_updates with external sparse candidates requires "
+                    "coordinate_neighbor_policy='fixed' or 'rebuild'"
+                )
+            if self.config.coordinate_neighbor_policy == "rebuild":
+                resolved_edge_index = None
+                resolved_edge_index_is_validated = False
         if has_local_heads and not self.config.coordinate_updates:
             local_geometry = _local_geometry(
                 pos,
@@ -275,8 +308,8 @@ class EquivariantAttention(nn.Module):
                 cutoff=self.config.local_cutoff,
                 num_rbf=self.config.num_rbf,
                 graph_counts=graph_counts,
-                edge_index=edge_index,
-                edge_index_is_validated=edge_index_is_validated,
+                edge_index=resolved_edge_index,
+                edge_index_is_validated=resolved_edge_index_is_validated,
             )
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
@@ -291,8 +324,8 @@ class EquivariantAttention(nn.Module):
                         cutoff=self.config.local_cutoff,
                         num_rbf=self.config.num_rbf,
                         graph_counts=graph_counts,
-                        edge_index=edge_index,
-                        edge_index_is_validated=edge_index_is_validated,
+                        edge_index=resolved_edge_index,
+                        edge_index_is_validated=(resolved_edge_index_is_validated),
                     )
                     if layer.local_head_count
                     else None
@@ -379,19 +412,33 @@ class EquivariantAttention(nn.Module):
         pooled_scalars = node_scalars if pool_mask is None else node_scalars[pool_mask]
         pooled_vectors = node_vectors if pool_mask is None else node_vectors[pool_mask]
         pooled_tensors = node_tensors if pool_mask is None else node_tensors[pool_mask]
+        pool = _scatter_sum if self.config.readout_mode == "sum" else _scatter_mean
+        graph_scalars = pool(
+            pooled_scalars,
+            pool_batch,
+            num_graphs,
+            pool_counts,
+        )
+        if self.interaction_readout is not None:
+            if readout_mask is None:
+                raise RuntimeError("interaction readout role validation was skipped")
+            graph_scalars = graph_scalars + self.interaction_readout(
+                scalars,
+                pos,
+                batch,
+                readout_mask,
+                num_graphs=num_graphs,
+                graph_counts=graph_counts,
+                edge_index=resolved_edge_index,
+                edge_index_is_validated=resolved_edge_index_is_validated,
+            ).to(dtype=graph_scalars.dtype)
         output = {
             "node_scalars": node_scalars,
             "node_vectors": node_vectors,
             "node_tensors": node_tensors,
-            "graph_scalars": _scatter_mean(
-                pooled_scalars, pool_batch, num_graphs, pool_counts
-            ),
-            "graph_vectors": _scatter_mean(
-                pooled_vectors, pool_batch, num_graphs, pool_counts
-            ),
-            "graph_tensors": _scatter_mean(
-                pooled_tensors, pool_batch, num_graphs, pool_counts
-            ),
+            "graph_scalars": graph_scalars,
+            "graph_vectors": pool(pooled_vectors, pool_batch, num_graphs, pool_counts),
+            "graph_tensors": pool(pooled_tensors, pool_batch, num_graphs, pool_counts),
         }
         if self.config.coordinate_updates:
             output["node_positions"] = pos
@@ -524,6 +571,7 @@ class _EquivariantMomentLayer(nn.Module):
                 vectors=vectors,
                 num_heads=local_head_count,
                 num_rbf=num_rbf,
+                eps=eps,
                 normalize_by_sqrt_degree=(
                     normalize_edge_conditioned_local_by_sqrt_degree
                 ),
@@ -540,6 +588,7 @@ class _EquivariantMomentLayer(nn.Module):
                     vectors=vectors,
                     num_heads=local_head_count,
                     num_rbf=num_rbf,
+                    eps=eps,
                 )
 
         self.norm = nn.LayerNorm(scalars)
@@ -603,9 +652,7 @@ class _EquivariantMomentLayer(nn.Module):
             nn.Parameter(torch.tensor(float(residual_scale_init))) if tensors else None
         )
         invariant_dim = scalars + 6 * num_heads + tensors
-        self.use_grouped_invariant_normalization = (
-            use_grouped_invariant_normalization
-        )
+        self.use_grouped_invariant_normalization = use_grouped_invariant_normalization
         self.scalar_update_norm = nn.LayerNorm(invariant_dim)
         self.scalar_update = nn.Sequential(
             nn.Linear(invariant_dim, scalars),
@@ -925,9 +972,7 @@ class _EquivariantMomentLayer(nn.Module):
             radial_trace,
         ]
         persistent_invariants = (
-            _st_frobenius_square(bounded_persistent_tensor)
-            if self.tensors
-            else None
+            _st_frobenius_square(bounded_persistent_tensor) if self.tensors else None
         )
         if self.use_grouped_invariant_normalization:
             scalar_message = _stable_group_norm(scalar_message)
@@ -1024,6 +1069,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
         vectors: int,
         num_heads: int,
         num_rbf: int,
+        eps: float = 1e-12,
         normalize_by_sqrt_degree: bool = False,
     ) -> None:
         super().__init__()
@@ -1036,6 +1082,7 @@ class _EdgeConditionedLocalTransport(nn.Module):
         self.scalars = scalars
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
+        self.eps = eps
         self.normalize_by_sqrt_degree = normalize_by_sqrt_degree
         self.edge_mlp = nn.Sequential(
             nn.Linear(2 * scalars + num_rbf, 12),
@@ -1075,45 +1122,54 @@ class _EdgeConditionedLocalTransport(nn.Module):
         )
         dtype = _moment_dtype(scalars, vectors, displacement)
         cutoff = _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
-        weights = cutoff.unsqueeze(-1).expand(-1, self.num_heads)
-        scalar_message = _edge_sum(
-            weights,
-            scalar_edge.to(dtype=dtype).reshape(-1, self.num_heads, self.head_dim),
-            receiver,
-            num_nodes,
+        edge_weight = cutoff[:, None, None]
+        scalar_edge_message = edge_weight * scalar_edge.to(dtype=dtype).reshape(
+            -1,
+            self.num_heads,
+            self.head_dim,
         )
-        vector_base = _edge_sum(
-            weights,
+        vector_edge_message = edge_weight * (
             torch.tanh(sender_gate).to(dtype=dtype).unsqueeze(-1)
-            * vectors[sender].to(dtype=dtype),
-            receiver,
-            num_nodes,
+            * vectors[sender].to(dtype=dtype)
         )
-        relative = _edge_sum(
-            weights,
+        relative_edge_message = edge_weight * (
             torch.tanh(relative_gate).to(dtype=dtype).unsqueeze(-1)
-            * displacement.to(dtype=dtype).unsqueeze(1),
-            receiver,
-            num_nodes,
+            * displacement.to(dtype=dtype).unsqueeze(1)
         )
-        tensor = _edge_sum(
-            weights,
+        tensor_edge_message = edge_weight * (
             torch.tanh(tensor_gate).to(dtype=dtype).unsqueeze(-1)
-            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1),
-            receiver,
-            num_nodes,
+            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1)
         )
         if self.normalize_by_sqrt_degree:
-            degree = cutoff.new_zeros(num_nodes).index_add(
-                0,
+            (
+                scalar_message,
+                vector_base,
+                relative,
+                tensor,
+                effective_degree,
+            ) = _fused_index_sum(
                 receiver,
-                torch.ones_like(cutoff),
+                num_nodes,
+                scalar_edge_message,
+                vector_edge_message,
+                relative_edge_message,
+                tensor_edge_message,
+                cutoff.square().unsqueeze(-1),
             )
-            inverse_sqrt_degree = degree.clamp_min(1.0).rsqrt()
+            inverse_sqrt_degree = (effective_degree.squeeze(-1) + self.eps).rsqrt()
             scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
             vector_base = vector_base * inverse_sqrt_degree[:, None, None]
             relative = relative * inverse_sqrt_degree[:, None, None]
             tensor = tensor * inverse_sqrt_degree[:, None, None]
+        else:
+            scalar_message, vector_base, relative, tensor = _fused_index_sum(
+                receiver,
+                num_nodes,
+                scalar_edge_message,
+                vector_edge_message,
+                relative_edge_message,
+                tensor_edge_message,
+            )
         radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
         return scalar_message, vector_base, relative, tensor, radial_trace
 
@@ -1128,6 +1184,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         vectors: int,
         num_heads: int,
         num_rbf: int,
+        eps: float = 1e-12,
     ) -> None:
         super().__init__()
         if scalars % num_heads:
@@ -1137,6 +1194,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         self.scalars = scalars
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
+        self.eps = eps
         hidden_dim = max(32, 2 * self.head_dim)
         edge_input_dim = 2 * self.head_dim + num_rbf + 5
         edge_output_dim = self.head_dim + 5
@@ -1181,8 +1239,8 @@ class _GatedEquivariantLocalTransport(nn.Module):
             ],
             dim=-1,
         )
-        rbf_features = rbf.to(dtype=scalars.dtype).unsqueeze(1).expand(
-            -1, self.num_heads, -1
+        rbf_features = (
+            rbf.to(dtype=scalars.dtype).unsqueeze(1).expand(-1, self.num_heads, -1)
         )
         edge_features = torch.cat(
             [
@@ -1194,58 +1252,47 @@ class _GatedEquivariantLocalTransport(nn.Module):
             dim=-1,
         )
         edge_output = self.edge_mlp(edge_features)
-        scalar_edge, scalar_gate, receiver_gate, sender_gate, relative_gate, tensor_gate = (
-            torch.split(
-                edge_output,
-                [self.head_dim, 1, 1, 1, 1, 1],
-                dim=-1,
-            )
+        (
+            scalar_edge,
+            scalar_gate,
+            receiver_gate,
+            sender_gate,
+            relative_gate,
+            tensor_gate,
+        ) = torch.split(
+            edge_output,
+            [self.head_dim, 1, 1, 1, 1, 1],
+            dim=-1,
         )
 
-        cutoff = _cosine_of_squared_distance_cutoff(
-            squared_distance.to(dtype=dtype)
-        )
-        weights = cutoff.unsqueeze(-1).expand(-1, self.num_heads)
-        scalar_message = _edge_sum(
-            weights,
-            (
-                scalar_edge * torch.sigmoid(scalar_gate)
-            ).to(dtype=dtype),
+        cutoff = _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
+        edge_weight = cutoff[:, None, None]
+        (
+            scalar_message,
+            vector_base,
+            relative,
+            tensor,
+            cutoff_mass,
+            effective_degree,
+        ) = _fused_index_sum(
             receiver,
             num_nodes,
-        )
-        vector_base = _edge_sum(
-            weights,
-            (
+            edge_weight * (scalar_edge * torch.sigmoid(scalar_gate)).to(dtype=dtype),
+            edge_weight
+            * (
                 torch.tanh(receiver_gate).to(dtype=dtype) * receiver_vector
                 + torch.tanh(sender_gate).to(dtype=dtype) * sender_vector
             ),
-            receiver,
-            num_nodes,
+            edge_weight * torch.tanh(relative_gate).to(dtype=dtype) * edge_direction,
+            edge_weight
+            * torch.tanh(tensor_gate).to(dtype=dtype)
+            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1),
+            cutoff.unsqueeze(-1),
+            cutoff.square().unsqueeze(-1),
         )
-        relative = _edge_sum(
-            weights,
-            torch.tanh(relative_gate).to(dtype=dtype) * edge_direction,
-            receiver,
-            num_nodes,
-        )
-        tensor = _edge_sum(
-            weights,
-            torch.tanh(tensor_gate).to(dtype=dtype)
-            * _symmetric_traceless_features(
-                displacement.to(dtype=dtype)
-            ).unsqueeze(1),
-            receiver,
-            num_nodes,
-        )
-
-        degree = cutoff.new_zeros(num_nodes).index_add(
-            0,
-            receiver,
-            torch.ones_like(cutoff),
-        )
-        cutoff_mass = cutoff.new_zeros(num_nodes).index_add(0, receiver, cutoff)
-        inverse_sqrt_degree = degree.clamp_min(1.0).rsqrt()
+        cutoff_mass = cutoff_mass.squeeze(-1)
+        effective_degree = effective_degree.squeeze(-1)
+        inverse_sqrt_degree = (effective_degree + self.eps).rsqrt()
         scalar_message = scalar_message * inverse_sqrt_degree[:, None, None]
         vector_base = vector_base * inverse_sqrt_degree[:, None, None]
         relative = relative * inverse_sqrt_degree[:, None, None]
@@ -1256,7 +1303,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
             scalar_message,
         )
         mass_features = torch.stack(
-            [torch.log1p(degree), torch.log1p(cutoff_mass)],
+            [torch.log1p(cutoff_mass), torch.log1p(effective_degree)],
             dim=-1,
         )
         mass_message = self.mass_projection(
@@ -1318,24 +1365,163 @@ class _LocalPairwiseContent(nn.Module):
             edge_content.to(dtype=reduction_dtype) * cutoff_weight[:, None, None]
         )
 
-        aggregated = weighted_content.new_zeros(
-            (num_nodes, head_count, query_scalar.shape[-1])
-        ).index_add(0, receiver, weighted_content)
-        degree = cutoff_weight.new_zeros(num_nodes).index_add(
-            0, receiver, torch.ones_like(cutoff_weight)
+        aggregated, cutoff_mass, effective_degree = _fused_index_sum(
+            receiver,
+            num_nodes,
+            weighted_content,
+            cutoff_weight.unsqueeze(-1),
+            cutoff_weight.square().unsqueeze(-1),
         )
-        cutoff_mass = cutoff_weight.new_zeros(num_nodes).index_add(
-            0, receiver, cutoff_weight
-        )
-        normalized = aggregated / degree.clamp_min(1.0).sqrt()[:, None, None]
+        cutoff_mass = cutoff_mass.squeeze(-1)
+        effective_degree = effective_degree.squeeze(-1)
+        normalized = aggregated / (effective_degree + self.eps).sqrt()[:, None, None]
         mass_features = torch.stack(
-            [torch.log1p(degree), torch.log1p(cutoff_mass)], dim=-1
+            [torch.log1p(cutoff_mass), torch.log1p(effective_degree)],
+            dim=-1,
         )
         mass_content = self.mass_projection(
             mass_features.to(dtype=query_scalar.dtype)
         ).to(dtype=reduction_dtype)
         message = normalized + mass_content[:, None, :]
         return self.residual_scale.to(dtype=reduction_dtype) * message
+
+
+class _InteractionReadout(nn.Module):
+    """Invariant ligand-pocket pooling with an O(E) parity-aware interface path."""
+
+    def __init__(
+        self,
+        *,
+        scalars: int,
+        output_scalars: int,
+        num_rbf: int,
+        cutoff: float,
+        eps: float,
+    ) -> None:
+        super().__init__()
+        width = max(8, min(32, scalars // 4))
+        self.num_rbf = num_rbf
+        self.cutoff = cutoff
+        self.eps = eps
+        self.node_norm = nn.LayerNorm(scalars)
+        self.entity_projection = nn.Linear(scalars, width, bias=False)
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(2 * scalars + num_rbf, width),
+            nn.SiLU(),
+            nn.Linear(width, width + 6),
+        )
+        self.context_norm = nn.LayerNorm(3 * width + 3)
+        self.context = nn.Sequential(
+            nn.Linear(3 * width + 3, width),
+            nn.SiLU(),
+        )
+        self.output = nn.Linear(width, output_scalars, bias=False)
+        nn.init.zeros_(self.output.weight)
+
+    def forward(
+        self,
+        scalars: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor,
+        ligand_mask: torch.Tensor,
+        *,
+        num_graphs: int,
+        graph_counts: torch.Tensor,
+        edge_index: torch.Tensor | None,
+        edge_index_is_validated: bool,
+    ) -> torch.Tensor:
+        ligand_counts, pocket_counts = _interaction_role_counts(
+            ligand_mask,
+            batch,
+            num_graphs=num_graphs,
+        )
+        node_state = _stable_layer_norm(self.node_norm, scalars)
+        entity_state = self.entity_projection(node_state)
+        ligand_pool = _scatter_mean(
+            entity_state[ligand_mask],
+            batch[ligand_mask],
+            num_graphs,
+            ligand_counts,
+        )
+        pocket_mask = ~ligand_mask
+        pocket_pool = _scatter_mean(
+            entity_state[pocket_mask],
+            batch[pocket_mask],
+            num_graphs,
+            pocket_counts,
+        )
+        receiver, sender, displacement, squared_distance, rbf = _local_geometry(
+            pos,
+            batch,
+            num_graphs=num_graphs,
+            cutoff=self.cutoff,
+            num_rbf=self.num_rbf,
+            graph_counts=graph_counts,
+            edge_index=edge_index,
+            edge_index_is_validated=edge_index_is_validated,
+        )
+        cross = ligand_mask[receiver] & ~ligand_mask[sender] & (receiver != sender)
+        receiver = receiver[cross]
+        sender = sender[cross]
+        displacement = displacement[cross]
+        squared_distance = squared_distance[cross]
+        rbf = rbf[cross]
+
+        width = entity_state.shape[-1]
+        if receiver.numel() == 0:
+            cross_pool = entity_state.new_zeros((num_graphs, width))
+            polar_moments = pos.new_zeros((num_graphs, 6, 3))
+        else:
+            edge_output = self.edge_mlp(
+                torch.cat(
+                    [
+                        node_state[receiver],
+                        node_state[sender],
+                        rbf.to(dtype=node_state.dtype),
+                    ],
+                    dim=-1,
+                )
+            )
+            cross_content, polar_gate = torch.split(
+                edge_output,
+                [width, 6],
+                dim=-1,
+            )
+            reduction_dtype = _moment_dtype(
+                edge_output,
+                displacement,
+                squared_distance,
+            )
+            cutoff = _cosine_of_squared_distance_cutoff(
+                squared_distance.to(dtype=reduction_dtype)
+            )
+            edge_direction = displacement.to(dtype=reduction_dtype)
+            cross_batch = batch[receiver]
+            cross_pool, polar_moments, effective_mass = _fused_index_sum(
+                cross_batch,
+                num_graphs,
+                cutoff[:, None] * cross_content.to(dtype=reduction_dtype),
+                cutoff[:, None, None]
+                * torch.tanh(polar_gate).to(dtype=reduction_dtype).unsqueeze(-1)
+                * edge_direction.unsqueeze(1),
+                cutoff.square().unsqueeze(-1),
+            )
+            inverse_mass = (effective_mass.squeeze(-1) + self.eps).rsqrt()
+            cross_pool = cross_pool * inverse_mass[:, None]
+            polar_moments = polar_moments * inverse_mass[:, None, None]
+
+        parity_features = _parity_even_triple_features(polar_moments)
+        context = torch.cat(
+            [
+                ligand_pool,
+                pocket_pool,
+                cross_pool.to(dtype=scalars.dtype),
+                parity_features.to(dtype=scalars.dtype),
+            ],
+            dim=-1,
+        )
+        hidden = self.context(_stable_layer_norm(self.context_norm, context))
+        return self.output(hidden)
 
 
 class _CoordinateUpdater(nn.Module):
@@ -1652,6 +1838,37 @@ def _edge_sum(
     )
     output = value.new_zeros((num_nodes, *value.shape[1:]))
     return output.index_add(0, receiver, expanded_weights * value)
+
+
+def _fused_index_sum(
+    index: torch.Tensor,
+    num_segments: int,
+    *values: torch.Tensor,
+) -> tuple[torch.Tensor, ...]:
+    if not values:
+        raise ValueError("at least one value is required")
+    edge_count = index.shape[0]
+    if any(value.shape[0] != edge_count for value in values):
+        raise ValueError("all fused values must share the index length")
+    shapes = [value.shape[1:] for value in values]
+    widths = [value.reshape(edge_count, -1).shape[1] for value in values]
+    packed = torch.cat(
+        [value.reshape(edge_count, width) for value, width in zip(values, widths)],
+        dim=-1,
+    )
+    reduced = packed.new_zeros((num_segments, sum(widths))).index_add(
+        0,
+        index,
+        packed,
+    )
+    return tuple(
+        part.reshape(num_segments, *shape)
+        for part, shape in zip(
+            torch.split(reduced, widths, dim=-1),
+            shapes,
+            strict=True,
+        )
+    )
 
 
 def _local_attention_weights(
@@ -3162,6 +3379,21 @@ def _scatter_mean(
     return (summed / count).to(dtype=output_dtype)
 
 
+def _scatter_sum(
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    num_graphs: int,
+    _graph_counts: torch.Tensor,
+) -> torch.Tensor:
+    output_dtype = value.dtype
+    reduction_dtype = torch.float64 if value.dtype == torch.float64 else torch.float32
+    return _segment_sum(
+        value.to(dtype=reduction_dtype),
+        batch,
+        num_graphs,
+    ).to(dtype=output_dtype)
+
+
 def _graph_metadata(batch: torch.Tensor) -> tuple[int, torch.Tensor]:
     if (batch < 0).any():
         raise ValueError("batch indices must be nonnegative")
@@ -3197,6 +3429,67 @@ def _readout_metadata(
     if bool(readout_mask.all().item()):
         return None, batch, graph_counts
     return readout_mask, selected_batch, selected_counts
+
+
+def _validate_interaction_roles(
+    ligand_mask: torch.Tensor | None,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+) -> None:
+    if ligand_mask is None:
+        raise ValueError("interaction readout requires a ligand readout_mask")
+    _interaction_role_counts(ligand_mask, batch, num_graphs=num_graphs)
+
+
+def _interaction_role_counts(
+    ligand_mask: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if ligand_mask.dtype != torch.bool or ligand_mask.shape != batch.shape:
+        raise ValueError("interaction readout_mask must be boolean with shape (N,)")
+    if ligand_mask.device != batch.device:
+        raise ValueError("interaction readout_mask and batch must share a device")
+    ligand_counts = torch.bincount(batch[ligand_mask], minlength=num_graphs)
+    pocket_counts = torch.bincount(batch[~ligand_mask], minlength=num_graphs)
+    if bool((ligand_counts == 0).any().item()):
+        raise ValueError("interaction readout requires ligand nodes in every graph")
+    if bool((pocket_counts == 0).any().item()):
+        raise ValueError("interaction readout requires pocket nodes in every graph")
+    return ligand_counts, pocket_counts
+
+
+def _parity_even_triple_features(polar_moments: torch.Tensor) -> torch.Tensor:
+    if polar_moments.shape[-2:] != (6, 3):
+        raise ValueError("polar_moments must end with shape (6, 3)")
+    first = torch.linalg.cross(
+        polar_moments[..., 0, :],
+        polar_moments[..., 1, :],
+    )
+    second = torch.linalg.cross(
+        polar_moments[..., 3, :],
+        polar_moments[..., 4, :],
+    )
+    first_triple = (first * polar_moments[..., 2, :]).sum(dim=-1)
+    second_triple = (second * polar_moments[..., 5, :]).sum(dim=-1)
+    first_bounded = first_triple / torch.hypot(
+        first_triple,
+        torch.ones_like(first_triple),
+    )
+    second_bounded = second_triple / torch.hypot(
+        second_triple,
+        torch.ones_like(second_triple),
+    )
+    return torch.stack(
+        [
+            first_bounded.square(),
+            second_bounded.square(),
+            first_bounded * second_bounded,
+        ],
+        dim=-1,
+    )
 
 
 def _bounded_irrep(value: torch.Tensor, eps: float) -> torch.Tensor:
@@ -3372,6 +3665,16 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
         choices = ", ".join(sorted(_GLOBAL_TRANSPORT_MODES))
         raise ValueError(f"global_transport_mode must be one of: {choices}")
+    if not isinstance(config.coordinate_neighbor_policy, str):
+        raise TypeError("coordinate_neighbor_policy must be a string")
+    if config.coordinate_neighbor_policy not in _COORDINATE_NEIGHBOR_POLICIES:
+        choices = ", ".join(sorted(_COORDINATE_NEIGHBOR_POLICIES))
+        raise ValueError(f"coordinate_neighbor_policy must be one of: {choices}")
+    if not isinstance(config.readout_mode, str):
+        raise TypeError("readout_mode must be a string")
+    if config.readout_mode not in _READOUT_MODES:
+        choices = ", ".join(sorted(_READOUT_MODES))
+        raise ValueError(f"readout_mode must be one of: {choices}")
     if not isinstance(config.scalar_content_mode, str):
         raise TypeError("scalar_content_mode must be a string")
     if config.scalar_content_mode not in _SCALAR_CONTENT_MODES:
@@ -3426,8 +3729,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             )
         if config.use_pairwise_local_content:
             raise ValueError(
-                "gated local transport cannot be combined with "
-                "pairwise local content"
+                "gated local transport cannot be combined with pairwise local content"
             )
         if config.learn_local_radial_gate:
             raise ValueError(
@@ -3573,6 +3875,8 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         )
     if output.scalars + output.vectors + output.tensors <= 0:
         raise ValueError("output_irreps must include at least one term")
+    if config.readout_mode == "interaction" and output.scalars <= 0:
+        raise ValueError("interaction readout requires scalar output channels")
 
 
 def _float32_control(

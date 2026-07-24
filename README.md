@@ -57,11 +57,15 @@ model = EquivariantAttention(
         use_multiscale_spatial_kernel=False,
         # Optional latent-coordinate refinement; disabled by default.
         coordinate_updates=False,
+        # External sparse candidates + moving coordinates must choose a policy.
+        coordinate_neighbor_policy="error",  # error | fixed | rebuild
         # Optional invariant receiver/sender/RBF local content; default off.
         use_pairwise_local_content=False,
         pairwise_residual_scale_init=0.1,
         # Optional per-local-layer invariant edge filters; default off.
         use_edge_conditioned_local_transport=False,
+        # mean | sum | ligand-pocket interaction residual.
+        readout_mode="mean",
     )
 )
 
@@ -89,8 +93,15 @@ uses the updated positions. The default remains off, preserving the existing
 six output keys and checkpoint schema. These are latent task coordinates, not
 optimized molecular geometries or force predictions.
 
+If moving coordinates are combined with an external sparse `edge_index`, the
+default `coordinate_neighbor_policy="error"` rejects the ambiguous topology.
+Choose `"fixed"` only when omitted pairs are intentionally forbidden from
+entering later, or `"rebuild"` to ignore the supplied candidates and rebuild
+complete same-graph candidates at every local stage. The latter is exact but
+quadratic without a production neighbor-list backend.
+
 For local routes, `use_pairwise_local_content=True` adds a small shared
-receiver/sender/RBF edge MLP plus explicit degree and smooth cutoff-mass
+receiver/sender/RBF edge MLP plus explicit smooth cutoff-mass/effective-degree
 features to the scalar message. It excludes self edges only in this added
 branch, keeps coordinates static unless separately enabled, and preserves the
 default parameter/state schema when off. See
@@ -109,14 +120,24 @@ Its per-head edge MLP sees the current receiver/sender scalar states, existing
 RBF distances, and invariant contractions of the current vectors with each
 other and the relative direction. It emits gated scalar, receiver-vector,
 sender-vector, relative-vector, and symmetric-traceless rank-2 messages,
-aggregates them by `sum/sqrt(receiver_degree)`, and exposes log degree and
-smooth cutoff mass explicitly. `use_grouped_invariant_normalization=True`
+aggregates them using the smooth effective degree
+`sum(f_cutoff**2)`, and exposes smooth cutoff mass/effective degree explicitly.
+`use_grouped_invariant_normalization=True`
 separately standardizes scalar-message, angular, and persistent-tensor
 invariant families before their existing shared update. Both switches are
 disabled by default and add no raw atom, bond, residue, or label feature.
 Their exact equations and matched real-data result are in
 [the derivation](docs/LAYER_MATH.md#gated-same-feature-local-transport) and
 [the evaluation record](docs/EVALUATION.md#same-feature-gated-hybrid-outcome-2026-07-24).
+
+For protein-ligand affinity experiments, `readout_mode="interaction"` keeps the
+ligand mean prediction as a zero-initialized residual baseline and adds
+ligand, pocket, cross-interface, and parity-even triple-product features. It
+requires a Boolean ligand `readout_mask`; the complement is treated as pocket.
+The head is O(3)-invariant, translation invariant, and permutation consistent,
+but it is an experimental parity-aware readout rather than a parity-complete
+hidden backbone. The current 16-complex train-only diagnostic did not beat the
+mean readout, so the public default remains `"mean"`.
 
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:
@@ -315,6 +336,11 @@ uv run python scripts/benchmark_sparse_scaling.py --edge-free-spatial-grid \
   --metrics-out artifacts/edge-free-spatial-grid.json
 uv run python scripts/probe_memory_activation.py --memory-counts 4 8
 ```
+
+GitHub Actions is manual-only (`workflow_dispatch`) to avoid spending hosted
+runner time on every push. Run `scripts/check.sh fast` locally before merging;
+the workflow can still be dispatched explicitly when an independent hosted
+check is useful.
 
 The training CLI exposes registered `--routing ggg/lgg/ggl/lgl/lll`,
 `--global-transport-mode learned/uniform/none`,

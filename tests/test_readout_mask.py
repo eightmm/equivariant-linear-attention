@@ -9,6 +9,7 @@ from equivariant_attention.moment import (
     EquivariantAttention,
     EquivariantAttentionConfig,
 )
+import equivariant_attention.moment as moment
 
 
 def _samples() -> tuple[GraphSample, GraphSample]:
@@ -41,7 +42,7 @@ def _samples() -> tuple[GraphSample, GraphSample]:
     return first, second
 
 
-def _attention() -> EquivariantAttention:
+def _attention(*, readout_mode: str = "mean") -> EquivariantAttention:
     return EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=2,
@@ -50,6 +51,7 @@ def _attention() -> EquivariantAttention:
             num_layers=2,
             num_heads=3,
             use_key_balancing=False,
+            readout_mode=readout_mode,
         )
     ).double()
 
@@ -178,4 +180,115 @@ def test_readout_mask_validation_and_private_egnn_pooling() -> None:
             batch.pos,
             batch=batch.batch,
             readout_mask=invalid,
+        )
+
+
+def test_interaction_readout_is_zero_init_compatible_and_o3_permutation_safe() -> None:
+    batch = collate_graphs(_samples())
+    assert batch.readout_mask is not None
+    torch.manual_seed(1701)
+    mean_model = _attention()
+    torch.manual_seed(1701)
+    interaction_model = _attention(readout_mode="interaction")
+
+    mean_state = mean_model.state_dict()
+    interaction_state = interaction_model.state_dict()
+    for name in mean_state.keys() & interaction_state.keys():
+        assert torch.equal(mean_state[name], interaction_state[name]), name
+
+    mean_output = mean_model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    interaction_output = interaction_model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    assert torch.equal(
+        mean_output["graph_scalars"],
+        interaction_output["graph_scalars"],
+    )
+
+    with torch.no_grad():
+        interaction_model.interaction_readout.output.weight.normal_()
+    orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    orthogonal[:, 0].neg_()
+    translation = torch.randn(1, 3, dtype=torch.float64)
+    permutation = torch.tensor([2, 0, 1, 4, 3])
+
+    reference = interaction_model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )["graph_scalars"]
+    moved = interaction_model(
+        batch.node_feats,
+        batch.pos @ orthogonal.T + translation,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )["graph_scalars"]
+    permuted = interaction_model(
+        batch.node_feats[permutation],
+        batch.pos[permutation],
+        batch=batch.batch[permutation],
+        readout_mask=batch.readout_mask[permutation],
+    )["graph_scalars"]
+
+    assert torch.allclose(moved, reference, atol=1e-9, rtol=1e-9)
+    assert torch.allclose(permuted, reference, atol=1e-9, rtol=1e-9)
+
+
+def test_interaction_readout_requires_ligand_and_pocket_roles() -> None:
+    batch = collate_graphs(_samples())
+    model = _attention(readout_mode="interaction")
+
+    with pytest.raises(ValueError, match="readout_mask"):
+        model(batch.node_feats, batch.pos, batch=batch.batch)
+    with pytest.raises(ValueError, match="pocket"):
+        model(
+            batch.node_feats,
+            batch.pos,
+            batch=batch.batch,
+            readout_mask=torch.ones_like(batch.batch, dtype=torch.bool),
+        )
+
+
+def test_parity_even_triple_features_preserve_global_reflection() -> None:
+    torch.manual_seed(1703)
+    polar_moments = torch.randn(4, 6, 3, dtype=torch.float64)
+    orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    if torch.linalg.det(orthogonal) > 0:
+        orthogonal[:, 0].neg_()
+
+    reference = moment._parity_even_triple_features(polar_moments)
+    reflected = moment._parity_even_triple_features(polar_moments @ orthogonal.T)
+
+    assert torch.count_nonzero(reference)
+    assert torch.allclose(reflected, reference, atol=1e-12, rtol=1e-12)
+
+
+def test_readout_mode_validation_and_sum_pooling() -> None:
+    with pytest.raises(TypeError, match="readout_mode"):
+        _attention(readout_mode=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="readout_mode"):
+        _attention(readout_mode="unknown")
+
+    batch = collate_graphs(_samples())
+    assert batch.readout_mask is not None
+    output = _attention(readout_mode="sum")(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    for graph_index in range(2):
+        selected = batch.readout_mask & (batch.batch == graph_index)
+        assert torch.allclose(
+            output["graph_scalars"][graph_index],
+            output["node_scalars"][selected].sum(dim=0),
         )

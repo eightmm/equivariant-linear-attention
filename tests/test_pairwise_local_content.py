@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
+import equivariant_attention.moment as moment
 
 
 def _config(*, pairwise: bool) -> EquivariantAttentionConfig:
@@ -131,7 +132,9 @@ def test_pairwise_local_parameters_are_active_and_parameter_bounded() -> None:
     ]
     assert pairwise_parameters
     assert all(parameter.grad is not None for parameter in pairwise_parameters)
-    assert all(torch.isfinite(parameter.grad).all() for parameter in pairwise_parameters)
+    assert all(
+        torch.isfinite(parameter.grad).all() for parameter in pairwise_parameters
+    )
     assert all(torch.count_nonzero(parameter.grad) for parameter in pairwise_parameters)
     baseline_count = sum(parameter.numel() for parameter in baseline.parameters())
     candidate_count = sum(parameter.numel() for parameter in model.parameters())
@@ -179,3 +182,46 @@ def test_pairwise_local_content_supports_exact_baseline_initialization() -> None
                 pairwise_residual_scale_init=-0.1,
             )
         )
+
+
+def test_pairwise_local_content_is_continuous_at_cutoff() -> None:
+    torch.manual_seed(823)
+    module = moment._LocalPairwiseContent(
+        head_dim=4,
+        num_rbf=4,
+        residual_scale_init=0.1,
+        eps=1e-12,
+    ).double()
+    query = torch.randn(3, 1, 4, dtype=torch.float64)
+    key = torch.randn(3, 1, 4, dtype=torch.float64)
+    batch = torch.zeros(3, dtype=torch.long)
+    edge_index = torch.tensor([[0, 1, 2, 0, 0], [0, 1, 2, 1, 2]])
+
+    def evaluate(distance: float) -> tuple[torch.Tensor, torch.Tensor]:
+        pos = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.8, 0.2, 0.0], [distance, 0.0, 0.0]],
+            dtype=torch.float64,
+            requires_grad=True,
+        )
+        geometry = moment._local_geometry(
+            pos,
+            batch,
+            num_graphs=1,
+            cutoff=2.5,
+            num_rbf=4,
+            edge_index=edge_index,
+        )
+        output = module(query, key, geometry, num_nodes=3)
+        gradient = torch.autograd.grad(output.square().sum(), pos)[0]
+        return output.detach(), gradient.detach()
+
+    inside, inside_gradient = evaluate(2.5 - 1e-5)
+    outside, outside_gradient = evaluate(2.5 + 1e-5)
+
+    assert torch.allclose(inside, outside, atol=2e-4, rtol=2e-4)
+    assert torch.allclose(
+        inside_gradient,
+        outside_gradient,
+        atol=2e-3,
+        rtol=2e-3,
+    )

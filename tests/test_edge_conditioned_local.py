@@ -93,10 +93,7 @@ def test_edge_conditioned_sum_matches_explicit_dense_reference() -> None:
         edge_output, [8, 2, 2, 2], dim=-1
     )
     cutoff = moment._cosine_of_squared_distance_cutoff(squared_distance)
-    expected = [
-        torch.zeros_like(value)
-        for value in actual
-    ]
+    expected = [torch.zeros_like(value) for value in actual]
     for edge in range(receiver.numel()):
         target = int(receiver[edge])
         weight = cutoff[edge]
@@ -119,7 +116,7 @@ def test_edge_conditioned_sum_matches_explicit_dense_reference() -> None:
         assert torch.allclose(observed, reference, atol=1e-12, rtol=1e-11)
 
 
-def test_edge_conditioned_sqrt_degree_matches_explicit_receiver_reference() -> None:
+def test_edge_conditioned_soft_degree_matches_explicit_receiver_reference() -> None:
     torch.manual_seed(1212)
     baseline = moment._EdgeConditionedLocalTransport(
         scalars=8,
@@ -157,11 +154,21 @@ def test_edge_conditioned_sqrt_degree_matches_explicit_receiver_reference() -> N
 
     raw_outputs = baseline(scalars, vectors, geometry, num_nodes=4)
     actual = normalized(scalars, vectors, geometry, num_nodes=4)
-    degree = torch.tensor([2.0, 1.0, 0.0, 0.0], dtype=torch.float64)
+    receiver, sender, _displacement, squared_distance, _rbf = geometry
+    nonself = receiver != sender
+    receiver = receiver[nonself]
+    cutoff = moment._cosine_of_squared_distance_cutoff(squared_distance[nonself])
+    effective_degree = cutoff.new_zeros(4).index_add(
+        0,
+        receiver,
+        cutoff.square(),
+    )
 
     for raw, observed in zip(raw_outputs, actual, strict=True):
-        divisor = degree.clamp_min(1.0).sqrt().reshape(
-            4, *((1,) * (raw.ndim - 1))
+        divisor = (
+            (effective_degree + normalized.eps)
+            .sqrt()
+            .reshape(4, *((1,) * (raw.ndim - 1)))
         )
         assert torch.allclose(observed, raw / divisor, atol=1e-12, rtol=1e-11)
         assert torch.isfinite(observed).all()
@@ -239,9 +246,7 @@ def test_edge_conditioned_public_path_preserves_o3_permutation_and_edge_order(
     normalize_by_sqrt_degree: bool,
 ) -> None:
     torch.manual_seed(1217)
-    model = _edge_conditioned_model(
-        normalize_by_sqrt_degree=normalize_by_sqrt_degree
-    )
+    model = _edge_conditioned_model(normalize_by_sqrt_degree=normalize_by_sqrt_degree)
     node_feats, pos, batch, edge_index = _sparse_batch()
     orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
     orthogonal[:, 0].neg_()
@@ -289,9 +294,7 @@ def test_edge_conditioned_batch_preserves_graph_relabel_frames_and_isolation(
     normalize_by_sqrt_degree: bool,
 ) -> None:
     torch.manual_seed(1219)
-    model = _edge_conditioned_model(
-        normalize_by_sqrt_degree=normalize_by_sqrt_degree
-    )
+    model = _edge_conditioned_model(normalize_by_sqrt_degree=normalize_by_sqrt_degree)
     node_feats, pos, batch, edge_index = _sparse_batch()
     first_orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
     second_orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
@@ -299,10 +302,7 @@ def test_edge_conditioned_batch_preserves_graph_relabel_frames_and_isolation(
     orthogonal = torch.stack([first_orthogonal, second_orthogonal])
     translation = torch.randn(2, 3, dtype=torch.float64)
     node_orthogonal = orthogonal[batch]
-    moved_pos = (
-        torch.einsum("na,nba->nb", pos, node_orthogonal)
-        + translation[batch]
-    )
+    moved_pos = torch.einsum("na,nba->nb", pos, node_orthogonal) + translation[batch]
 
     reference = model(node_feats, pos, batch=batch, edge_index=edge_index)
     moved = model(node_feats, moved_pos, batch=batch, edge_index=edge_index)

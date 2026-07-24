@@ -1,11 +1,14 @@
 import pytest
 import torch
+from torch import nn
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 import equivariant_attention.moment as moment
 
 
-def _config(*, coordinate_updates: bool, routing: str = "lgl") -> EquivariantAttentionConfig:
+def _config(
+    *, coordinate_updates: bool, routing: str = "lgl"
+) -> EquivariantAttentionConfig:
     local_head_counts = {
         "ggg": (0, 0, 0),
         "lgl": (2, 0, 2),
@@ -55,11 +58,11 @@ def _graph_means(value: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
     return torch.stack(means)
 
 
-def test_coordinate_updates_are_opt_in_without_changing_default_state_or_output() -> None:
+def test_coordinate_updates_are_opt_in_without_changing_default_state_or_output() -> (
+    None
+):
     torch.manual_seed(709)
-    default = EquivariantAttention(
-        EquivariantAttentionConfig(node_dim=4)
-    ).double()
+    default = EquivariantAttention(EquivariantAttentionConfig(node_dim=4)).double()
     torch.manual_seed(709)
     explicit_off = EquivariantAttention(
         EquivariantAttentionConfig(node_dim=4, coordinate_updates=False)
@@ -158,8 +161,10 @@ def test_attention_coordinate_steps_are_bounded_and_preserve_graph_centroids() -
     for step in steps:
         assert float(torch.linalg.vector_norm(step, dim=-1).max()) <= 0.25 + 1e-12
         assert torch.allclose(
-            _graph_means(step, batch), torch.zeros(2, 3, dtype=torch.float64),
-            atol=1e-12, rtol=0.0,
+            _graph_means(step, batch),
+            torch.zeros(2, 3, dtype=torch.float64),
+            atol=1e-12,
+            rtol=0.0,
         )
     assert torch.allclose(
         _graph_means(output["node_positions"], batch),
@@ -202,7 +207,80 @@ def test_dynamic_attention_recomputes_local_and_global_geometry_per_layer(
     assert global_calls == 3
 
 
-def test_attention_coordinate_update_handles_singletons_coincident_nodes_and_gradients() -> None:
+def test_dynamic_sparse_candidates_require_an_explicit_neighbor_policy() -> None:
+    model = EquivariantAttention(
+        EquivariantAttentionConfig(
+            node_dim=4,
+            hidden_irreps="8x0e + 2x1o",
+            num_layers=2,
+            num_heads=2,
+            local_head_counts=(2, 2),
+            coordinate_updates=True,
+        )
+    )
+    node_feats = torch.randn(2, 4)
+    pos = torch.tensor([[-1.3, 0.0, 0.0], [1.3, 0.0, 0.0]])
+    self_edges = torch.tensor([[0, 1], [0, 1]])
+
+    with pytest.raises(ValueError, match="coordinate_neighbor_policy"):
+        model(node_feats, pos, edge_index=self_edges)
+
+
+def test_dynamic_rebuild_policy_admits_a_cutoff_crossing_neighbor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FixedCenteredStep(nn.Module):
+        def forward(self, *_args: object) -> torch.Tensor:
+            return torch.tensor(
+                [[0.1, 0.0, 0.0], [-0.1, 0.0, 0.0]],
+                dtype=torch.float64,
+            )
+
+    model = EquivariantAttention(
+        EquivariantAttentionConfig(
+            node_dim=4,
+            hidden_irreps="8x0e + 1x1o",
+            output_irreps="1x0e",
+            num_layers=2,
+            num_heads=1,
+            local_head_counts=(1, 1),
+            use_key_balancing=False,
+            coordinate_updates=True,
+            coordinate_neighbor_policy="rebuild",
+        )
+    ).double()
+    model.coordinate_updaters[0] = FixedCenteredStep()
+    observed_edges: list[set[tuple[int, int]]] = []
+    original = moment._local_geometry
+
+    def capture(*args: object, **kwargs: object) -> tuple[torch.Tensor, ...]:
+        assert kwargs["edge_index"] is None
+        geometry = original(*args, **kwargs)
+        observed_edges.append(
+            set(zip(geometry[0].tolist(), geometry[1].tolist(), strict=True))
+        )
+        return geometry
+
+    monkeypatch.setattr(moment, "_local_geometry", capture)
+    node_feats = torch.randn(2, 4, dtype=torch.float64)
+    pos = torch.tensor(
+        [[-1.3, 0.0, 0.0], [1.3, 0.0, 0.0]],
+        dtype=torch.float64,
+    )
+    self_edges = torch.tensor([[0, 1], [0, 1]])
+
+    model(node_feats, pos, edge_index=self_edges)
+
+    assert len(observed_edges) == 2
+    assert (0, 1) not in observed_edges[0]
+    assert (1, 0) not in observed_edges[0]
+    assert (0, 1) in observed_edges[1]
+    assert (1, 0) in observed_edges[1]
+
+
+def test_attention_coordinate_update_handles_singletons_coincident_nodes_and_gradients() -> (
+    None
+):
     model = _model().train()
     node_feats = torch.randn(4, 4, dtype=torch.float64, requires_grad=True)
     pos = torch.tensor(
@@ -213,9 +291,9 @@ def test_attention_coordinate_update_handles_singletons_coincident_nodes_and_gra
     batch = torch.tensor([0, 1, 1, 1])
 
     output = model(node_feats, pos, batch=batch)
-    loss = output["graph_scalars"].square().sum() + output[
-        "node_positions"
-    ].square().sum()
+    loss = (
+        output["graph_scalars"].square().sum() + output["node_positions"].square().sum()
+    )
     loss.backward()
 
     assert torch.equal(output["node_positions"][0], pos[0])
@@ -231,7 +309,9 @@ def test_attention_coordinate_update_handles_singletons_coincident_nodes_and_gra
         parameter.grad is not None and torch.isfinite(parameter.grad).all()
         for parameter in coordinate_parameters
     )
-    assert any(torch.count_nonzero(parameter.grad) for parameter in coordinate_parameters)
+    assert any(
+        torch.count_nonzero(parameter.grad) for parameter in coordinate_parameters
+    )
 
 
 def test_dynamic_attention_scalar_coordinate_gradients_are_o3_covariant() -> None:
@@ -263,6 +343,23 @@ def test_coordinate_updates_requires_an_exact_bool() -> None:
         )
 
 
+def test_coordinate_neighbor_policy_requires_a_registered_string() -> None:
+    with pytest.raises(TypeError, match="coordinate_neighbor_policy"):
+        EquivariantAttention(
+            EquivariantAttentionConfig(
+                node_dim=4,
+                coordinate_neighbor_policy=True,  # type: ignore[arg-type]
+            )
+        )
+    with pytest.raises(ValueError, match="coordinate_neighbor_policy"):
+        EquivariantAttention(
+            EquivariantAttentionConfig(
+                node_dim=4,
+                coordinate_neighbor_policy="unknown",
+            )
+        )
+
+
 def test_coordinate_updates_require_two_layers_and_a_hidden_vector_channel() -> None:
     with pytest.raises(ValueError, match="at least two layers"):
         EquivariantAttention(
@@ -283,7 +380,9 @@ def test_coordinate_updates_require_two_layers_and_a_hidden_vector_channel() -> 
         )
 
 
-def test_coordinate_updates_keep_bfloat16_features_and_float32_geometry_finite() -> None:
+def test_coordinate_updates_keep_bfloat16_features_and_float32_geometry_finite() -> (
+    None
+):
     model = EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=4,
@@ -298,9 +397,10 @@ def test_coordinate_updates_keep_bfloat16_features_and_float32_geometry_finite()
     pos = torch.randn(5, 3, dtype=torch.float32, requires_grad=True)
 
     output = model(node_feats, pos)
-    loss = output["graph_scalars"].float().square().sum() + output[
-        "node_positions"
-    ].square().sum()
+    loss = (
+        output["graph_scalars"].float().square().sum()
+        + output["node_positions"].square().sum()
+    )
     loss.backward()
 
     assert output["node_positions"].dtype == torch.float32

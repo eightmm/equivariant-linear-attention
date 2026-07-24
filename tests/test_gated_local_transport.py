@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
+import equivariant_attention.moment as moment
 
 
 def _model(
@@ -49,12 +50,8 @@ def test_gated_local_defaults_are_exactly_backward_compatible() -> None:
     assert list(default.state_dict()) == list(explicit.state_dict())
     for name, value in default.state_dict().items():
         assert torch.equal(value, explicit.state_dict()[name]), name
-    default_output = default(
-        node_feats, pos, batch=batch, edge_index=edge_index
-    )
-    explicit_output = explicit(
-        node_feats, pos, batch=batch, edge_index=edge_index
-    )
+    default_output = default(node_feats, pos, batch=batch, edge_index=edge_index)
+    explicit_output = explicit(node_feats, pos, batch=batch, edge_index=edge_index)
     for name in default_output:
         assert torch.equal(default_output[name], explicit_output[name]), name
 
@@ -142,6 +139,57 @@ def test_gated_local_receives_finite_nonzero_state_and_coordinate_gradients() ->
     for gradient in (node_feats.grad, pos.grad):
         assert gradient is not None and torch.isfinite(gradient).all()
         assert torch.count_nonzero(gradient)
+
+
+def test_gated_local_is_output_and_gradient_continuous_at_cutoff() -> None:
+    torch.manual_seed(2405)
+    transport = moment._GatedEquivariantLocalTransport(
+        scalars=4,
+        vectors=1,
+        num_heads=1,
+        num_rbf=4,
+        eps=1e-12,
+    ).double()
+    scalars = torch.randn(3, 4, dtype=torch.float64)
+    vectors = torch.randn(3, 1, 3, dtype=torch.float64)
+    batch = torch.zeros(3, dtype=torch.long)
+    edge_index = torch.tensor([[0, 1, 2, 0, 0], [0, 1, 2, 1, 2]])
+
+    def evaluate(distance: float) -> tuple[torch.Tensor, torch.Tensor]:
+        pos = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.8, 0.2, 0.0], [distance, 0.0, 0.0]],
+            dtype=torch.float64,
+            requires_grad=True,
+        )
+        geometry = moment._local_geometry(
+            pos,
+            batch,
+            num_graphs=1,
+            cutoff=2.5,
+            num_rbf=4,
+            edge_index=edge_index,
+        )
+        outputs = transport(scalars, vectors, geometry, num_nodes=3)
+        flat = torch.cat([value.reshape(-1) for value in outputs])
+        coefficients = torch.linspace(
+            0.25,
+            1.25,
+            flat.numel(),
+            dtype=flat.dtype,
+        )
+        gradient = torch.autograd.grad((flat * coefficients).sum(), pos)[0]
+        return flat.detach(), gradient.detach()
+
+    inside, inside_gradient = evaluate(2.5 - 1e-5)
+    outside, outside_gradient = evaluate(2.5 + 1e-5)
+
+    assert torch.allclose(inside, outside, atol=2e-4, rtol=2e-4)
+    assert torch.allclose(
+        inside_gradient,
+        outside_gradient,
+        atol=2e-3,
+        rtol=2e-3,
+    )
 
 
 @pytest.mark.parametrize(

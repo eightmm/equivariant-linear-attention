@@ -2,6 +2,29 @@
 
 ## Status
 
+- Model-feedback follow-up implemented on 2026-07-24. Automatic GitHub Actions
+  triggers are disabled; the CPU workflow is available only through manual
+  `workflow_dispatch`, while `scripts/check.sh fast` remains the local release
+  gate. The gated, normalized edge-conditioned, and pairwise local paths now
+  normalize with smooth effective degree `sum_j f_c(u_ij)^2` and expose only
+  smooth cutoff statistics, removing the raw-degree discontinuity at the
+  cutoff. Their edge contributions are packed into one receiver reduction per
+  stage. Against base commit `626275a`, the matched CUDA profiler reduced
+  `aten::index_add` calls from 75 to 45 over three train steps; forward device
+  time and peak allocation changed by `+2.3%/+3.3%`, so this is a launch-count
+  reduction, not a demonstrated latency or memory win.
+- Dynamic coordinates now require an explicit external-neighbor contract:
+  default `error`, approximate `fixed`, or exact complete-candidate `rebuild`.
+  An opt-in ligand/pocket/cross-interface readout adds parity-even products of
+  learned pseudoscalars while preserving full O(3). It is zero initialized and
+  initially matches ligand mean pooling exactly. On the frozen cached
+  ATOM3D-LBA train rows 0--15, 1,000 updates gave final train MAE
+  `0.088952 pK` for mean and `0.183435 pK` for interaction readout; median
+  steps were `24.01/26.99 ms`. The interaction head is therefore retained only
+  as an experimental task-specific path and is not promoted. No validation or
+  test labels were read. Full parity-complete hidden irreps and a production
+  Verlet/cell-list neighbor backend remain future work. Evidence is in
+  `artifacts/model-feedback-followup-20260724/`.
 - Same-feature gated local/global packet confirmed on 2026-07-24. Raw node
   features, coordinates, splits, targets, and matched sparse candidates remain
   identical across compared models; only the architecture may change. The two
@@ -452,10 +475,11 @@
   distinct; the disabled state schema remains byte-for-byte compatible.
 - With coordinate updates enabled, local cutoff/RBF geometry and scale-first
   global geometry are recomputed from the current positions before every
-  applicable block. A supplied `edge_index` remains a fixed candidate topology
-  but its candidates are cutoff-filtered again at each local stage; omitted
-  edges cannot enter later solely because coordinates move. The complete-graph
-  fallback can admit every same-graph candidate at each stage.
+  applicable block. An external `edge_index` is rejected by default. The
+  explicit `fixed` policy re-filters the same candidates at each local stage,
+  so omitted edges cannot enter later; `rebuild` ignores the supplied topology
+  and reconstructs complete same-graph candidates so cutoff-crossing pairs can
+  enter. The exact fallback is quadratic without a production neighbor backend.
 - A coordinate-enabled forward adds `node_positions` to the tensor-only output
   dictionary. The disabled default retains exactly the existing six output
   keys. Updated coordinates are latent task features, not claims of optimized

@@ -18,6 +18,54 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Model-feedback follow-up (2026-07-24)
+
+The follow-up addressed three correctness/architecture issues without changing
+public defaults: cutoff-discontinuous raw degree, ambiguous sparse candidates
+under coordinate updates, and affinity readout that ignored the pocket except
+through the backbone. Automatic GitHub Actions runs were also removed; the
+workflow is manual-only.
+
+The gated, normalized edge-conditioned, and pairwise local paths now use
+`S_i=sum_j f_c(u_ij)^2` for normalization and smooth mass features. Gated local
+message families and their two mass statistics share one packed receiver
+reduction. A matched full-train-step CUDA profiler used the exact same graph,
+model seed, and initial-state hash on base commit `626275a` and the follow-up:
+
+| implementation | `aten::index_add` calls / 3 steps | forward device time | peak CUDA allocation |
+|---|---:|---:|---:|
+| base `626275a` | 75 | 15.423 ms | 1,257,324,544 B |
+| smooth/fused | 45 | 15.782 ms | 1,298,436,608 B |
+
+The scatter count fell 40%, while profiler time and memory changed by
+`+2.3%/+3.3%`. Both stay inside the preregistered 10% guard, but neither is a
+speed or memory improvement. Operator-profiler times include profiler overhead
+and are diagnostic rather than benchmark latency.
+
+Coordinate-updating calls with external candidates now default to a hard error.
+Callers must choose fixed approximate candidates or exact complete-candidate
+rebuilding. A constructed cutoff-crossing case verifies that rebuild mode
+admits a pair in the next local stage.
+
+The opt-in affinity readout combines ligand and pocket pools, cross-interface
+edge content, and reflection-even products of learned pseudoscalars. Its final
+projection is zero initialized, so initial predictions exactly match the mean
+readout. The cached, strict-deterministic ATOM3D-LBA diagnostic used train rows
+0--15 only, identical 153,029 candidates, 1,000 cyclic updates, and no
+validation/test access:
+
+| readout | parameters | final train MAE | best observed MAE | median step | peak CUDA |
+|---|---:|---:|---:|---:|---:|
+| ligand mean | 168,815 | 0.088952 pK | 0.088952 pK | 24.01 ms | 424.5 MB |
+| interaction | 173,611 | 0.183435 pK | 0.111377 pK | 26.99 ms | 423.8 MB |
+
+The interaction head learned finite nonzero gradients and reached
+`0.111377 pK` at step 900, but did not beat the mean arm's best/final train MAE
+and was `12.4%` slower per measured step. It remains experimental and off by
+default. This run establishes wiring and optimization behavior only; it says
+nothing about affinity generalization or chirality benefit. Raw outputs and
+the frozen scope are in `artifacts/model-feedback-followup-20260724/`.
+
 ## Same-feature gated hybrid outcome (2026-07-24)
 
 This packet held raw node features, coordinates, targets, split, optimizer,
@@ -432,6 +480,9 @@ sum by the square root of the receiver's incoming candidate count. It adds no
 parameter and leaves the unnormalized sum as the default. Float64 reference,
 zero-degree, disabled-state identity, O(3), translation, permutation,
 edge-order, graph-isolation, finite-gradient, and CLI provenance tests pass.
+This paragraph records the historical raw-degree implementation. The
+2026-07-24 follow-up supersedes that opt-in equation with smooth effective
+degree; the old accuracy numbers below are not attributed to the new equation.
 
 The strict-CUDA paired seed-42 screen held source, initialization, state schema,
 data, split, precomputed radius candidates, optimizer, and evaluation fixed.

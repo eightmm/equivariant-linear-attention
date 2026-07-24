@@ -801,6 +801,18 @@ def _build_train_step_model(
             coordinate_updates=True,
             use_multiscale_spatial_kernel=True,
         )
+    elif name == "gated_static":
+        model = build_regression_model(
+            node_dim=11,
+            hidden_dim=64,
+            num_layers=3,
+            num_heads=4,
+            local_head_counts=(4, 0, 4),
+            local_cutoff=6.0,
+            use_key_balancing=False,
+            use_gated_local_transport=True,
+            use_grouped_invariant_normalization=True,
+        )
     elif name == "static_egnn":
         model = _StaticEGNNBaseline(
             node_dim=11,
@@ -919,7 +931,9 @@ def _timed_train_step_metrics(
         ]
         all_finite = bool(
             gradients
-            and all(bool(torch.isfinite(gradient).all().item()) for gradient in gradients)
+            and all(
+                bool(torch.isfinite(gradient).all().item()) for gradient in gradients
+            )
             and bool(torch.isfinite(validation_loss).item())
         )
         nonzero_elements = sum(
@@ -1121,9 +1135,7 @@ def run_edge_free_train_step_benchmark(
             if completed:
                 egnn_ms = model_metrics["static_egnn"]["median_train_step_ms"]
                 for candidate_name in ("spatial_static", "spatial_dynamic"):
-                    candidate_ms = model_metrics[candidate_name][
-                        "median_train_step_ms"
-                    ]
+                    candidate_ms = model_metrics[candidate_name]["median_train_step_ms"]
                     cell[f"{candidate_name}_to_egnn_train_step_ratio"] = (
                         candidate_ms / egnn_ms
                     )
@@ -1134,14 +1146,12 @@ def run_edge_free_train_step_benchmark(
                             candidate_peak / egnn_peak
                         )
                 graph_once_ms = cell["graph_construction"]["total_once_ms"]
-                cell["spatial_static_to_egnn_first_step_system_ratio"] = (
-                    model_metrics["spatial_static"]["median_train_step_ms"]
-                    / (egnn_ms + graph_once_ms)
-                )
-                cell["spatial_dynamic_to_egnn_first_step_system_ratio"] = (
-                    model_metrics["spatial_dynamic"]["median_train_step_ms"]
-                    / (egnn_ms + graph_once_ms)
-                )
+                cell["spatial_static_to_egnn_first_step_system_ratio"] = model_metrics[
+                    "spatial_static"
+                ]["median_train_step_ms"] / (egnn_ms + graph_once_ms)
+                cell["spatial_dynamic_to_egnn_first_step_system_ratio"] = model_metrics[
+                    "spatial_dynamic"
+                ]["median_train_step_ms"] / (egnn_ms + graph_once_ms)
             cells.append(cell)
             del node_feats, pos, batch, cpu_edge_index
             if resolved_device.type == "cuda":
@@ -1389,9 +1399,7 @@ def run_edge_free_spatial_benchmark(
                         candidate_metrics["median_ms"] / metrics["median_ms"]
                     )
                     cell[f"{candidate_name}_to_egnn_memory_ratio_including_edges"] = (
-                        candidate_metrics[
-                            "peak_cuda_bytes_delta_plus_edge_index"
-                        ]
+                        candidate_metrics["peak_cuda_bytes_delta_plus_edge_index"]
                         / cell["peak_cuda_bytes_delta_plus_edge_index"]
                     )
             egnn_cells.append(cell)
@@ -1401,16 +1409,13 @@ def run_edge_free_spatial_benchmark(
 
         egnn_cells.sort(key=lambda cell: cell["edge_multiplier"])
         all_completed = all(
-            metrics["status"] == "completed"
-            for metrics in edge_free_metrics.values()
+            metrics["status"] == "completed" for metrics in edge_free_metrics.values()
         ) and all(cell["status"] == "completed" for cell in egnn_cells)
         rows.append(
             {
                 "status": "completed" if all_completed else "partial",
                 "nodes": num_nodes,
-                "edge_free_execution_order": [
-                    name for name, _model in edge_free_order
-                ],
+                "edge_free_execution_order": [name for name, _model in edge_free_order],
                 "egnn_execution_order": multiplier_order,
                 "edge_free_models": edge_free_metrics,
                 "egnn": egnn_cells,
@@ -1450,12 +1455,10 @@ def run_edge_free_spatial_benchmark(
             for name, model in models.items()
         },
         "model_parameter_bytes": {
-            name: _module_parameter_bytes(model)
-            for name, model in models.items()
+            name: _module_parameter_bytes(model) for name, model in models.items()
         },
         "model_state_sha256": {
-            name: _module_state_sha256(model)
-            for name, model in models.items()
+            name: _module_state_sha256(model) for name, model in models.items()
         },
         "rows": rows,
         "kernel_contract": {

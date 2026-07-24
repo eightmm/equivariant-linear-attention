@@ -15,9 +15,7 @@ import torch
 from torch.profiler import ProfilerActivity, profile, record_function
 
 
-SCALING = runpy.run_path(
-    str(Path(__file__).with_name("benchmark_sparse_scaling.py"))
-)
+SCALING = runpy.run_path(str(Path(__file__).with_name("benchmark_sparse_scaling.py")))
 
 
 def _event_value(event: Any, primary: str, fallback: str) -> float:
@@ -44,9 +42,7 @@ def _event_record(event: Any) -> dict[str, Any]:
             "self_cuda_time_total",
         ),
         "cpu_memory_usage_bytes": int(event.cpu_memory_usage),
-        "device_memory_usage_bytes": int(
-            getattr(event, "device_memory_usage", 0)
-        ),
+        "device_memory_usage_bytes": int(getattr(event, "device_memory_usage", 0)),
     }
 
 
@@ -96,7 +92,12 @@ def run_train_step_profile(
     warmup: int,
     repeats: int,
 ) -> dict[str, Any]:
-    if model_name not in {"spatial_static", "spatial_dynamic", "static_egnn"}:
+    if model_name not in {
+        "gated_static",
+        "spatial_static",
+        "spatial_dynamic",
+        "static_egnn",
+    }:
         raise ValueError("unsupported model_name")
     if isinstance(num_nodes, bool) or not isinstance(num_nodes, int) or num_nodes < 2:
         raise ValueError("num_nodes must be an integer at least two")
@@ -117,7 +118,7 @@ def run_train_step_profile(
     )
     edge_index = None
     edge_hash = None
-    if model_name == "static_egnn":
+    if model_name in {"gated_static", "static_egnn"}:
         edge_index = SCALING["seeded_exact_edge_index"](
             num_nodes,
             edge_multiplier=edge_multiplier,
@@ -168,9 +169,7 @@ def run_train_step_profile(
     SCALING["_sync"](resolved_device)
 
     gradients = [
-        parameter.grad
-        for parameter in model.parameters()
-        if parameter.grad is not None
+        parameter.grad for parameter in model.parameters() if parameter.grad is not None
     ]
     all_finite = bool(
         final_loss is not None
@@ -194,9 +193,7 @@ def run_train_step_profile(
         if str(record["name"]).startswith("stage.")
     }
     operators = [
-        record
-        for record in records
-        if not str(record["name"]).startswith("stage.")
+        record for record in records if not str(record["name"]).startswith("stage.")
     ][:50]
     result = {
         "schema_version": 1,
@@ -240,7 +237,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        choices=["spatial_static", "spatial_dynamic", "static_egnn"],
+        choices=[
+            "gated_static",
+            "spatial_static",
+            "spatial_dynamic",
+            "static_egnn",
+        ],
         required=True,
     )
     parser.add_argument("--nodes", type=int, default=8192)

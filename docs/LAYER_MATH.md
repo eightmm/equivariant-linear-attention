@@ -334,16 +334,22 @@ m^r_i = sum_j f_c(u_ij) tanh(g^r_ij) d_ij,
 m^T_i = sum_j f_c(u_ij) tanh(g^T_ij) ST(d_ij).
 ```
 
-When `normalize_edge_conditioned_local_by_sqrt_degree` is enabled, let
-`D_i = |{j : (i,j) is a retained non-self candidate}|`. Every message family
-above is replaced by
+When `normalize_edge_conditioned_local_by_sqrt_degree` is enabled, let the
+smooth effective degree be
 
 ```text
-mtilde_i = m_i / sqrt(max(D_i, 1)).
+S_i = sum_j f_c(u_ij)^2.
 ```
 
-The degree is shared across heads and message types, counts candidates rather
-than cutoff mass, and introduces no learned parameter. The default remains the
+Every message family above is replaced by
+
+```text
+mtilde_i = m_i / sqrt(S_i + eps).
+```
+
+`S_i` is shared across heads and message types and introduces no learned
+parameter. Unlike a raw candidate count, it and its first coordinate derivative
+vanish continuously when an edge reaches the cutoff. The default remains the
 unnormalized sum.
 
 Self edges are excluded from these four sums because self information remains
@@ -383,23 +389,29 @@ A shared per-head MLP produces scalar content and five scalar gates:
     = MLP(z_ijh).
 ```
 
-Self edges are excluded. Let `D_i` be the retained nonself candidate count and
-`C_i = sum_j f_c(u_ij)` its smooth cutoff mass. The equivariant aggregates are
+Self edges are excluded. Let
+
+```text
+C_i = sum_j f_c(u_ij),
+S_i = sum_j f_c(u_ij)^2
+```
+
+be the smooth cutoff mass and effective degree. The equivariant aggregates are
 
 ```text
 m^0_ih = LN_h(
-    sum_j f_c(u_ij) sigmoid(g^s_ijh) a_ijh / sqrt(max(D_i, 1))
-) + reshape_h(W_m [log(1 + D_i), log(1 + C_i)]),
+    sum_j f_c(u_ij) sigmoid(g^s_ijh) a_ijh / sqrt(S_i + eps)
+) + reshape_h(W_m [log(1 + C_i), log(1 + S_i)]),
 
 m^v_ih = sum_j f_c(u_ij) [
     tanh(g^i_ijh) v_ih + tanh(g^j_ijh) v_jh
-] / sqrt(max(D_i, 1)),
+] / sqrt(S_i + eps),
 
 m^r_ih = sum_j f_c(u_ij) tanh(g^r_ijh) d_ij
-    / sqrt(max(D_i, 1)),
+    / sqrt(S_i + eps),
 
 m^T_ih = sum_j f_c(u_ij) tanh(g^T_ijh) ST(d_ij)
-    / sqrt(max(D_i, 1)).
+    / sqrt(S_i + eps).
 ```
 
 Every MLP input and gate is invariant under `O(3)`. Multiplying invariant
@@ -408,7 +420,11 @@ symmetric-traceless tensors preserves the required transformation law.
 Receiver sums are invariant to edge order and consistent under node
 permutation. At fixed width, the local path is `O(E_local)` after candidates
 are built, while an LGL stack retains the exact `O(N)` factorized global
-block.
+block. Scalar, vector, relative-vector, tensor, `C_i`, and `S_i` contributions
+are packed into one receiver `index_add` per gated local stage. This reduces
+scatter launch count but temporarily materializes the packed edge value; it is
+an implementation tradeoff rather than a claim of lower latency or memory on
+every graph.
 
 When `use_grouped_invariant_normalization` is enabled, define parameter-free
 last-axis standardization `G(x)`. Before the incumbent learned update
@@ -437,20 +453,19 @@ scalar query/key projections before positive-feature normalization, and let
 e_ijh = MLP([qbar_ih, kbar_jh, rho(u_ij)]),  i != j.
 ```
 
-For retained nonself edges, define the unweighted neighbor degree and smooth
-cutoff mass
+For retained nonself edges, define the smooth cutoff mass and effective degree
 
 ```text
-n_i = sum_j 1,
-c_i = sum_j f_c(u_ij).
+c_i = sum_j f_c(u_ij),
+s_i = sum_j f_c(u_ij)^2.
 ```
 
 The added scalar message is
 
 ```text
 m_pair_ih = alpha (
-    sum_j f_c(u_ij) e_ijh / sqrt(max(1, n_i))
-    + W_mass [log(1+n_i), log(1+c_i)]
+    sum_j f_c(u_ij) e_ijh / sqrt(s_i + eps)
+    + W_mass [log(1+c_i), log(1+s_i)]
 ).
 ```
 
@@ -491,6 +506,19 @@ O(3), translation, and permutation behavior. Updated global/local geometry is
 recomputed before the next block. There is no final post-readout updater, so
 every coordinate parameter can influence the scalar property loss.
 
+An external sparse `edge_index` needs an explicit topology policy because
+coordinates can move across the cutoff:
+
+- `coordinate_neighbor_policy="error"` (default) rejects the ambiguous
+  combination;
+- `"fixed"` re-filters a fixed candidate set after every update and is an
+  explicit approximation because omitted pairs cannot enter;
+- `"rebuild"` discards the external candidates and rebuilds complete
+  same-graph candidates from the current coordinates before every local stage.
+
+The exact fallback is quadratic in each graph's node count. A production
+cell-list or Verlet-skin backend is not implemented.
+
 The private dynamic EGNN control uses its invariant edge embedding `m_ij`:
 
 ```text
@@ -500,6 +528,33 @@ r_i = mean_{j != i} (x_i - x_j) tanh(phi_x(m_ij)),
 then applies the same graph-centering and bound. This follows the EGNN
 relative-vector update pattern but remains a same-harness internal control, not
 an official implementation reproduction.
+
+## Optional ligand-pocket interaction readout
+
+`readout_mode="interaction"` keeps the ligand mean scalar readout as a residual
+baseline and adds an `O(E)` interface head after candidates are available. It
+requires a Boolean ligand mask; its complement is the pocket. Without supplied
+candidates, the current exact fallback still discovers them quadratically.
+Normalized invariant node states produce ligand and pocket mean pools. For
+directed ligand-receiver/pocket-sender edges inside the local cutoff, an
+invariant edge MLP produces content `e_ij` and six gates `g_ija`. The
+cross-interface content and polar moments are
+
+```text
+c_g = sum_(i<-j in cross_g) f_c(u_ij) e_ij / sqrt(S_g + eps),
+P_ga = sum_(i<-j in cross_g) f_c(u_ij) tanh(g_ija) d_ij
+       / sqrt(S_g + eps),
+S_g = sum_(i<-j in cross_g) f_c(u_ij)^2.
+```
+
+Two scalar triple products of the polar moments are pseudoscalars. The scalar
+property head receives only the reflection-even combinations
+`[chi_1^2, chi_2^2, chi_1 chi_2]`, together with ligand, pocket, and interface
+pools. Thus the output remains invariant under full `O(3)`, including
+reflections, while retaining parity-sensitive intermediate information. The
+final interaction projection is zero initialized, so its initial graph scalar
+is exactly the existing ligand mean. This is a parity-aware task head, not a
+parity-complete `0o/1e/2o` hidden backbone.
 
 ## Multi-memory global gate (HEMM)
 

@@ -281,8 +281,8 @@ def main() -> None:
     metrics["local_radial_gradient_parameters"] = _named_gradient_parameter_diagnostics(
         model, "local_radial"
     )
-    metrics["gated_local_gradient_parameters"] = (
-        _named_gradient_parameter_diagnostics(model, "gated_local")
+    metrics["gated_local_gradient_parameters"] = _named_gradient_parameter_diagnostics(
+        model, "gated_local"
     )
     metrics["node_count_strata"] = _node_count_strata_metrics(
         model,
@@ -390,7 +390,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "divide edge-conditioned local receiver sums by the square root "
-            "of incoming non-self candidate degree"
+            "of smooth incoming cutoff-squared mass"
         ),
     )
     parser.add_argument("--gated-local-transport", action="store_true")
@@ -403,6 +403,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--memory-interaction-cutoff", type=float, default=2.5)
     parser.add_argument("--radial-trace", action="store_true")
     parser.add_argument("--coordinate-updates", action="store_true")
+    parser.add_argument(
+        "--coordinate-neighbor-policy",
+        choices=["error", "fixed", "rebuild"],
+        default="error",
+        help=(
+            "with dynamic coordinates and supplied sparse candidates: reject, "
+            "reuse the fixed candidates, or rebuild exact complete candidates"
+        ),
+    )
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--grad-clip", type=float, default=1.0)
@@ -541,9 +550,7 @@ def _build_benchmark_model(
             args.edge_conditioned_local_sqrt_degree
         ),
         use_gated_local_transport=args.gated_local_transport,
-        use_grouped_invariant_normalization=(
-            args.grouped_invariant_normalization
-        ),
+        use_grouped_invariant_normalization=(args.grouped_invariant_normalization),
         hidden_tensor_dim=args.hidden_tensor_dim,
         scalar_content_mode=args.scalar_content_mode,
         use_tensor_product_kernel=args.tensor_product_kernel,
@@ -556,6 +563,7 @@ def _build_benchmark_model(
         memory_interaction_cutoff=args.memory_interaction_cutoff,
         use_radial_trace=args.radial_trace,
         coordinate_updates=args.coordinate_updates,
+        coordinate_neighbor_policy=args.coordinate_neighbor_policy,
     )
 
 
@@ -1885,6 +1893,7 @@ def _run_config(
         "target_normalized": not args.no_target_normalize,
         "test_evaluated": args.evaluate_test,
         "coordinate_updates": args.coordinate_updates,
+        "coordinate_neighbor_policy": args.coordinate_neighbor_policy,
         "coordinate_update_count": (
             args.num_layers - 1 if args.coordinate_updates else 0
         ),
@@ -1964,9 +1973,7 @@ def _run_config(
             if args.gated_local_transport
             else "not_applicable"
         ),
-        "grouped_invariant_normalization": (
-            args.grouped_invariant_normalization
-        ),
+        "grouped_invariant_normalization": (args.grouped_invariant_normalization),
         "precompute_local_edges": args.precompute_local_edges,
         "local_candidate_builder": (
             "load_time_dense_radius_scan"
