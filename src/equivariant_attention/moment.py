@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from math import isfinite, prod, sqrt
 import warnings
@@ -17,6 +18,96 @@ _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
 _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 _COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
 _READOUT_MODES = frozenset({"interaction", "mean", "sum"})
+
+
+@dataclass(frozen=True)
+class _LocalGeometry:
+    receiver: torch.Tensor
+    sender: torch.Tensor
+    displacement: torch.Tensor
+    squared_distance: torch.Tensor
+    rbf: torch.Tensor
+    nonself_receiver: torch.Tensor
+    nonself_sender: torch.Tensor
+    nonself_displacement: torch.Tensor
+    nonself_squared_distance: torch.Tensor
+    nonself_rbf: torch.Tensor
+    nonself_cutoff: torch.Tensor
+    nonself_tensor_features: torch.Tensor
+
+    def _base(self) -> tuple[torch.Tensor, ...]:
+        return (
+            self.receiver,
+            self.sender,
+            self.displacement,
+            self.squared_distance,
+            self.rbf,
+        )
+
+    def __iter__(self) -> Iterator[torch.Tensor]:
+        return iter(self._base())
+
+    def __len__(self) -> int:
+        return 5
+
+    def __getitem__(
+        self,
+        index: int | slice,
+    ) -> torch.Tensor | tuple[torch.Tensor, ...]:
+        return self._base()[index]
+
+
+_LocalGeometryInput = _LocalGeometry | tuple[torch.Tensor, ...]
+
+
+def _nonself_local_geometry(
+    geometry: _LocalGeometryInput,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if isinstance(geometry, _LocalGeometry):
+        return (
+            geometry.nonself_receiver,
+            geometry.nonself_sender,
+            geometry.nonself_displacement,
+            geometry.nonself_squared_distance,
+            geometry.nonself_rbf,
+        )
+    receiver, sender, displacement, squared_distance, rbf = geometry
+    nonself = receiver != sender
+    return (
+        receiver[nonself],
+        sender[nonself],
+        displacement[nonself],
+        squared_distance[nonself],
+        rbf[nonself],
+    )
+
+
+def _nonself_cutoff(
+    geometry: _LocalGeometryInput,
+    squared_distance: torch.Tensor,
+    *,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if (
+        isinstance(geometry, _LocalGeometry)
+        and geometry.nonself_cutoff.dtype == dtype
+    ):
+        return geometry.nonself_cutoff
+    return _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
+
+
+def _nonself_tensor_features(
+    geometry: _LocalGeometryInput,
+    displacement: torch.Tensor,
+    *,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if (
+        isinstance(geometry, _LocalGeometry)
+        and geometry.nonself_tensor_features.dtype == dtype
+    ):
+        return geometry.nonself_tensor_features
+    return _symmetric_traceless_features(displacement.to(dtype=dtype))
 
 
 def routing_head_counts(
@@ -699,7 +790,7 @@ class _EquivariantMomentLayer(nn.Module):
         batch: torch.Tensor,
         num_graphs: int,
         graph_counts: torch.Tensor,
-        local_geometry: tuple[torch.Tensor, ...] | None,
+        local_geometry: _LocalGeometryInput | None,
         local_pairwise_content: _LocalPairwiseContent | None = None,
         *,
         persistent_tensor: torch.Tensor | None = None,
@@ -734,215 +825,250 @@ class _EquivariantMomentLayer(nn.Module):
         bounded_persistent_tensor = _bounded_st_tensor(persistent_tensor)
         n_nodes = scalars.shape[0]
 
-        raw_query_scalar = self.query_scalar(s_norm).reshape(
-            n_nodes, self.num_heads, self.head_dim
-        )
-        raw_key_scalar = self.key_scalar(s_norm).reshape(
-            n_nodes, self.num_heads, self.head_dim
-        )
-        query_content = _positive_scalar_features(
-            raw_query_scalar,
-            self.eps,
-            mode=self.scalar_content_mode,
-        )
-        key_content = _positive_scalar_features(
-            raw_key_scalar,
-            self.eps,
-            mode=self.scalar_content_mode,
-        )
-        q0 = query_content
-        k0 = key_content
-        if self.tensor_kernel_query is not None:
-            if self.tensor_kernel_key is None or self.raw_tensor_kernel is None:
-                raise RuntimeError("tensor-product kernel modules are incomplete")
-            tensor_kernel_scale = _bounded_kernel_scale(
-                self.raw_tensor_kernel,
-                self.tensor_kernel_max,
-            )
-            tensor_query_features, tensor_key_features = _tensor_product_features(
-                self.tensor_kernel_query(persistent_tensor),
-                self.tensor_kernel_key(persistent_tensor),
-                tensor_kernel_scale,
-                eps=self.eps,
-            )
-            q0 = torch.cat([q0, tensor_query_features], dim=-1)
-            k0 = torch.cat([k0, tensor_key_features], dim=-1)
         q1 = _unit_ball(
             self.query_vector(bounded_vectors)
             * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1),
             self.eps,
         )
-        k1 = _unit_ball(
-            self.key_vector(bounded_vectors)
-            * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1),
-            self.eps,
+        all_local_gated = (
+            self.gated_local is not None
+            and self.global_head_count == 0
+            and local_pairwise_content is None
         )
-        moment_dtype = _moment_dtype(q0, k0, q1, k1, raw_pos)
-        alignment_scale = _bounded_kernel_scale(
-            self.raw_linear_kernel,
-            self.linear_kernel_max,
-        ).to(dtype=moment_dtype)
-        alignment_dot_scale = (
-            alignment_scale
-            if self.use_alignment_linear_term
-            else torch.zeros_like(alignment_scale)
-        )
-        kernel_scale = _bounded_kernel_scale(
-            self.raw_vector_kernel,
-            self.vector_kernel_max,
-        ).to(dtype=moment_dtype)
-
-        scalar_value = self.value_scalar(s_norm).reshape(
-            n_nodes, self.num_heads, self.head_dim
-        )
-        vector_value = self.value_vector(bounded_vectors)
-        relative_gate = torch.tanh(self.relative_gate(s_norm))
-        tensor_gate = torch.tanh(self.tensor_gate(s_norm))
-        radial_trace_gate = torch.tanh(self.radial_trace_gate(s_norm))
-
         message_groups: list[tuple[torch.Tensor, ...]] = []
-        if self.local_head_count:
-            local = slice(0, self.local_head_count)
-            if self.gated_local is not None:
-                if local_geometry is None:
-                    raise RuntimeError("gated local transport requires local geometry")
-                local_messages = self.gated_local(
+        if all_local_gated:
+            if local_geometry is None or self.gated_local is None:
+                raise RuntimeError("gated local transport requires local geometry")
+            message_groups.append(
+                self.gated_local(
                     s_norm,
                     bounded_vectors,
                     local_geometry,
                     num_nodes=n_nodes,
                 )
-            elif self.edge_conditioned_local is not None:
-                if local_geometry is None:
-                    raise RuntimeError(
-                        "edge-conditioned local transport requires local geometry"
+            )
+            moment_dtype = _moment_dtype(q1, raw_pos)
+        else:
+            raw_query_scalar = self.query_scalar(s_norm).reshape(
+                n_nodes, self.num_heads, self.head_dim
+            )
+            raw_key_scalar = self.key_scalar(s_norm).reshape(
+                n_nodes, self.num_heads, self.head_dim
+            )
+            query_content = _positive_scalar_features(
+                raw_query_scalar,
+                self.eps,
+                mode=self.scalar_content_mode,
+            )
+            key_content = _positive_scalar_features(
+                raw_key_scalar,
+                self.eps,
+                mode=self.scalar_content_mode,
+            )
+            q0 = query_content
+            k0 = key_content
+            if self.tensor_kernel_query is not None:
+                if self.tensor_kernel_key is None or self.raw_tensor_kernel is None:
+                    raise RuntimeError("tensor-product kernel modules are incomplete")
+                tensor_kernel_scale = _bounded_kernel_scale(
+                    self.raw_tensor_kernel,
+                    self.tensor_kernel_max,
+                )
+                tensor_query_features, tensor_key_features = _tensor_product_features(
+                    self.tensor_kernel_query(persistent_tensor),
+                    self.tensor_kernel_key(persistent_tensor),
+                    tensor_kernel_scale,
+                    eps=self.eps,
+                )
+                q0 = torch.cat([q0, tensor_query_features], dim=-1)
+                k0 = torch.cat([k0, tensor_key_features], dim=-1)
+            k1 = _unit_ball(
+                self.key_vector(bounded_vectors)
+                * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1),
+                self.eps,
+            )
+            moment_dtype = _moment_dtype(q0, k0, q1, k1, raw_pos)
+            alignment_scale = _bounded_kernel_scale(
+                self.raw_linear_kernel,
+                self.linear_kernel_max,
+            ).to(dtype=moment_dtype)
+            alignment_dot_scale = (
+                alignment_scale
+                if self.use_alignment_linear_term
+                else torch.zeros_like(alignment_scale)
+            )
+            kernel_scale = _bounded_kernel_scale(
+                self.raw_vector_kernel,
+                self.vector_kernel_max,
+            ).to(dtype=moment_dtype)
+
+            scalar_value = self.value_scalar(s_norm).reshape(
+                n_nodes, self.num_heads, self.head_dim
+            )
+            vector_value = self.value_vector(bounded_vectors)
+            relative_gate = torch.tanh(self.relative_gate(s_norm))
+            tensor_gate = torch.tanh(self.tensor_gate(s_norm))
+            radial_trace_gate = torch.tanh(self.radial_trace_gate(s_norm))
+
+            if self.local_head_count:
+                local = slice(0, self.local_head_count)
+                if self.gated_local is not None:
+                    if local_geometry is None:
+                        raise RuntimeError(
+                            "gated local transport requires local geometry"
+                        )
+                    local_messages = self.gated_local(
+                        s_norm,
+                        bounded_vectors,
+                        local_geometry,
+                        num_nodes=n_nodes,
                     )
-                local_messages = self.edge_conditioned_local(
-                    s_norm,
-                    bounded_vectors,
-                    local_geometry,
-                    num_nodes=n_nodes,
-                )
-            else:
-                receiver, sender, weights, displacement, squared_distance = (
-                    _local_attention_weights(
-                        q0[:, local],
-                        k0[:, local],
-                        q1[:, local],
-                        k1[:, local],
-                        kernel_scale[local],
-                        raw_pos,
-                        batch,
-                        num_graphs=num_graphs,
-                        balanced=self.use_key_balancing,
-                        alignment_scale=alignment_scale[local],
-                        alignment_dot_scale=alignment_dot_scale[local],
-                        kernel_floor=self.kernel_floor,
-                        cutoff=self.local_cutoff,
-                        num_rbf=self.num_rbf,
-                        radial_weight=self.local_radial_weight[local],
-                        radial_bias=self.local_radial_bias[local],
-                        local_geometry=local_geometry,
+                elif self.edge_conditioned_local is not None:
+                    if local_geometry is None:
+                        raise RuntimeError(
+                            "edge-conditioned local transport requires local geometry"
+                        )
+                    local_messages = self.edge_conditioned_local(
+                        s_norm,
+                        bounded_vectors,
+                        local_geometry,
+                        num_nodes=n_nodes,
                     )
-                )
-                local_messages = _local_moment_messages(
-                    receiver,
-                    sender,
-                    weights,
-                    displacement,
-                    squared_distance,
-                    scalar_value[:, local],
-                    vector_value[:, local],
-                    relative_gate[:, local],
-                    tensor_gate[:, local],
-                    radial_trace_gate[:, local],
-                    use_radial_trace=self.use_radial_trace,
-                    num_nodes=n_nodes,
-                )
-            if local_pairwise_content is not None:
-                if local_geometry is None:
-                    raise RuntimeError("pairwise local content requires local geometry")
-                pairwise_scalar = local_pairwise_content(
-                    raw_query_scalar[:, local],
-                    raw_key_scalar[:, local],
-                    local_geometry,
-                    num_nodes=n_nodes,
-                )
-                local_messages = (
-                    local_messages[0] + pairwise_scalar,
-                    *local_messages[1:],
-                )
-            message_groups.append(local_messages)
-        if self.global_head_count:
-            global_heads = slice(self.local_head_count, self.num_heads)
-            if self.global_transport_mode == "none":
-                message_groups.append(
-                    _zero_moment_messages(
-                        n_nodes,
-                        self.global_head_count,
-                        self.head_dim,
-                        dtype=moment_dtype,
-                        device=scalars.device,
-                    )
-                )
-            else:
-                if global_pos is None:
-                    raise RuntimeError("active global transport requires global_pos")
-                spatial_features = (
-                    _quadratic_gaussian_spatial_features(
-                        global_pos,
-                        self._spatial_scales,
-                    )
-                    if self._spatial_scales is not None
-                    else None
-                )
-                memory_router_latent = None
-                if self.use_memory_interaction and self.global_memory_count > 1:
-                    memory_router_latent = torch.tanh(
-                        self.memory_router_out(
-                            F.silu(self.memory_router_in(key_content[:, global_heads]))
+                else:
+                    receiver, sender, weights, displacement, squared_distance = (
+                        _local_attention_weights(
+                            q0[:, local],
+                            k0[:, local],
+                            q1[:, local],
+                            k1[:, local],
+                            kernel_scale[local],
+                            raw_pos,
+                            batch,
+                            num_graphs=num_graphs,
+                            balanced=self.use_key_balancing,
+                            alignment_scale=alignment_scale[local],
+                            alignment_dot_scale=alignment_dot_scale[local],
+                            kernel_floor=self.kernel_floor,
+                            cutoff=self.local_cutoff,
+                            num_rbf=self.num_rbf,
+                            radial_weight=self.local_radial_weight[local],
+                            radial_bias=self.local_radial_bias[local],
+                            local_geometry=local_geometry,
                         )
                     )
-                    router_norm = _stable_vector_norm(memory_router_latent)
-                    memory_router_latent = memory_router_latent / router_norm.clamp_min(
-                        torch.finfo(memory_router_latent.dtype).tiny
-                    )
-                message_groups.append(
-                    _global_moment_messages(
-                        q0[:, global_heads],
-                        k0[:, global_heads],
-                        q1[:, global_heads],
-                        k1[:, global_heads],
-                        kernel_scale[global_heads],
-                        scalar_value[:, global_heads],
-                        vector_value[:, global_heads],
-                        relative_gate[:, global_heads],
-                        tensor_gate[:, global_heads],
-                        radial_trace_gate[:, global_heads],
-                        global_pos,
-                        batch,
-                        num_graphs=num_graphs,
-                        graph_counts=graph_counts,
-                        balanced=self.use_key_balancing,
-                        alignment_scale=alignment_scale[global_heads],
-                        alignment_dot_scale=alignment_dot_scale[global_heads],
-                        kernel_floor=self.kernel_floor,
-                        kernel_floor_mode=self.kernel_floor_mode,
-                        memory_count=self.global_memory_count,
-                        memory_temperature=self.memory_assignment_temperature,
-                        memory_assignment_scale=self.memory_assignment_scale,
-                        memory_interaction_cutoff=self.memory_interaction_cutoff,
-                        memory_router_latent=memory_router_latent,
-                        use_memory_interaction=self.use_memory_interaction,
+                    local_messages = _local_moment_messages(
+                        receiver,
+                        sender,
+                        weights,
+                        displacement,
+                        squared_distance,
+                        scalar_value[:, local],
+                        vector_value[:, local],
+                        relative_gate[:, local],
+                        tensor_gate[:, local],
+                        radial_trace_gate[:, local],
                         use_radial_trace=self.use_radial_trace,
-                        global_transport_mode=self.global_transport_mode,
-                        spatial_features=spatial_features,
+                        num_nodes=n_nodes,
                     )
-                )
+                if local_pairwise_content is not None:
+                    if local_geometry is None:
+                        raise RuntimeError(
+                            "pairwise local content requires local geometry"
+                        )
+                    pairwise_scalar = local_pairwise_content(
+                        raw_query_scalar[:, local],
+                        raw_key_scalar[:, local],
+                        local_geometry,
+                        num_nodes=n_nodes,
+                    )
+                    local_messages = (
+                        local_messages[0] + pairwise_scalar,
+                        *local_messages[1:],
+                    )
+                message_groups.append(local_messages)
+            if self.global_head_count:
+                global_heads = slice(self.local_head_count, self.num_heads)
+                if self.global_transport_mode == "none":
+                    message_groups.append(
+                        _zero_moment_messages(
+                            n_nodes,
+                            self.global_head_count,
+                            self.head_dim,
+                            dtype=moment_dtype,
+                            device=scalars.device,
+                        )
+                    )
+                else:
+                    if global_pos is None:
+                        raise RuntimeError("active global transport requires global_pos")
+                    spatial_features = (
+                        _quadratic_gaussian_spatial_features(
+                            global_pos,
+                            self._spatial_scales,
+                        )
+                        if self._spatial_scales is not None
+                        else None
+                    )
+                    memory_router_latent = None
+                    if self.use_memory_interaction and self.global_memory_count > 1:
+                        memory_router_latent = torch.tanh(
+                            self.memory_router_out(
+                                F.silu(
+                                    self.memory_router_in(
+                                        key_content[:, global_heads]
+                                    )
+                                )
+                            )
+                        )
+                        router_norm = _stable_vector_norm(memory_router_latent)
+                        memory_router_latent = (
+                            memory_router_latent
+                            / router_norm.clamp_min(
+                                torch.finfo(memory_router_latent.dtype).tiny
+                            )
+                        )
+                    message_groups.append(
+                        _global_moment_messages(
+                            q0[:, global_heads],
+                            k0[:, global_heads],
+                            q1[:, global_heads],
+                            k1[:, global_heads],
+                            kernel_scale[global_heads],
+                            scalar_value[:, global_heads],
+                            vector_value[:, global_heads],
+                            relative_gate[:, global_heads],
+                            tensor_gate[:, global_heads],
+                            radial_trace_gate[:, global_heads],
+                            global_pos,
+                            batch,
+                            num_graphs=num_graphs,
+                            graph_counts=graph_counts,
+                            balanced=self.use_key_balancing,
+                            alignment_scale=alignment_scale[global_heads],
+                            alignment_dot_scale=alignment_dot_scale[global_heads],
+                            kernel_floor=self.kernel_floor,
+                            kernel_floor_mode=self.kernel_floor_mode,
+                            memory_count=self.global_memory_count,
+                            memory_temperature=self.memory_assignment_temperature,
+                            memory_assignment_scale=self.memory_assignment_scale,
+                            memory_interaction_cutoff=self.memory_interaction_cutoff,
+                            memory_router_latent=memory_router_latent,
+                            use_memory_interaction=self.use_memory_interaction,
+                            use_radial_trace=self.use_radial_trace,
+                            global_transport_mode=self.global_transport_mode,
+                            spatial_features=spatial_features,
+                        )
+                    )
 
-        scalar_message, vector_base, relative, tensor, radial_trace = (
-            torch.cat(values, dim=1) for values in zip(*message_groups, strict=True)
-        )
+        if len(message_groups) == 1:
+            scalar_message, vector_base, relative, tensor, radial_trace = (
+                message_groups[0]
+            )
+        else:
+            scalar_message, vector_base, relative, tensor, radial_trace = (
+                torch.cat(values, dim=1)
+                for values in zip(*message_groups, strict=True)
+            )
         scalar_message = scalar_message.reshape(n_nodes, self.scalars)
         moment_q1 = q1.to(dtype=moment_dtype)
         tensor_context = tensor
@@ -1094,17 +1220,13 @@ class _EdgeConditionedLocalTransport(nn.Module):
         self,
         scalars: torch.Tensor,
         vectors: torch.Tensor,
-        local_geometry: tuple[torch.Tensor, ...],
+        local_geometry: _LocalGeometryInput,
         *,
         num_nodes: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        receiver, sender, displacement, squared_distance, rbf = local_geometry
-        nonself = receiver != sender
-        receiver = receiver[nonself]
-        sender = sender[nonself]
-        displacement = displacement[nonself]
-        squared_distance = squared_distance[nonself]
-        rbf = rbf[nonself]
+        receiver, sender, displacement, squared_distance, rbf = (
+            _nonself_local_geometry(local_geometry)
+        )
 
         edge_features = torch.cat(
             [
@@ -1121,7 +1243,11 @@ class _EdgeConditionedLocalTransport(nn.Module):
             dim=-1,
         )
         dtype = _moment_dtype(scalars, vectors, displacement)
-        cutoff = _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
+        cutoff = _nonself_cutoff(
+            local_geometry,
+            squared_distance,
+            dtype=dtype,
+        )
         edge_weight = cutoff[:, None, None]
         scalar_edge_message = edge_weight * scalar_edge.to(dtype=dtype).reshape(
             -1,
@@ -1138,7 +1264,11 @@ class _EdgeConditionedLocalTransport(nn.Module):
         )
         tensor_edge_message = edge_weight * (
             torch.tanh(tensor_gate).to(dtype=dtype).unsqueeze(-1)
-            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1)
+            * _nonself_tensor_features(
+                local_geometry,
+                displacement,
+                dtype=dtype,
+            ).unsqueeze(1)
         )
         if self.normalize_by_sqrt_degree:
             (
@@ -1194,6 +1324,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         self.scalars = scalars
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
+        self.num_rbf = num_rbf
         self.eps = eps
         hidden_dim = max(32, 2 * self.head_dim)
         edge_input_dim = 2 * self.head_dim + num_rbf + 5
@@ -1212,17 +1343,13 @@ class _GatedEquivariantLocalTransport(nn.Module):
         self,
         scalars: torch.Tensor,
         vectors: torch.Tensor,
-        local_geometry: tuple[torch.Tensor, ...],
+        local_geometry: _LocalGeometryInput,
         *,
         num_nodes: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        receiver, sender, displacement, squared_distance, rbf = local_geometry
-        nonself = receiver != sender
-        receiver = receiver[nonself]
-        sender = sender[nonself]
-        displacement = displacement[nonself]
-        squared_distance = squared_distance[nonself]
-        rbf = rbf[nonself]
+        receiver, sender, displacement, squared_distance, rbf = (
+            _nonself_local_geometry(local_geometry)
+        )
 
         scalar_heads = scalars.reshape(num_nodes, self.num_heads, self.head_dim)
         dtype = _moment_dtype(scalars, vectors, displacement)
@@ -1239,19 +1366,13 @@ class _GatedEquivariantLocalTransport(nn.Module):
             ],
             dim=-1,
         )
-        rbf_features = (
-            rbf.to(dtype=scalars.dtype).unsqueeze(1).expand(-1, self.num_heads, -1)
+        edge_output = self._factorized_edge_mlp(
+            scalar_heads,
+            receiver,
+            sender,
+            rbf.to(dtype=scalars.dtype),
+            vector_invariants.to(dtype=scalars.dtype),
         )
-        edge_features = torch.cat(
-            [
-                scalar_heads[receiver],
-                scalar_heads[sender],
-                rbf_features,
-                vector_invariants.to(dtype=scalars.dtype),
-            ],
-            dim=-1,
-        )
-        edge_output = self.edge_mlp(edge_features)
         (
             scalar_edge,
             scalar_gate,
@@ -1265,7 +1386,11 @@ class _GatedEquivariantLocalTransport(nn.Module):
             dim=-1,
         )
 
-        cutoff = _cosine_of_squared_distance_cutoff(squared_distance.to(dtype=dtype))
+        cutoff = _nonself_cutoff(
+            local_geometry,
+            squared_distance,
+            dtype=dtype,
+        )
         edge_weight = cutoff[:, None, None]
         (
             scalar_message,
@@ -1286,7 +1411,11 @@ class _GatedEquivariantLocalTransport(nn.Module):
             edge_weight * torch.tanh(relative_gate).to(dtype=dtype) * edge_direction,
             edge_weight
             * torch.tanh(tensor_gate).to(dtype=dtype)
-            * _symmetric_traceless_features(displacement.to(dtype=dtype)).unsqueeze(1),
+            * _nonself_tensor_features(
+                local_geometry,
+                displacement,
+                dtype=dtype,
+            ).unsqueeze(1),
             cutoff.unsqueeze(-1),
             cutoff.square().unsqueeze(-1),
         )
@@ -1313,6 +1442,46 @@ class _GatedEquivariantLocalTransport(nn.Module):
         radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
         return scalar_message, vector_base, relative, tensor, radial_trace
 
+    def _factorized_edge_mlp(
+        self,
+        scalar_heads: torch.Tensor,
+        receiver: torch.Tensor,
+        sender: torch.Tensor,
+        rbf: torch.Tensor,
+        vector_invariants: torch.Tensor,
+    ) -> torch.Tensor:
+        first_linear = self.edge_mlp[0]
+        second_linear = self.edge_mlp[2]
+        output_linear = self.edge_mlp[4]
+        if not all(
+            isinstance(module, nn.Linear)
+            for module in (first_linear, second_linear, output_linear)
+        ):
+            raise RuntimeError("gated edge MLP layout is invalid")
+        receiver_end = self.head_dim
+        sender_end = 2 * self.head_dim
+        radial_end = sender_end + self.num_rbf
+        weight = first_linear.weight
+        receiver_projection = F.linear(
+            scalar_heads,
+            weight[:, :receiver_end],
+        )
+        sender_projection = F.linear(
+            scalar_heads,
+            weight[:, receiver_end:sender_end],
+        )
+        hidden = (
+            receiver_projection[receiver]
+            + sender_projection[sender]
+            + F.linear(rbf, weight[:, sender_end:radial_end]).unsqueeze(1)
+            + F.linear(vector_invariants, weight[:, radial_end:])
+        )
+        if first_linear.bias is not None:
+            hidden = hidden + first_linear.bias
+        hidden = F.silu(hidden)
+        hidden = F.silu(second_linear(hidden))
+        return output_linear(hidden)
+
 
 class _LocalPairwiseContent(nn.Module):
     """Invariant receiver/sender/RBF content with explicit neighborhood mass."""
@@ -1338,16 +1507,13 @@ class _LocalPairwiseContent(nn.Module):
         self,
         query_scalar: torch.Tensor,
         key_scalar: torch.Tensor,
-        local_geometry: tuple[torch.Tensor, ...],
+        local_geometry: _LocalGeometryInput,
         *,
         num_nodes: int,
     ) -> torch.Tensor:
-        receiver, sender, _displacement, squared_distance, rbf = local_geometry
-        nonself = receiver != sender
-        receiver = receiver[nonself]
-        sender = sender[nonself]
-        squared_distance = squared_distance[nonself]
-        rbf = rbf[nonself]
+        receiver, sender, _displacement, squared_distance, rbf = (
+            _nonself_local_geometry(local_geometry)
+        )
 
         head_count = query_scalar.shape[1]
         rbf_features = (
@@ -1358,8 +1524,10 @@ class _LocalPairwiseContent(nn.Module):
         )
         edge_content = self.edge_mlp(edge_features)
         reduction_dtype = _moment_dtype(edge_content, squared_distance)
-        cutoff_weight = _cosine_of_squared_distance_cutoff(
-            squared_distance.to(dtype=reduction_dtype)
+        cutoff_weight = _nonself_cutoff(
+            local_geometry,
+            squared_distance,
+            dtype=reduction_dtype,
         )
         weighted_content = (
             edge_content.to(dtype=reduction_dtype) * cutoff_weight[:, None, None]
@@ -1857,23 +2025,50 @@ def _fused_index_sum(
         raise ValueError("all fused values must share the index length")
     shapes = [value.shape[1:] for value in values]
     widths = [prod(shape) for shape in shapes]
-    packed = torch.cat(
-        [value.reshape(edge_count, width) for value, width in zip(values, widths)],
-        dim=-1,
-    )
-    reduced = packed.new_zeros((num_segments, sum(widths))).index_add(
-        0,
-        index,
-        packed,
-    )
-    return tuple(
-        part.reshape(num_segments, *shape)
-        for part, shape in zip(
-            torch.split(reduced, widths, dim=-1),
-            shapes,
-            strict=True,
+    groups: list[list[int]] = [[], []]
+    group_widths = [0, 0]
+    for value_index in sorted(
+        range(len(values)),
+        key=widths.__getitem__,
+        reverse=True,
+    ):
+        group_index = 0 if group_widths[0] <= group_widths[1] else 1
+        groups[group_index].append(value_index)
+        group_widths[group_index] += widths[value_index]
+
+    outputs: list[torch.Tensor | None] = [None] * len(values)
+    for group in groups:
+        if not group:
+            continue
+        if len(group) == 1:
+            value_index = group[0]
+            value = values[value_index]
+            outputs[value_index] = value.new_zeros(
+                (num_segments, *shapes[value_index])
+            ).index_add(0, index, value)
+            continue
+        packed = torch.cat(
+            [
+                values[value_index].reshape(edge_count, widths[value_index])
+                for value_index in group
+            ],
+            dim=-1,
         )
-    )
+        reduced = packed.new_zeros((num_segments, sum(widths[i] for i in group)))
+        reduced = reduced.index_add(0, index, packed)
+        parts = torch.split(
+            reduced,
+            [widths[value_index] for value_index in group],
+            dim=-1,
+        )
+        for value_index, part in zip(group, parts, strict=True):
+            outputs[value_index] = part.reshape(
+                num_segments,
+                *shapes[value_index],
+            )
+    if any(output is None for output in outputs):
+        raise RuntimeError("fused reduction failed to populate every output")
+    return tuple(output for output in outputs if output is not None)
 
 
 def _local_attention_weights(
@@ -1894,7 +2089,7 @@ def _local_attention_weights(
     num_rbf: int = 16,
     radial_weight: torch.Tensor,
     radial_bias: torch.Tensor,
-    local_geometry: tuple[torch.Tensor, ...] | None = None,
+    local_geometry: _LocalGeometryInput | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if local_geometry is None:
         local_geometry = _local_geometry(
@@ -1980,7 +2175,7 @@ def _local_geometry(
     graph_counts: torch.Tensor | None = None,
     edge_index: torch.Tensor | None = None,
     edge_index_is_validated: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> _LocalGeometry:
     if edge_index is None:
         if graph_counts is None:
             graph_counts = torch.bincount(batch, minlength=num_graphs)
@@ -1999,11 +2194,12 @@ def _local_geometry(
                 device=pos.device,
             )
     cutoff_tensor = pos.new_full((), float(cutoff))
-    candidate_distance = _stable_vector_norm(pos[sender] - pos[receiver]).squeeze(-1)
+    candidate_displacement = pos[sender] - pos[receiver]
+    candidate_distance = _stable_vector_norm(candidate_displacement).squeeze(-1)
     inside = candidate_distance < cutoff_tensor
     receiver = receiver[inside]
     sender = sender[inside]
-    displacement = (pos[sender] - pos[receiver]) / cutoff_tensor
+    displacement = candidate_displacement[inside] / cutoff_tensor
     squared_distance = displacement.square().sum(dim=-1)
     rbf_centers = torch.linspace(
         0.0,
@@ -2016,7 +2212,27 @@ def _local_geometry(
     rbf = torch.exp(
         -0.5 * ((squared_distance.unsqueeze(-1) - rbf_centers) / rbf_width).square()
     )
-    return receiver, sender, displacement, squared_distance, rbf
+    nonself = receiver != sender
+    nonself_displacement = displacement[nonself]
+    nonself_squared_distance = squared_distance[nonself]
+    return _LocalGeometry(
+        receiver=receiver,
+        sender=sender,
+        displacement=displacement,
+        squared_distance=squared_distance,
+        rbf=rbf,
+        nonself_receiver=receiver[nonself],
+        nonself_sender=sender[nonself],
+        nonself_displacement=nonself_displacement,
+        nonself_squared_distance=nonself_squared_distance,
+        nonself_rbf=rbf[nonself],
+        nonself_cutoff=_cosine_of_squared_distance_cutoff(
+            nonself_squared_distance
+        ),
+        nonself_tensor_features=_symmetric_traceless_features(
+            nonself_displacement
+        ),
+    )
 
 
 def _validated_local_edge_index(
@@ -2232,46 +2448,20 @@ def _factorized_moment_attention(
                 num_graphs,
             )
         key_scale = key_mass.reciprocal()
-        denominator = _structured_row_denominator(
-            query_scalar,
-            key_scalar,
-            query_vector,
-            key_vector,
-            kernel_scale,
-            key_scale,
-            batch,
-            num_graphs,
-            alignment_scale=alignment_scale,
-            alignment_dot_scale=alignment_dot_scale,
-            kernel_floor=kernel_floor,
-            kernel_floor_mode=kernel_floor_mode,
-            graph_counts=graph_counts,
-        )
     else:
         key_scale = key_scalar.new_ones(key_scalar.shape[:2])
-        denominator = _structured_row_denominator(
-            query_scalar,
-            key_scalar,
-            query_vector,
-            key_vector,
-            kernel_scale,
-            key_scale,
-            batch,
-            num_graphs,
-            alignment_scale=alignment_scale,
-            alignment_dot_scale=alignment_dot_scale,
-            kernel_floor=kernel_floor,
-            kernel_floor_mode=kernel_floor_mode,
-            graph_counts=graph_counts,
-        )
-    numerator = _structured_numerator(
+    augmented_value = torch.cat(
+        [value, value.new_ones((*value.shape[:-1], 1))],
+        dim=-1,
+    )
+    transported = _structured_numerator(
         query_scalar,
         key_scalar,
         query_vector,
         key_vector,
         kernel_scale,
         key_scale,
-        value,
+        augmented_value,
         batch,
         num_graphs,
         alignment_scale=alignment_scale,
@@ -2281,18 +2471,15 @@ def _factorized_moment_attention(
         graph_counts=graph_counts,
     )
     if spatial_features is not None:
-        transported = _spatial_transport(
+        transported = transported + _spatial_transport(
             spatial_features,
             key_scale,
-            torch.cat(
-                [value, value.new_ones((*value.shape[:-1], 1))],
-                dim=-1,
-            ),
+            augmented_value,
             batch,
             num_graphs,
         )
-        numerator = numerator + transported[..., :-1]
-        denominator = denominator + transported[..., -1]
+    numerator = transported[..., :-1]
+    denominator = transported[..., -1]
     return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
 
 

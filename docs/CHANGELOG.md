@@ -10,6 +10,12 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.13 -> v0.14 (2026-07-24) — skip route-inactive all-local gated
+  projections, factorize the first edge-MLP affine map, cache reusable local
+  geometry, fuse global numerator/denominator summaries, and balance packed
+  receiver reductions. impact: preserves public configuration/state schema
+  while reducing matched large-graph peak CUDA allocation 17.98% and frozen
+  train-only ATOM3D-LBA candidate peak allocation 16.45%.
 - [model] v0.12 -> v0.13 (2026-07-19) — add a keyword-only validated local
   `edge_index` candidate path while preserving the complete-pair fallback.
   impact: callers can bypass quadratic discovery with O(E) candidate/retained

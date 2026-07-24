@@ -424,13 +424,15 @@ Receiver sums are invariant to edge order and consistent under node
 permutation. At fixed width, the local path is `O(E_local)` after candidates
 are built, while an LGL stack retains the exact `O(N)` factorized global
 block. Scalar, vector, relative-vector, tensor, `C_i`, and `S_i` contributions
-are packed into one receiver `index_add` per gated local stage. This reduces
-scatter launch count but temporarily materializes the packed edge value; it is
-an implementation tradeoff rather than a claim of lower latency or memory on
-every graph. `S_i` remains an explicit smooth concentration diagnostic for the
-learned mass projection; it no longer controls message normalization. For `d`
-unit-weight equal messages the aggregate scales as `d/sqrt(1+d)`, while a
-singleton is attenuated as `f_c/sqrt(1+f_c)`.
+are partitioned into two width-balanced receiver reductions per gated local
+stage. This bounds the temporary packed width while avoiding one scatter per
+message family. The first edge-MLP affine map is also evaluated as
+`W_i s_i + W_j s_j + W_r rbf_ij + W_I I_ij + b`, which is algebraically equal
+to the concatenated map but does not materialize its full edge input. `S_i`
+remains an explicit smooth concentration diagnostic for the learned mass
+projection; it no longer controls message normalization. For `d` unit-weight
+equal messages the aggregate scales as `d/sqrt(1+d)`, while a singleton is
+attenuated as `f_c/sqrt(1+f_c)`.
 
 When `use_grouped_invariant_normalization` is enabled, define parameter-free
 last-axis standardization `G(x)`. Before the incumbent learned update

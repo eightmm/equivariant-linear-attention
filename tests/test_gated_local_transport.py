@@ -156,6 +156,214 @@ def test_gated_local_receives_finite_nonzero_state_and_coordinate_gradients() ->
         assert torch.count_nonzero(gradient)
 
 
+def test_all_local_gated_layer_skips_route_inactive_projections() -> None:
+    torch.manual_seed(2408)
+    model = _model(gated=True, grouped=True)
+    local_layer = model.layers[0]
+    inactive_modules = (
+        local_layer.query_scalar,
+        local_layer.key_scalar,
+        local_layer.value_scalar,
+        local_layer.key_vector,
+        local_layer.value_vector,
+        local_layer.key_vector_gate,
+        local_layer.relative_gate,
+        local_layer.tensor_gate,
+        local_layer.radial_trace_gate,
+    )
+
+    def reject_inactive_projection(
+        _module: torch.nn.Module,
+        _inputs: tuple[torch.Tensor, ...],
+    ) -> None:
+        raise AssertionError("route-inactive projection executed")
+
+    handles = [
+        module.register_forward_pre_hook(reject_inactive_projection)
+        for module in inactive_modules
+    ]
+    try:
+        node_feats, pos, batch, edge_index = _inputs()
+        output = model(node_feats, pos, batch=batch, edge_index=edge_index)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    assert torch.isfinite(output["graph_scalars"]).all()
+
+
+def test_all_local_gated_fast_path_matches_zero_pairwise_reference() -> None:
+    class ZeroPairwise(torch.nn.Module):
+        def forward(
+            self,
+            query_scalar: torch.Tensor,
+            _key_scalar: torch.Tensor,
+            _local_geometry: object,
+            *,
+            num_nodes: int,
+        ) -> torch.Tensor:
+            return query_scalar.new_zeros(
+                (num_nodes, query_scalar.shape[1], query_scalar.shape[2])
+            )
+
+    torch.manual_seed(2410)
+    fast = _model(gated=True, grouped=True)
+    torch.manual_seed(2410)
+    reference = _model(gated=True, grouped=True)
+    reference.local_pairwise_content = ZeroPairwise()
+
+    node_feats, pos, batch, edge_index = _inputs()
+    fast_node_feats = node_feats.detach().clone().requires_grad_()
+    fast_pos = pos.detach().clone().requires_grad_()
+    reference_node_feats = node_feats.detach().clone().requires_grad_()
+    reference_pos = pos.detach().clone().requires_grad_()
+    fast_output = fast(
+        fast_node_feats,
+        fast_pos,
+        batch=batch,
+        edge_index=edge_index,
+    )
+    reference_output = reference(
+        reference_node_feats,
+        reference_pos,
+        batch=batch,
+        edge_index=edge_index,
+    )
+
+    for name in fast_output:
+        assert torch.allclose(
+            fast_output[name],
+            reference_output[name],
+            atol=1e-12,
+            rtol=1e-11,
+        ), name
+    fast_loss = sum(value.square().sum() for value in fast_output.values())
+    reference_loss = sum(value.square().sum() for value in reference_output.values())
+    fast_gradients = torch.autograd.grad(
+        fast_loss,
+        (fast_node_feats, fast_pos),
+    )
+    reference_gradients = torch.autograd.grad(
+        reference_loss,
+        (reference_node_feats, reference_pos),
+    )
+    for fast_gradient, reference_gradient in zip(
+        fast_gradients,
+        reference_gradients,
+        strict=True,
+    ):
+        assert torch.allclose(
+            fast_gradient,
+            reference_gradient,
+            atol=1e-11,
+            rtol=1e-10,
+        )
+
+
+def test_factorized_gated_edge_projection_matches_expanded_edge_mlp() -> None:
+    torch.manual_seed(2409)
+    legacy = moment._GatedEquivariantLocalTransport(
+        scalars=8,
+        vectors=2,
+        num_heads=2,
+        num_rbf=4,
+        eps=1e-12,
+    ).double()
+    factorized = moment._GatedEquivariantLocalTransport(
+        scalars=8,
+        vectors=2,
+        num_heads=2,
+        num_rbf=4,
+        eps=1e-12,
+    ).double()
+    factorized.load_state_dict(legacy.state_dict())
+    receiver = torch.tensor([0, 0, 1, 2, 3, 3])
+    sender = torch.tensor([1, 2, 0, 3, 0, 2])
+
+    legacy_inputs = (
+        torch.randn(4, 2, 4, dtype=torch.float64, requires_grad=True),
+        torch.randn(6, 4, dtype=torch.float64, requires_grad=True),
+        torch.randn(6, 2, 5, dtype=torch.float64, requires_grad=True),
+    )
+    factorized_inputs = tuple(
+        value.detach().clone().requires_grad_() for value in legacy_inputs
+    )
+    scalar_heads, rbf, vector_invariants = legacy_inputs
+    expanded_rbf = rbf.unsqueeze(1).expand(-1, 2, -1)
+    expected = legacy.edge_mlp(
+        torch.cat(
+            [
+                scalar_heads[receiver],
+                scalar_heads[sender],
+                expanded_rbf,
+                vector_invariants,
+            ],
+            dim=-1,
+        )
+    )
+    actual = factorized._factorized_edge_mlp(
+        factorized_inputs[0],
+        receiver,
+        sender,
+        factorized_inputs[1],
+        factorized_inputs[2],
+    )
+    probe = torch.randn_like(expected)
+    expected_targets = (*legacy_inputs, *legacy.edge_mlp.parameters())
+    actual_targets = (*factorized_inputs, *factorized.edge_mlp.parameters())
+    expected_gradients = torch.autograd.grad(
+        (expected * probe).sum(),
+        expected_targets,
+    )
+    actual_gradients = torch.autograd.grad(
+        (actual * probe).sum(),
+        actual_targets,
+    )
+
+    assert torch.allclose(actual, expected, atol=1e-12, rtol=1e-11)
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert torch.allclose(
+            actual_gradient,
+            expected_gradient,
+            atol=1e-12,
+            rtol=1e-11,
+        )
+
+
+def test_local_geometry_caches_nonself_views_without_changing_tuple_contract() -> None:
+    _node_feats, pos, batch, edge_index = _inputs()
+    geometry = moment._local_geometry(
+        pos,
+        batch,
+        num_graphs=2,
+        cutoff=2.5,
+        num_rbf=4,
+        edge_index=edge_index,
+    )
+    receiver, sender, displacement, squared_distance, rbf = geometry
+    nonself = receiver != sender
+
+    assert len(geometry) == 5
+    assert torch.equal(geometry[0], receiver)
+    assert torch.equal(geometry.nonself_receiver, receiver[nonself])
+    assert torch.equal(geometry.nonself_sender, sender[nonself])
+    assert torch.equal(geometry.nonself_displacement, displacement[nonself])
+    assert torch.equal(geometry.nonself_squared_distance, squared_distance[nonself])
+    assert torch.equal(geometry.nonself_rbf, rbf[nonself])
+    assert torch.equal(
+        geometry.nonself_cutoff,
+        moment._cosine_of_squared_distance_cutoff(squared_distance[nonself]),
+    )
+    assert torch.equal(
+        geometry.nonself_tensor_features,
+        moment._symmetric_traceless_features(displacement[nonself]),
+    )
+
+
 def test_gated_local_is_output_and_gradient_continuous_at_cutoff() -> None:
     torch.manual_seed(2405)
     transport = moment._GatedEquivariantLocalTransport(

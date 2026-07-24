@@ -18,6 +18,28 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Function-preserving performance refactor (2026-07-24)
+
+The gated LGL hot path now skips route-inactive projections, factorizes the
+first edge-MLP affine map, reuses non-self geometry, fuses global
+numerator/denominator summaries, avoids single-group concatenation, and splits
+the peak-heavy packed receiver reduction into two balanced groups. Public
+configuration, parameters, state schema, and layer equations are unchanged.
+
+On the matched `N=2048`, `k=64` CUDA train-step profile, peak allocation fell
+from `1,298,436,608` to `1,064,950,784` bytes (`-17.98%`). Aggregate forward
+device time over three profiled steps fell from `15.784` to `12.418 ms`
+(`-21.33%`). The initial-state hash and final profiled loss matched exactly.
+
+On the frozen 16-complex train-only ATOM3D-LBA probe, the same-initial-state
+gated-plus-grouped candidate reduced median step latency from `23.56` to
+`22.61 ms` and peak CUDA allocation from `423.7` to `354.0 MB`. It retained
+the capacity gate, first reaching `train MAE <= 0.10 pK` at evaluated step 700.
+That crossing is not promoted as an accuracy gain because FP32 accumulation
+order changed and long optimizer trajectories can diverge. Validation and test
+labels were not read. Full implementation, hashes, commands, and claim limits
+are in [the performance refactor report](PERFORMANCE_REFACTOR_20260724.md).
+
 ## Model-feedback follow-up (2026-07-24)
 
 The follow-up addressed three correctness/architecture issues without changing
@@ -32,10 +54,11 @@ mass feature. A later review exposed that, for a singleton edge, this makes
 attenuation. Soft-normalization v2 supersedes only that divisor with
 `sqrt(1 + C_i)`, `C_i=sum_j f_c(u_ij)`, while retaining the squared statistic
 as a learned diagnostic where applicable. Gated local message families and
-their two mass statistics still share one packed receiver reduction. The
-original matched full-train-step CUDA profiler used the exact same graph,
-model seed, and initial-state hash on base commit `626275a` and the first
-follow-up:
+their two mass statistics shared one packed receiver reduction at this
+historical snapshot; the later performance refactor above supersedes that
+implementation. The original matched full-train-step CUDA profiler used the
+exact same graph, model seed, and initial-state hash on base commit `626275a`
+and the first follow-up:
 
 | implementation | `aten::index_add` calls / 3 steps | forward device time | peak CUDA allocation |
 |---|---:|---:|---:|

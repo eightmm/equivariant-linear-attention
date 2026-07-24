@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
+import equivariant_attention.moment as moment
 from equivariant_attention.irreps import CartesianIrreps
 from equivariant_attention.moment import (
     _bounded_kernel_scale,
@@ -206,6 +207,49 @@ def test_structured_attention_matches_explicit_dense_kernel(balanced: bool) -> N
         expected[index] = torch.einsum("hij,jhf->ihf", weights, value[index])
 
     assert _max_error(actual, expected) < 1e-10
+
+
+@pytest.mark.parametrize("balanced", [False, True])
+def test_factorized_attention_fuses_denominator_into_augmented_value(
+    monkeypatch: pytest.MonkeyPatch,
+    balanced: bool,
+) -> None:
+    torch.manual_seed(109)
+    query_scalar = _normalize_positive_features(
+        torch.rand(7, 2, 4, dtype=torch.float64),
+        eps=1e-12,
+    )
+    key_scalar = _normalize_positive_features(
+        torch.rand(7, 2, 4, dtype=torch.float64),
+        eps=1e-12,
+    )
+    query_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
+    key_vector = _unit_ball(torch.randn(7, 2, 3, dtype=torch.float64), eps=1e-12)
+    kernel_scale = torch.tensor([0.2, 0.7], dtype=torch.float64)
+    value = torch.randn(7, 2, 5, dtype=torch.float64)
+    batch = torch.tensor([0, 0, 0, 1, 1, 1, 1])
+
+    def reject_separate_denominator(*_args: object, **_kwargs: object) -> torch.Tensor:
+        raise AssertionError("separate denominator reduction executed")
+
+    monkeypatch.setattr(
+        moment,
+        "_structured_row_denominator",
+        reject_separate_denominator,
+    )
+    output = _factorized_moment_attention(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        kernel_scale,
+        value,
+        batch,
+        num_graphs=2,
+        balanced=balanced,
+    )
+
+    assert torch.isfinite(output).all()
 
 
 def test_bounded_degree2_kernel_distinguishes_alignment_sign() -> None:

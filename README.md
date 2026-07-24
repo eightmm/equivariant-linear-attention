@@ -131,6 +131,10 @@ disabled by default and add no raw atom, bond, residue, or label feature.
 Their exact equations and matched real-data result are in
 [the derivation](docs/LAYER_MATH.md#gated-same-feature-local-transport) and
 [the evaluation record](docs/EVALUATION.md#same-feature-gated-hybrid-outcome-2026-07-24).
+The current function-preserving hot-path refactor reduced the matched
+`N=2048, k=64` train-profile peak allocation by `17.98%` and the frozen
+ATOM3D-LBA candidate peak by `16.45%`; see the
+[performance report](docs/PERFORMANCE_REFACTOR_20260724.md).
 
 For protein-ligand affinity experiments, `readout_mode="interaction"` keeps the
 ligand mean prediction as a zero-initialized residual baseline and adds
