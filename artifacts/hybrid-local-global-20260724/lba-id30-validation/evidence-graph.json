@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {
+      "id": "E1",
+      "path": "full/result.json",
+      "supports": ["C1", "C2"]
+    },
+    {
+      "id": "E2",
+      "path": "full/paired-analysis.json",
+      "supports": ["C2"],
+      "limits": ["C3"]
+    },
+    {
+      "id": "E3",
+      "path": "verification-summary.json",
+      "supports": ["C1"],
+      "limits": ["C5"]
+    },
+    {
+      "id": "E4",
+      "path": "../../../docs/LBA_ID30_VALIDATION_20260724.md",
+      "limits": ["C4", "C5"]
+    }
+  ]
+}

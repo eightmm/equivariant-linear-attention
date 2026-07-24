@@ -11,6 +11,7 @@ from equivariant_attention.pdbbind import (
     ATOM3D_LBA_REPO,
     atom3d_lba_row_to_sample,
     load_atom3d_lba_samples,
+    load_atom3d_lba_split_samples,
     segment_balanced_knn_edge_index,
 )
 
@@ -162,6 +163,46 @@ def test_loader_rejects_nontrain_split_and_duplicate_indices(tmp_path: object) -
             root=tmp_path,
             indices=(0, 0),
             revision=_REVISION,
+        )
+
+
+def test_id30_loader_admits_train_and_val_but_never_test(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    calls: list[dict[str, object]] = []
+    rows = [_row(), {**_row(), "labels": 6.5}]
+    fake = ModuleType("datasets")
+
+    def fake_load_dataset(repo: str, **kwargs: object) -> list[dict[str, object]]:
+        calls.append({"repo": repo, **kwargs})
+        return rows
+
+    fake.load_dataset = fake_load_dataset  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+    samples = load_atom3d_lba_split_samples(
+        tmp_path,
+        split="val",
+        revision=_REVISION,
+        indices=(1,),
+    )
+
+    assert calls == [
+        {
+            "repo": ATOM3D_LBA_REPO,
+            "revision": _REVISION,
+            "split": "val",
+            "cache_dir": str(tmp_path),
+        }
+    ]
+    assert samples[0].sample_id.startswith("atom3d-lba:val:0000001:")
+    with pytest.raises(ValueError, match="train or val"):
+        load_atom3d_lba_split_samples(
+            tmp_path,
+            split="test",
+            revision=_REVISION,
+            indices=(0,),
         )
 
 

@@ -63,3 +63,23 @@ supplied affinity `pK` values and normalization is fitted only on the selected
 The downloaded data stays under ignored `data/` and is not redistributed.
 The upstream license and provenance must be reviewed before reuse outside the
 confirmed non-commercial research packet.
+
+## ATOM3D-LBA ID30 validation packet
+
+`load_atom3d_lba_split_samples` is the separate held-out evaluation loader. It
+accepts only the pinned official `train` or `val` split and structurally rejects
+`test`. The 2026-07-24 study used all 3,507 train and 466 validation complexes.
+It retained the same pocket/ligand filtering, 140-dimensional node features,
+ligand readout mask, and `pK` target as the train-only packet. Target
+normalization was fitted on the complete train split only.
+
+The split identity hashes were:
+
+- train: `94d0468cd2c6eb579f5625f9fc74e12c1473c82f44d52186e90bbda17faf3998`
+- validation:
+  `ed4565afc9e87adb926798dd1909a3987fc849a7f0e1f5e3ba92d52c10e7d99c`
+
+The loader relies on the already-materialized immutable Hugging Face cache in
+offline mode. The test Arrow file exists in that cache from an earlier generic
+builder preflight, but this evaluation runner neither constructs a test dataset
+object nor reads a test row or label.

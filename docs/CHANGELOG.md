@@ -10,6 +10,14 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [eval] v0.7 -> v0.8 (2026-07-24) — add a test-inadmissible official
+  ATOM3D-LBA ID30 train/validation loader, full early-stopped training runner,
+  portable best/last checkpoints, correlation metrics, per-complex
+  re-evaluation, and paired bootstrap. impact: the current gated-plus-grouped
+  LGL reached `1.550035 pK` validation RMSE versus `1.592008` for the matched
+  incumbent and `1.692812` for the private EGNN; the one-seed registered
+  incumbent gate passed, but its paired validation bootstrap interval crossed
+  zero and all arms clipped over 99% of updates, so defaults remain unchanged.
 - [model] v0.13 -> v0.14 (2026-07-24) — skip route-inactive all-local gated
   projections, factorize the first edge-MLP affine map, cache reusable local
   geometry, fuse global numerator/denominator summaries, and balance packed

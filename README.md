@@ -135,6 +135,13 @@ The current function-preserving hot-path refactor reduced the matched
 `N=2048, k=64` train-profile peak allocation by `17.98%` and the frozen
 ATOM3D-LBA candidate peak by `16.45%`; see the
 [performance report](docs/PERFORMANCE_REFACTOR_20260724.md).
+On the complete official ATOM3D-LBA ID30 train/validation split, the current
+gated-plus-grouped LGL reached `1.550035 pK` validation RMSE versus `1.592008`
+for the matched previous LGL and `1.692812` for the private static EGNN.
+This passes the registered one-seed point gate, but the paired
+candidate-versus-incumbent validation interval crosses zero and all arms clip
+over 99% of updates, so the switches remain opt-in. See the
+[full LBA report](docs/LBA_ID30_VALIDATION_20260724.md).
 
 For protein-ligand affinity experiments, `readout_mode="interaction"` keeps the
 ligand mean prediction as a zero-initialized residual baseline and adds

@@ -591,3 +591,30 @@ structure statements, not measured end-to-end performance claims.
 batch for eager and compiled inference and checks output equality on the CUDA
 lane. Tensor-dependent input validation may still create graph breaks; no
 fullgraph claim is made.
+
+## ATOM3D-LBA official ID30 validation (2026-07-24)
+
+The first full held-out protein-ligand study used all 3,507 official ID30 train
+complexes and 466 validation complexes at pinned dataset revision
+`f93dd2d150a47c270f624620f84e07451a158705`. Test access was structurally
+disabled. Raw features, target transformation, ligand readout, batches, and
+32,303,245 directed sparse candidates were identical across arms.
+
+| arm | params | validation MAE | validation RMSE | Pearson | Spearman |
+|---|---:|---:|---:|---:|---:|
+| gated + grouped LGL | 168,815 | 1.254561 | **1.550035** | **0.637805** | 0.610718 |
+| previous LGL | 161,541 | 1.297191 | 1.592008 | 0.622750 | **0.615140** |
+| private static EGNN | 167,260 | 1.349694 | 1.692812 | 0.537693 | 0.532804 |
+| train-mean constant | — | 1.614885 | 2.039959 | — | — |
+
+The candidate-minus-incumbent RMSE delta was `-0.041973 pK`, passing the
+registered one-seed `-0.02 pK` gate. A 10,000-replicate paired bootstrap over
+validation complexes yielded `[-0.130138, +0.043411] pK`, so it does not yet
+establish a stable incumbent advantage. Candidate minus private EGNN was
+`-0.142776 pK`, with interval `[-0.230663, -0.055042]`.
+
+Candidate/incumbent/private-EGNN median synchronized steps were
+24.726/26.517/9.674 ms at batch size 16, and peak CUDA allocations were
+1.732/1.253/1.545 GB. Every arm clipped more than 99% of updates. The complete
+protocol, external published context, hashes, and interpretation are in
+`docs/LBA_ID30_VALIDATION_20260724.md`.

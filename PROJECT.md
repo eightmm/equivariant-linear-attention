@@ -256,6 +256,28 @@
   1,800 seconds, and stops when both arms pass or the bound is exhausted. A
   later full ID30 validation study requires a separate registered hypothesis
   and approval.
+- The user's 2026-07-24 request for a proper LBA training comparison authorizes
+  a validation-only ID30 study under
+  `artifacts/hybrid-local-global-20260724/lba-id30-validation/scope.md`. It uses
+  all 3,507 official train complexes and 466 validation complexes, keeps the
+  490-row test split structurally inadmissible, and compares the current
+  gated-plus-grouped LGL, the previous LGL, and a near-parameter private static
+  EGNN with identical raw inputs, sparse candidates, train-only target
+  normalization, batches, optimizer, and checkpoint selection. The primary
+  metric is best validation RMSE in pK; the registered candidate gate is at
+  least 0.02 pK improvement over the same-harness incumbent. The published
+  ATOM3D ID30 GNN RMSE is descriptive context only. The local CUDA envelope is
+  capped at two GPU-hours with no network, download, test access, or default
+  architecture promotion.
+- The study completed in 755.0 seconds of runner wall time. Candidate,
+  incumbent, and private-EGNN validation RMSEs were
+  `1.550035/1.592008/1.692812 pK`, so the candidate passed the registered
+  one-seed point-estimate gate by `0.041973 pK`. The paired 10,000-resample
+  candidate-versus-incumbent interval was
+  `[-0.130138, +0.043411] pK`, however, and every arm clipped more than 99% of
+  updates. The candidate therefore remains opt-in pending multi-seed
+  confirmation and optimization repair. Test remained unopened; the complete
+  analysis is in `docs/LBA_ID30_VALIDATION_20260724.md`.
 - The confirmed material envelope adds the optional `datasets` dependency,
   download/cache about 473 MB from Hugging Face at a recorded immutable
   revision, accept the optional graph/readout schema extension, and authorize

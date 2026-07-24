@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "commands": [
+    "uv run --locked pytest -q tests/test_pdbbind_lba.py tests/test_lba_id30_training.py",
+    "uv run --locked python scripts/train_lba_id30.py artifacts/hybrid-local-global-20260724/lba-id30-validation/full --device cuda --arms candidate incumbent egnn --batch-size 16 --max-epochs 100 --min-epochs 30 --patience 15 --warmup-epochs 5 --budget-seconds 7200",
+    "uv run --locked python scripts/analyze_lba_id30.py artifacts/hybrid-local-global-20260724/lba-id30-validation/full/result.json artifacts/hybrid-local-global-20260724/lba-id30-validation/full/paired-analysis.json --device cuda --bootstrap-replicates 10000",
+    "scripts/check.sh fast"
+  ],
+  "network_required": false,
+  "test_evaluation_command_exists": false
+}

@@ -75,3 +75,22 @@ channels; the private static EGNN gets directed 6-Angstrom radius candidates
 and the closest parameter-matched width. Success is train MAE at most
 `0.10 pK`. This is an overfit/wiring check only: it performs no validation or
 test evaluation and cannot support a generalization claim.
+
+The full held-out ATOM3D-LBA runner is separate:
+
+```bash
+uv run --locked python scripts/train_lba_id30.py \
+  artifacts/hybrid-local-global-20260724/lba-id30-validation/full \
+  --device cuda --arms candidate incumbent egnn \
+  --batch-size 16 --max-epochs 100 --min-epochs 30 \
+  --patience 15 --warmup-epochs 5 --budget-seconds 7200
+```
+
+It uses the official ID30 train/validation split, fits target normalization on
+train only, precomputes one identical sparse topology for every arm, warms
+AdamW linearly for five epochs, then uses cosine decay. Validation RMSE selects
+portable best checkpoints; early stopping begins no sooner than epoch 30 and
+uses patience 15. The runner has no test-evaluation option. Per-complex
+re-evaluation and paired bootstrap are provided by
+`scripts/analyze_lba_id30.py`. See
+`docs/LBA_ID30_VALIDATION_20260724.md` for the completed result and limitations.

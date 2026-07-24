@@ -1,0 +1,60 @@
+{
+  "bootstrap_replicates": 10000,
+  "bootstrap_seed": 20260724,
+  "candidate_paired_rmse": {
+    "egnn": {
+      "bootstrap_mean_delta_pK": -0.1421788190873498,
+      "candidate_minus_baseline_rmse_pK": -0.1427763917206437,
+      "ci95_high_pK": -0.05504169149113211,
+      "ci95_low_pK": -0.2306633327193734,
+      "probability_candidate_lower_rmse": 0.9995,
+      "replicates": 10000
+    },
+    "incumbent": {
+      "bootstrap_mean_delta_pK": -0.04208056100239296,
+      "candidate_minus_baseline_rmse_pK": -0.04197295222898423,
+      "ci95_high_pK": 0.04341077903970614,
+      "ci95_low_pK": -0.13013815863342434,
+      "probability_candidate_lower_rmse": 0.8304,
+      "replicates": 10000
+    }
+  },
+  "dataset_revision": "f93dd2d150a47c270f624620f84e07451a158705",
+  "metrics": {
+    "candidate": {
+      "count": 466,
+      "mae_pK": 1.2545611259763332,
+      "pearson": 0.6378045562667718,
+      "rmse_pK": 1.550035484250322,
+      "spearman": 0.6107184284882878
+    },
+    "egnn": {
+      "count": 466,
+      "mae_pK": 1.349694353316475,
+      "pearson": 0.5376928946581191,
+      "rmse_pK": 1.6928118759709656,
+      "spearman": 0.5328039423117398
+    },
+    "incumbent": {
+      "count": 466,
+      "mae_pK": 1.2971906042917603,
+      "pearson": 0.6227497894436369,
+      "rmse_pK": 1.5920084364793061,
+      "spearman": 0.6151398696856253
+    }
+  },
+  "note": "Paired nonparametric bootstrap over validation complexes only; this is not uncertainty over model seeds or protein clusters.",
+  "prediction_files": {
+    "candidate": "artifacts/hybrid-local-global-20260724/lba-id30-validation/full/paired-analysis-candidate-predictions.jsonl",
+    "egnn": "artifacts/hybrid-local-global-20260724/lba-id30-validation/full/paired-analysis-egnn-predictions.jsonl",
+    "incumbent": "artifacts/hybrid-local-global-20260724/lba-id30-validation/full/paired-analysis-incumbent-predictions.jsonl"
+  },
+  "schema_version": 1,
+  "test_evaluated": false,
+  "training_result": "artifacts/hybrid-local-global-20260724/lba-id30-validation/full/result.json",
+  "training_result_sha256": "05ad57de67ef1f5daa123b11237cbf7065e503e40ec93a30f17744c519e0cd93",
+  "validation_evaluated": true,
+  "validation_identity_sha256": "ed4565afc9e87adb926798dd1909a3987fc849a7f0e1f5e3ba92d52c10e7d99c",
+  "validation_size": 466,
+  "validation_topology_sha256": "6b3def405798712945f339d4a6a3c6ad41f2995c54d680767693187873099f8e"
+}

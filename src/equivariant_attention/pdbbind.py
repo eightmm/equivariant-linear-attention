@@ -90,6 +90,21 @@ def atom3d_lba_row_to_sample(
     revision: str,
 ) -> GraphSample:
     _validate_train_location(split=split, row_index=row_index, revision=revision)
+    return _atom3d_lba_row_to_sample(
+        row,
+        split=split,
+        row_index=row_index,
+        revision=revision,
+    )
+
+
+def _atom3d_lba_row_to_sample(
+    row: Mapping[str, object],
+    *,
+    split: str,
+    row_index: int,
+    revision: str,
+) -> GraphSample:
     required = ("input_ids", "coords", "labels", "token_type_ids")
     missing = [name for name in required if name not in row]
     if missing:
@@ -212,6 +227,54 @@ def load_atom3d_lba_samples(
     ]
 
 
+def load_atom3d_lba_split_samples(
+    root: str | Path,
+    *,
+    split: str,
+    revision: str = ATOM3D_LBA_REVISION,
+    indices: Sequence[int] | None = None,
+) -> list[GraphSample]:
+    """Load the official ID30 train or validation split from the pinned cache.
+
+    The test split is deliberately inadmissible so architecture selection cannot
+    accidentally consume its rows or labels. Target transforms must still be fit
+    by the caller from the returned training samples only.
+    """
+    _validate_evaluation_location(split=split, row_index=0, revision=revision)
+    try:
+        from datasets import load_dataset
+    except ModuleNotFoundError as exc:
+        raise ImportError(
+            "ATOM3D-LBA loading requires the optional 'pdbbind' dependencies"
+        ) from exc
+
+    dataset = load_dataset(
+        ATOM3D_LBA_REPO,
+        revision=revision,
+        split=split,
+        cache_dir=str(root),
+    )
+    selected_indices = (
+        tuple(range(len(dataset)))
+        if indices is None
+        else _validate_indices(indices)
+    )
+    if max(selected_indices) >= len(dataset):
+        raise IndexError(
+            f"ATOM3D-LBA {split} has {len(dataset)} rows; "
+            f"requested index {max(selected_indices)}"
+        )
+    return [
+        _atom3d_lba_row_to_sample(
+            dataset[index],
+            split=split,
+            row_index=index,
+            revision=revision,
+        )
+        for index in selected_indices
+    ]
+
+
 def _validate_indices(indices: Sequence[int]) -> tuple[int, ...]:
     if isinstance(indices, (str, bytes)) or not isinstance(indices, Sequence):
         raise TypeError("indices must be a nonempty sequence of integers")
@@ -230,6 +293,21 @@ def _validate_indices(indices: Sequence[int]) -> tuple[int, ...]:
 def _validate_train_location(*, split: str, row_index: int, revision: str) -> None:
     if split != "train":
         raise ValueError("the registered overfit loader permits only the train split")
+    _validate_row_and_revision(row_index=row_index, revision=revision)
+
+
+def _validate_evaluation_location(
+    *,
+    split: str,
+    row_index: int,
+    revision: str,
+) -> None:
+    if split not in {"train", "val"}:
+        raise ValueError("the ID30 evaluation loader permits only train or val")
+    _validate_row_and_revision(row_index=row_index, revision=revision)
+
+
+def _validate_row_and_revision(*, row_index: int, revision: str) -> None:
     if isinstance(row_index, bool) or not isinstance(row_index, int) or row_index < 0:
         raise ValueError("row_index must be a nonnegative integer")
     if not isinstance(revision, str) or _REVISION.fullmatch(revision) is None:
