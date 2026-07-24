@@ -1,0 +1,23 @@
+{
+  "raw_result_json_valid": true,
+  "results_summary_json_valid": true,
+  "strict_cuda_completed": true,
+  "finite_gradients_all_arms": true,
+  "matched_data_and_topology": true,
+  "candidate_initial_state_matches_v1": true,
+  "incumbent_final_state_reproduced": true,
+  "egnn_final_state_reproduced": true,
+  "capacity_threshold_passed": true,
+  "convergence_threshold_vs_v1_passed": true,
+  "local_fast_gate": {
+    "passed": true,
+    "tests_passed": 507,
+    "coverage_percent": 88.79,
+    "ruff": "passed",
+    "compileall": "passed",
+    "ml_smoke": "passed"
+  },
+  "validation_evaluated": false,
+  "test_evaluated": false,
+  "independent_review": "not_performed"
+}

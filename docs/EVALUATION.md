@@ -116,6 +116,36 @@ therefore rejected on this screen. The combined arm remains the selected
 candidate, now with component attribution; it is still opt-in because this is
 one short validation seed and not a multi-seed or test result.
 
+### Train-only ATOM3D-LBA capacity follow-up
+
+The current combined arm was then rerun on the same frozen 16
+ATOM3D-LBA/PDBBind-derived train complexes as the historical package. Dataset
+revision, sample IDs, node/edge counts, raw features, coordinates, labels,
+ligand masks, batches, and 153,029 directed candidates were identical. The
+candidate initial-state hash also matched the historical candidate; the
+incumbent and EGNN reproduced their historical final-state hashes exactly.
+
+| arm | threshold result | train MAE at stop | median step | peak CUDA |
+|---|---:|---:|---:|---:|
+| incumbent LGL | pass at 1,800 / 51.15 s | 0.085251 pK | 25.23 ms | 268.9 MB |
+| prior v1 combined | pass at 1,050 / 27.60 s | 0.098200 pK | 23.63 ms | 402.2 MB |
+| current v2 combined | pass at 950 / 25.03 s | 0.099318 pK | 23.56 ms | 423.7 MB |
+| private static EGNN | miss at 3,000 | 0.116225 pK | 4.25 ms | 326.1 MB |
+
+The threshold was checked every 50 updates. V2 crossed one checkpoint
+(`100` updates, `9.52%`) earlier than v1, with effectively unchanged median
+step latency (`0.997x`) and `5.35%` more peak allocation. It crossed in
+`47.22%` fewer updates than the same-run incumbent. EGNN remained much cheaper
+per update: v2 was `5.54x` slower and used `1.30x` peak memory, although EGNN
+did not reach this memorization threshold.
+
+This is capacity and optimization evidence only. The subset is train-only, one
+deterministic seed was used, threshold stopping prevents final-MAE ranking, and
+no validation or test labels were evaluated. It establishes neither affinity
+generalization nor superiority to an official EGNN reproduction. Raw results
+and the identity audit are in
+`artifacts/hybrid-local-global-20260724/soft-normalization-v2/pdbbind-overfit/`.
+
 The emitted gated-arm `run_config` used the pre-correction descriptive string
 `cutoff_sum_over_sqrt_degree_plus_explicit_mass`, although the hashed executed
 source already used `sqrt(1+C)`. The label is corrected in subsequent source;

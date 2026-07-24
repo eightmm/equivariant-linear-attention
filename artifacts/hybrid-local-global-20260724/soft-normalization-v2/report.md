@@ -42,6 +42,21 @@ The combined model remains the selected opt-in candidate. This packet does not
 promote it to a default: one 500-update validation seed is insufficient for a
 general accuracy claim.
 
+## Train-only ATOM3D-LBA capacity follow-up
+
+On the same 16 cached train complexes and 153,029 identical directed
+candidates, the corrected combined path reached the evaluated `0.10 pK`
+threshold at step 950/25.03 s. The prior combined path required
+1,050/27.60 s, the current incumbent required 1,800/51.15 s, and the private
+static EGNN missed at 3,000 updates with `0.116225 pK`.
+
+The v1 and v2 candidates share the exact initial-state hash and input
+identities. V2 reduced threshold updates by `9.52%` with effectively unchanged
+median step latency, while peak CUDA allocation rose `5.35%`. It remained
+`5.54x` slower per step and used `1.30x` the peak memory of EGNN. This is
+train-only memorization evidence, not affinity generalization; validation and
+test labels were not read.
+
 ## Evidence
 
 - Raw frozen records: `qm9-screen/*.json`
@@ -49,6 +64,8 @@ general accuracy claim.
 - Direct CUDA bfloat16 smoke: `cuda-bfloat16-smoke.json`
 - Machine-readable synthesis: `results-summary.json`
 - Stale descriptive-label disclosure: `provenance-correction.md`
+- Train-only protein-ligand capacity follow-up:
+  `pdbbind-overfit/{scope.md,result.json,results-summary.json,report.md}`
 
 ## Next bounded experiment
 

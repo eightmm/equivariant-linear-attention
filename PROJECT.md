@@ -22,6 +22,21 @@
   is rejected for this screen. The combined arm remains opt-in pending
   multi-seed confirmation. Test labels were not evaluated. Evidence is in
   `artifacts/hybrid-local-global-20260724/soft-normalization-v2/`.
+- The current v2 combined path also passed the frozen train-only
+  ATOM3D-LBA/PDBBind capacity check on 2026-07-24. With identical cached train
+  rows 0--15, raw features, coordinates, labels, batches, and 153,029 directed
+  candidates, it first reached the evaluated `0.10 pK` threshold at update
+  950/25.03 s, versus 1,050/27.60 s for the preceding cutoff-squared version
+  and 1,800/51.15 s for the current incumbent. The private static EGNN ended at
+  `0.116225 pK` after 3,000 updates and missed the threshold. Dataset, sample,
+  node/edge, candidate-initialization, and control final-state identities all
+  match the historical run. V2 reduced threshold updates by `9.52%` versus v1
+  with effectively unchanged median step latency, but raised peak CUDA
+  allocation by `5.35%`; it was still `5.54x` slower per step and used `1.30x`
+  the peak memory of EGNN. This is one-seed memorization evidence only. No
+  validation or test labels were read, and the combined path remains opt-in.
+  Evidence is in
+  `artifacts/hybrid-local-global-20260724/soft-normalization-v2/pdbbind-overfit/`.
 - The first model-feedback follow-up was implemented on 2026-07-24. Automatic
   GitHub Actions
   triggers are disabled; the CPU workflow is available only through manual
