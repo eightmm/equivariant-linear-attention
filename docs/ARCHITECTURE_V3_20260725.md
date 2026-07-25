@@ -19,10 +19,9 @@ Architecture v3 is implemented as an opt-in extension of
 The focused CPU evidence is green: exact dense/factorized agreement,
 O(3)/translation/permutation/batch contracts, external-input gradients,
 disabled-path compatibility, checkpointed forward/backward equality, and
-training-runner contracts pass. At the time of this record the host exposed no
-CUDA device, so QM9 accuracy and CUDA train-step latency/peak allocation for v3
-remain unmeasured. No architecture promotion follows from CPU correctness
-alone.
+training-runner contracts pass. The subsequent strict-CUDA QM9 screen completed
+all five registered arms. No arm passed the joint accuracy/resource gate, so
+the extensions remain experimental and off by default.
 
 ## Kernel
 
@@ -118,14 +117,36 @@ incumbent and `1.692812 pK` for the private EGNN. The paired interval versus
 the incumbent crossed zero, all arms clipped more than 99% of updates, and no
 test split was opened. This is evidence for the preceding hybrid, not v3.
 
-The v3 protocol first screens individual additions on cached QM9 gap
-validation. A candidate advances only when it improves by at least `0.010 eV`
-while keeping median train-step latency and CUDA peak allocation within
-`1.25x` of the gated-plus-grouped incumbent. Only a passing candidate is
-eligible for the fixed-budget LBA validation comparison. The host-level CUDA
-failure occurred before either v3 dataset run, so the correct current decision
-is “implemented, CPU-verified, real-data pending,” not “complete” or
-“rejected.”
+The v3 protocol first screened individual additions on cached QM9 gap
+validation. A candidate could advance only when it improved by at least
+`0.010 eV` while keeping median train-step latency and CUDA peak allocation
+within `1.25x` of the gated-plus-grouped incumbent.
+
+| Arm | Validation MAE (eV) | Improvement (eV) | Step ratio | Peak ratio | Clip fraction |
+|---|---:|---:|---:|---:|---:|
+| incumbent | 0.646338 | — | 1.000 | 1.000 | 0.906 |
+| irrep RMS normalization | 0.675463 | -0.029126 | 1.094 | 1.005 | 0.950 |
+| quartic kernel | 0.673753 | -0.027415 | 0.995 | 1.135 | 0.908 |
+| two angular axes | 0.703972 | -0.057634 | 1.024 | 1.155 | 0.912 |
+| combined | 0.642692 | +0.003646 | 1.067 | 1.297 | 0.950 |
+
+All values were finite and all arms shared the same paired base initialization,
+raw features, coordinates, split, and sparse candidates. The combined arm was
+the only arm better than the incumbent, but it missed the accuracy threshold
+and exceeded the memory ceiling. The individual negative results plus the
+small combined gain indicate a non-additive interaction, not evidence that any
+individual mechanism is useful. The frozen decision is therefore “software
+capability retained, performance promotion rejected.” The conditional v3 LBA
+comparison did not run and no test labels were evaluated.
+
+The earlier two-update CPU diagnostic attributed almost all clipping to the
+readout. That observation did not generalize across training: over 500 CUDA
+updates, the incumbent's largest mean path norm was the global/shared-update
+bucket (`3.63`), while combined was dominated by input (`3.98`), global
+(`3.33`), and local (`2.76`) buckets. Combined increased total mean pre-clip
+norm from `4.88` to `6.67` and clipping from `90.6%` to `95.0%`. Clipping is
+therefore a time-varying, multi-path optimization problem rather than a
+readout-only or unnormalized-local-only defect.
 
 ## Completion boundary
 
@@ -139,5 +160,7 @@ choice among:
 3. a production neighbor-list backend and force/energy conservation contract;
 4. a new global spatial encoding beyond finite polynomial moments.
 
-Those are different architectures, not small v3 switches, and should be judged
-only after the current QM9/LBA train-step evidence is available.
+Those are different architectures, not small v3 switches. The current screen
+shows that adding polynomial order or angular axes without a better
+optimization and spatial-selectivity mechanism is not a productive next
+iteration.

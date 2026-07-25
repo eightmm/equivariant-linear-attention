@@ -2,20 +2,24 @@
 
 ## Status
 
-- Architecture-v3 was confirmed and CPU-implemented on 2026-07-25. It
-  deliberately does not repeat the rejected bounded-content/persistent-`2e`
-  architecture-v2 package. The opt-in v3 candidate adds: (1) a fixed-width
-  exact quartic angular feature map whose dot product is
-  `(q_i . k_j)^4`, (2) two direct-summed polar-`1o` query/key axes while
-  retaining exact factorization, (3) public polar-`1o` vector and
+- Architecture-v3 was confirmed, implemented, and strict-CUDA screened on
+  2026-07-25. It deliberately does not repeat the rejected
+  bounded-content/persistent-`2e` architecture-v2 package. The opt-in v3
+  candidate adds: (1) a fixed-width exact quartic angular feature map whose dot
+  product is `(q_i . k_j)^4`, (2) two direct-summed polar-`1o` query/key axes
+  while retaining exact factorization, (3) public polar-`1o` vector and
   symmetric-traceless-`2e` tensor inputs, (4) invariant RMS normalization for
   non-scalar irreps, and (5) optional activation recomputation for the gated
   local edge MLP. The quadratic factorization is compressed from `D^2` to
   `D(D+1)/2` components without changing the kernel. Defaults and existing
-  checkpoints remain compatible. Focused CPU contracts and runner dry-runs
-  pass; the host currently exposes no CUDA device, so v3 QM9 accuracy,
-  train-step resources, and conditional LBA validation remain pending and no
-  v3 option is promoted.
+  checkpoints remain compatible. Focused mathematical/software contracts
+  passed, but the registered seed-42/500-update QM9 screen rejected every v3
+  arm. Incumbent/irrep-normalized/quartic/rank-two/combined validation MAEs
+  were `0.646338/0.675463/0.673753/0.703972/0.642692 eV`. Combined improved by
+  only `0.003646 eV`, below the required `0.010 eV`, and used `1.297x` peak
+  allocation, above the `1.25x` ceiling. Its clipping fraction also rose from
+  `0.906` to `0.950`. No v3 option is promoted and, by the frozen gate, the
+  conditional v3 LBA run did not execute. Test labels were not evaluated.
 - The v3 mathematical contract is full `O(3)`, translation invariance of scalar
   predictions, node permutation equivariance, edge-order invariance,
   graph-batch isolation, and no materialized `N x N` pair tensor. At fixed
