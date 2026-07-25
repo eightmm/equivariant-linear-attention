@@ -4,7 +4,14 @@
 
 ```python
 model = EquivariantAttention(EquivariantAttentionConfig(...))
-out = model(node_feats, pos, batch=None, edge_index=None)
+out = model(
+    node_feats,
+    pos,
+    batch=None,
+    edge_index=None,
+    node_vectors=None,
+    node_tensors=None,
+)
 ```
 
 There is one public attention implementation, `EquivariantAttention`. Local,
@@ -21,6 +28,8 @@ settings rather than separate model classes. `model.attention_kind` is
 | `batch` | `(N,)` | optional integer IDs `0..G-1` |
 | `edge_index` | `(2, E)` | optional keyword-only integer local candidates: receiver row then sender row |
 | `readout_mask` | `(N,)` | optional keyword-only boolean mask selecting graph-pooling nodes |
+| `node_vectors` | `(N, input_vector_dim, 3)` | optional keyword-only polar-vector (`1o`) channels |
+| `node_tensors` | `(N, input_tensor_dim, 3, 3)` | optional keyword-only symmetric-traceless reflection-even (`2e`) channels |
 
 At least one node is required. Graph IDs must be nonnegative, contiguous, and
 start at zero; empty graphs are not encoded. A missing batch means one graph.
@@ -34,6 +43,12 @@ When supplied, `readout_mask` must select at least one node in every graph.
 Transport still uses every node; only the final node-to-graph mean is masked.
 Omitting the mask, or supplying an all-true mask, preserves the default
 all-node mean exactly.
+
+`node_vectors` and `node_tensors` are required exactly when their configured
+input dimensions are positive. Tensor inputs must be symmetric and traceless
+within the dtype-specific tolerance, and `input_tensor_dim > 0` requires hidden
+`2e` channels. Channel-only projections inject these inputs into the hidden
+equivariant states; disabled input paths allocate no parameters.
 
 ## Outputs
 
@@ -70,15 +85,18 @@ scalar training objective. `node_positions` is the resulting latent geometry.
 
 - unit-normalized positive scalar content plus a bounded degree-2 vector
   kernel with linear and quadratic angular terms;
+- optional exact positive quartic angular term and a two-`1o`-axis direct-sum
+  kernel, both retaining fixed-width graph-summary factorization;
 - finite-precision unit-ball vector queries/keys and learned angular scales in
   configured closed bounds;
-- structured vector and 3x3 PSD summaries for masses and denominators, plus
-  analogous signed value summaries that are not clamped;
+- compressed `D(D+1)/2` quadratic summaries for masses, denominators, and
+  signed value transport instead of redundant `D x D` outer products;
 - row normalization, with exactly one key-mass balancing cycle enabled by
   default and a no-balancing lane restricted to controlled experiments;
 - exact factorized relative vector and rank-2 moment transport;
 - scalar/vector residual updates and optional persistent Cartesian `2e`
   residual/FFN updates;
+- optional invariant shared-RMS normalization of vector and `2e` states;
 - ratio-2 pointwise equivariant FFN in every block.
 
 The persistent `2e` path is opt-in through `hidden_irreps`, for example
@@ -88,6 +106,13 @@ path, and updates the tensor state with invariant scalar gates. Channel mixing
 acts only over multiplicities, so the state transforms as `T -> R T R^T`.
 This is a Cartesian rank-2 implementation; it does not add `2o`, spherical
 harmonics, Clebsch--Gordan products, or arbitrary `l>2` input support.
+
+`angular_feature_rank=2` means two learned polar-vector axes per head, not an
+`l=2` irrep. Their six-dimensional direct sum drives the linear and quadratic
+angular kernel. `use_quartic_kernel=True` separately adds the exact
+`kappa*(q_primary dot k_primary)^4` term through a 15-component symmetric
+degree-four feature map. Both are opt-in and preserve `O(N)` global scaling at
+fixed width, although their train-step constants are larger.
 
 Turning off `use_alignment_linear_term` removes only the `beta * (q dot k)`
 term while retaining the same `beta` constant. `kernel_floor_mode="fixed"`
@@ -182,10 +207,11 @@ scalar prediction is outside the current model class.
 
 Any route with a global head does not enforce cluster decomposition or
 extensive size consistency. Mean graph readout is not an additive energy
-model. Finite degree-2 moments/RBFs retain representation collisions, and soft
-memory assignments can collapse. The model is therefore scoped to bounded-size
-property probes or global context within a local/global encoder, not validated
-interatomic potentials or energy-conserving force fields.
+model. Finite-degree moments/RBFs retain representation collisions even with
+the quartic option, and soft memory assignments can collapse. The model is
+therefore scoped to property probes or global context within a local/global
+encoder, not validated interatomic potentials or energy-conserving force
+fields.
 
 Coordinate-enabled positions are latent representations trained only through
 the property objective. They are not validated relaxed structures, forces,

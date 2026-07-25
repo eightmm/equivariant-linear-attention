@@ -101,19 +101,97 @@ arms. This isolates alignment from a simultaneous change to the constant mass.
 This is O(3)-invariant because inner products are preserved by every orthogonal
 matrix, including reflections.
 
-The individual coordinates of a flattened symmetric outer feature would be
-signed. Positivity belongs to the complete quadratic kernel, not to every
-feature coordinate. The production implementation therefore does not sum a
-signed flattened feature and then take a dot product. It contracts structured
-3x3 positive-semidefinite summaries.
+## Optional architecture-v3 angular features
+
+The v3 path adds two independent, opt-in ways to increase angular selectivity.
+They are finite feature maps, not spherical-harmonic tensor products and not an
+approximation to softmax.
+
+First, `angular_feature_rank=2` learns two gated polar-vector axes per head and
+forms their direct sum:
+
+```text
+qbar_ih = U([q1_ih, q1extra_ih]) in R^6
+kbar_jh = U([k1_jh, k1extra_jh]) in R^6,
+```
+
+where `U(x)=x/sqrt(1+||x||^2)`. The linear and quadratic angular terms use
+`tbar_ijh=qbar_ih^T kbar_jh`. The configuration name counts independent
+`1o` axes; it does **not** mean an irreducible `l=2` representation. The
+separate persistent symmetric-traceless state remains the actual `2e` path.
+
+Second, `use_quartic_kernel=True` adds a positive bounded coefficient
+`0 <= kappa_h <= kappa_max` and the exact term
+
+```text
+kappa_h (q1_ih^T k1_jh)^4.
+```
+
+Here `q1,k1 in R^3` are the primary axes, even when the two-axis direct sum is
+enabled. Let `alpha=(alpha_1,...,alpha_D)` range over multi-indices with
+`|alpha|=4`. The implemented symmetric monomial map is
+
+```text
+Phi4(x)_alpha = sqrt(4! / prod_d alpha_d!) prod_d x_d^alpha_d,
+```
+
+so the multinomial theorem gives
+
+```text
+Phi4(q)^T Phi4(k) = (q^T k)^4.
+```
+
+For the implemented `D=3` primary axis this is 15 features per head. Appending
+`sqrt(kappa_h) Phi4(q)` and `sqrt(kappa_h) Phi4(k)` to the scalar feature maps
+therefore preserves the exact graph-summary factorization. With unit scalar
+content and without the optional tensor-product kernel, the combined v3 kernel
+is
+
+```text
+K_ijh = c + a_ih^T b_jh
+        + beta_h + delta_h tbar_ijh
+        + gamma_h tbar_ijh^2
+        + kappa_h (q1_ih^T k1_jh)^4.
+```
+
+It obeys the closed bound
+
+```text
+c <= K_ijh <= c + 1 + 2 beta_max + gamma_max + kappa_max.
+```
+
+All graph summaries remain fixed width, hence the global node-count scaling is
+still `O(N)` for fixed channels, heads, and angular rank. The larger feature
+constant is real and must be measured at train-step level.
+
+The degree-two term is stored without the redundant full `D x D` outer
+product. Define the asymmetric compressed maps
+
+```text
+Phi2L(x) = [x_1^2,...,x_D^2,{2 x_a x_b}_{a<b}]
+Phi2R(x) = [x_1^2,...,x_D^2,{  x_a x_b}_{a<b}].
+```
+
+Then
+
+```text
+Phi2L(q)^T Phi2R(k) = (q^T k)^2.
+```
+
+This reduces the quadratic summary width from `D^2` to `D(D+1)/2`: `9 -> 6`
+for one axis and `36 -> 21` for two axes. The asymmetric scaling also avoids a
+large float32 cancellation observed with a symmetric `sqrt(2)` basis.
+Positivity belongs to the complete quadratic kernel. Mass/denominator
+quadratic contractions are clamped at zero against roundoff, while signed
+value numerators are never clamped.
 
 For row scale `r_ih`, define
 
 ```text
 Q0_gh = sum_i r_ih a_ih
 Qr_gh = sum_i r_ih
-Q1_gh = sum_i r_ih q1_ih
-Q2_gh = sum_i r_ih q1_ih q1_ih^T.
+Q1_gh = sum_i r_ih qbar_ih
+Q2_gh = sum_i r_ih Phi2L(qbar_ih).
 ```
 
 Then each key mass is evaluated as
@@ -121,18 +199,54 @@ Then each key mass is evaluated as
 ```text
 m_jh = b_jh^T Q0_gh
        + (c + beta_h) Qr_gh
-       + delta_h k1_jh^T Q1_gh
-       + gamma_h k1_jh^T Q2_gh k1_jh.
+       + delta_h kbar_jh^T Q1_gh
+       + gamma_h Phi2R(kbar_jh)^T Q2_gh.
 ```
 
 The linear contraction can be signed, but when enabled the combined alignment
-contribution `beta_h (Qr_gh + k1_jh^T Q1_gh)` is nonnegative because every
+contribution `beta_h (Qr_gh + kbar_jh^T Q1_gh)` is nonnegative because every
 query/key vector has norm at most one. When disabled, `beta_h Qr_gh` remains.
 The floor contribution `c Qr_gh` is strictly positive.
-Value numerators use analogous scalar, constant, vector-valued, and
-matrix-valued summaries. Their learned values may be signed, so numerator
-summaries are not PSD and are not clamped. This is algebraically identical to
-the explicit dense kernel and remains `O(N)` at fixed width and head count.
+Value numerators use analogous scalar, constant, vector-valued, and compressed
+quadratic summaries. Their learned values may be signed, so numerator summaries
+are not clamped. This is algebraically identical to the explicit dense kernel
+and remains `O(N)` at fixed width and head count.
+
+## External equivariant inputs and irrep RMS normalization
+
+The public forward can optionally accept polar-vector and reflection-even
+symmetric-traceless tensor channels:
+
+```text
+node_vectors: (N, C1, 3),       v -> R v
+node_tensors: (N, C2, 3, 3),    T -> R T R^T, T=T^T, tr(T)=0.
+```
+
+Channel-only maps inject them into the hidden `1o` and persistent `2e` states.
+They must be enabled through `input_vector_dim=C1` and `input_tensor_dim=C2`;
+tensor inputs additionally require hidden `2e` channels. This path is
+equivariant under reflections as well as rotations and is permutation
+equivariant. It does not accept `1e`, `2o`, or arbitrary `l`.
+
+`use_irrep_rms_normalization=True` applies an invariant pre-normalization before
+the attention update and again before the equivariant FFN. For vector channels
+`V_c` and five-coordinate tensor channels representing matrices `T_c`, define
+
+```text
+r_i^-2 = (
+    sum_c ||V_ic||_2^2 + sum_c ||T_ic||_F^2
+) / (3 C1 + 5 C2) + eps.
+```
+
+The normalized states are `w_c^1 r_i V_ic` and `w_c^2 r_i T_ic`, with one
+learned scalar gain per channel. The scale is invariant, channel mixing is
+equivariant, and scalar state normalization remains separate. This follows the
+separable-normalization motivation of higher-degree equivariant Transformers
+without claiming to reproduce their spherical-harmonic implementation.
+
+Finally, `checkpoint_gated_local_mlp=True` recomputes the latter part of the
+gated edge MLP during backward. It changes the activation-storage schedule, not
+the equations or parameters, and is valid only with gated local transport.
 
 ## One balancing cycle
 
@@ -257,7 +371,9 @@ H''_i = H'_i + alpha_F B(W_F B(H'_i)) * tanh(G_F(sbar'_i)),
 before its Frobenius norm is concatenated to the scalar FFN input. Therefore
 the hidden tensor state can affect a scalar objective while remaining
 reflection-even. No spherical harmonics or parity-odd tensor products are
-introduced, and this path does not accept external `2e/2o` node inputs.
+introduced. The v3 public API can inject external reflection-even `2e`
+matrices into this state; external `2o` and arbitrary higher-degree inputs
+remain unsupported.
 
 ## Global transport controls
 

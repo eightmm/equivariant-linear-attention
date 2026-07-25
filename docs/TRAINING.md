@@ -33,6 +33,10 @@ The registered architecture flags are:
 --no-alignment-linear-term
 --no-key-balancing
 --kernel-floor-mode {fixed,inverse_graph_size}
+--irrep-rms-normalization
+--angular-feature-rank {1,2}
+--quartic-kernel
+--checkpoint-gated-local-mlp
 --evaluate-test
 ```
 
@@ -58,6 +62,15 @@ until a separately preregistered mechanism passes Stage 0.
 mixed-precision claims require the GPU smoke and run-specific environment
 metadata. Long training, schedulers, distributed execution, checkpoint
 selection, and resume are outside the current prototype contract.
+
+Every `train_compare.py` result now partitions the pre-clip L2 norm into
+disjoint `input`, `local`, `global`, `ffn`, `coordinate`, `readout`, and
+fallback paths. This diagnostic is measured before one common global
+`clip_grad_norm_` call. A high total clipping fraction alone must not be
+attributed to the equivariant backbone: the two-step CPU v3 smoke was dominated
+by the readout path, while local/global path norms were orders of magnitude
+smaller. Any clipping-policy experiment must therefore use the same threshold
+for every compared arm and report validation behavior as well as clip counts.
 
 The bounded ATOM3D-LBA capacity check is a separate train-only runner:
 
@@ -94,3 +107,10 @@ uses patience 15. The runner has no test-evaluation option. Per-complex
 re-evaluation and paired bootstrap are provided by
 `scripts/analyze_lba_id30.py`. See
 `docs/LBA_ID30_VALIDATION_20260724.md` for the completed result and limitations.
+
+The v3 runner extension accepts `--arms v3 candidate incumbent egnn` and
+`--v3-variant {irrep_norm,quartic,rank2,combined}`. A fixed-budget comparison
+sets `min_epochs=max_epochs` and patience above that budget; results expose
+both best-checkpoint and last-epoch validation metrics. The registered v3
+protocol runs this lane only after a QM9 candidate passes its accuracy and
+train-step resource screen.

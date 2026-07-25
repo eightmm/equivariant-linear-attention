@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from math import isfinite, prod, sqrt
+from itertools import combinations_with_replacement
+from math import factorial, isfinite, prod, sqrt
 import warnings
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 from .irreps import CartesianIrreps
 
@@ -184,6 +186,14 @@ class EquivariantAttentionConfig:
     use_tensor_product_kernel: bool = False
     tensor_kernel_init: float = 0.05
     tensor_kernel_max: float = 1.0
+    input_vector_dim: int = 0
+    input_tensor_dim: int = 0
+    use_irrep_rms_normalization: bool = False
+    angular_feature_rank: int = 1
+    use_quartic_kernel: bool = False
+    quartic_kernel_init: float = 0.01
+    quartic_kernel_max: float = 1.0
+    checkpoint_gated_local_mlp: bool = False
 
 
 class EquivariantAttention(nn.Module):
@@ -239,6 +249,16 @@ class EquivariantAttention(nn.Module):
         self.vector_in = nn.Linear(
             self.hidden_irreps.scalars, self.hidden_irreps.vectors
         )
+        self.external_vector_in = (
+            _ChannelMix(config.input_vector_dim, self.hidden_irreps.vectors)
+            if config.input_vector_dim
+            else None
+        )
+        self.external_tensor_in = (
+            _ChannelMix(config.input_tensor_dim, self.hidden_irreps.tensors)
+            if config.input_tensor_dim
+            else None
+        )
         layer_scale = config.residual_scale_init / sqrt(config.num_layers)
         self.layers = nn.ModuleList(
             [
@@ -273,6 +293,14 @@ class EquivariantAttention(nn.Module):
                     use_grouped_invariant_normalization=(
                         config.use_grouped_invariant_normalization
                     ),
+                    use_irrep_rms_normalization=(
+                        config.use_irrep_rms_normalization
+                    ),
+                    angular_feature_rank=config.angular_feature_rank,
+                    use_quartic_kernel=config.use_quartic_kernel,
+                    quartic_kernel_init=config.quartic_kernel_init,
+                    quartic_kernel_max=config.quartic_kernel_max,
+                    checkpoint_gated_local_mlp=config.checkpoint_gated_local_mlp,
                     scalar_content_mode=config.scalar_content_mode,
                     use_tensor_product_kernel=config.use_tensor_product_kernel,
                     tensor_kernel_init=config.tensor_kernel_init,
@@ -344,6 +372,8 @@ class EquivariantAttention(nn.Module):
         edge_index: torch.Tensor | None = None,
         edge_index_is_validated: bool = False,
         readout_mask: torch.Tensor | None = None,
+        node_vectors: torch.Tensor | None = None,
+        node_tensors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if not isinstance(edge_index_is_validated, bool):
             raise TypeError("edge_index_is_validated must be boolean")
@@ -353,6 +383,11 @@ class EquivariantAttention(nn.Module):
             node_feats,
             pos,
             batch,
+        )
+        node_vectors, node_tensors = self._check_equivariant_inputs(
+            node_feats,
+            node_vectors,
+            node_tensors,
         )
         pool_mask, pool_batch, pool_counts = _readout_metadata(
             readout_mask,
@@ -368,11 +403,26 @@ class EquivariantAttention(nn.Module):
             )
         scalars = self.scalar_in(node_feats)
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
+        if self.external_vector_in is not None:
+            if node_vectors is None:
+                raise RuntimeError("validated external vector input is missing")
+            vectors = vectors + self.external_vector_in(
+                node_vectors.to(dtype=vectors.dtype)
+            )
         persistent_tensor = (
             pos.new_zeros((pos.shape[0], self.hidden_irreps.tensors, 5))
             if self.hidden_irreps.tensors
             else None
         )
+        if self.external_tensor_in is not None:
+            if node_tensors is None or persistent_tensor is None:
+                raise RuntimeError("validated external tensor input is missing")
+            tensor_features = _st_matrix_to_features(
+                node_tensors.to(dtype=persistent_tensor.dtype)
+            )
+            persistent_tensor = persistent_tensor + self.external_tensor_in(
+                tensor_features
+            )
         transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
         has_local_heads = any(layer.local_head_count for layer in self.layers)
@@ -578,6 +628,167 @@ class EquivariantAttention(nn.Module):
         num_graphs, graph_counts = _graph_metadata(batch)
         return node_feats, pos, batch, num_graphs, graph_counts
 
+    def _check_equivariant_inputs(
+        self,
+        node_feats: torch.Tensor,
+        node_vectors: torch.Tensor | None,
+        node_tensors: torch.Tensor | None,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        num_nodes = node_feats.shape[0]
+        vector_dim = self.config.input_vector_dim
+        tensor_dim = self.config.input_tensor_dim
+        if vector_dim:
+            if node_vectors is None:
+                raise ValueError(
+                    "node_vectors is required when input_vector_dim is positive"
+                )
+            expected = (num_nodes, vector_dim, 3)
+            if node_vectors.shape != expected:
+                raise ValueError(
+                    f"node_vectors must have shape {expected}, "
+                    f"got {tuple(node_vectors.shape)}"
+                )
+            _validate_equivariant_input_tensor(
+                "node_vectors",
+                node_vectors,
+                reference=node_feats,
+            )
+        elif node_vectors is not None:
+            raise ValueError("node_vectors requires positive input_vector_dim")
+
+        if tensor_dim:
+            if node_tensors is None:
+                raise ValueError(
+                    "node_tensors is required when input_tensor_dim is positive"
+                )
+            expected = (num_nodes, tensor_dim, 3, 3)
+            if node_tensors.shape != expected:
+                raise ValueError(
+                    f"node_tensors must have shape {expected}, "
+                    f"got {tuple(node_tensors.shape)}"
+                )
+            _validate_equivariant_input_tensor(
+                "node_tensors",
+                node_tensors,
+                reference=node_feats,
+            )
+            tolerance = 1e-9 if node_tensors.dtype == torch.float64 else 1e-5
+            if not torch.allclose(
+                node_tensors,
+                node_tensors.transpose(-1, -2),
+                atol=tolerance,
+                rtol=tolerance,
+            ):
+                raise ValueError("node_tensors must be symmetric")
+            trace = node_tensors.diagonal(dim1=-2, dim2=-1).sum(dim=-1)
+            if not torch.allclose(
+                trace,
+                torch.zeros_like(trace),
+                atol=tolerance,
+                rtol=tolerance,
+            ):
+                raise ValueError("node_tensors must be traceless")
+        elif node_tensors is not None:
+            raise ValueError("node_tensors requires positive input_tensor_dim")
+        return node_vectors, node_tensors
+
+
+class _QuarticFeatureMap(nn.Module):
+    """Symmetric degree-four map with dot(phi(x), phi(y)) = (x . y)^4."""
+
+    def __init__(self, dimension: int) -> None:
+        super().__init__()
+        if not isinstance(dimension, int) or isinstance(dimension, bool):
+            raise TypeError("quartic feature dimension must be an integer")
+        if dimension <= 0:
+            raise ValueError("quartic feature dimension must be positive")
+        terms = list(combinations_with_replacement(range(dimension), 4))
+        indices = torch.tensor(terms, dtype=torch.long)
+        coefficients = []
+        for term in terms:
+            counts = [term.count(index) for index in range(dimension)]
+            multinomial = factorial(4) / prod(factorial(count) for count in counts)
+            coefficients.append(sqrt(multinomial))
+        self.dimension = dimension
+        self.output_dim = len(terms)
+        self.register_buffer("indices", indices, persistent=False)
+        self.register_buffer(
+            "coefficients",
+            torch.tensor(coefficients, dtype=torch.float64),
+            persistent=False,
+        )
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        if value.shape[-1] != self.dimension:
+            raise ValueError(
+                f"quartic input requires final dimension {self.dimension}"
+            )
+        indices = self.indices
+        features = (
+            value.index_select(-1, indices[:, 0])
+            * value.index_select(-1, indices[:, 1])
+            * value.index_select(-1, indices[:, 2])
+            * value.index_select(-1, indices[:, 3])
+        )
+        return features * self.coefficients.to(dtype=value.dtype)
+
+
+class _SeparableIrrepRMSNorm(nn.Module):
+    """Invariant RMS pre-normalization shared by all non-scalar irreps."""
+
+    def __init__(
+        self,
+        vectors: int,
+        tensors: int,
+        *,
+        eps: float,
+    ) -> None:
+        super().__init__()
+        self.vectors = vectors
+        self.tensors = tensors
+        self.eps = eps
+        self.vector_weight = nn.Parameter(torch.ones(vectors))
+        self.tensor_weight = (
+            nn.Parameter(torch.ones(tensors)) if tensors else None
+        )
+
+    def forward(
+        self,
+        vectors: torch.Tensor,
+        tensors: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if vectors.ndim != 3 or vectors.shape[1:] != (self.vectors, 3):
+            raise ValueError("vector state has an invalid shape")
+        if tensors.shape != (vectors.shape[0], self.tensors, 5):
+            raise ValueError("tensor state has an invalid shape")
+        dtype = _moment_dtype(vectors, tensors)
+        vector_energy = vectors.to(dtype=dtype).square().sum(dim=(-2, -1))
+        tensor_energy = (
+            _st_frobenius_square(tensors.to(dtype=dtype)).sum(dim=-1)
+            if self.tensors
+            else torch.zeros_like(vector_energy)
+        )
+        degrees_of_freedom = 3 * self.vectors + 5 * self.tensors
+        inverse_rms = (
+            (vector_energy + tensor_energy) / degrees_of_freedom + self.eps
+        ).rsqrt()
+        normalized_vectors = (
+            vectors.to(dtype=dtype)
+            * inverse_rms[:, None, None]
+            * self.vector_weight.to(dtype=dtype)[None, :, None]
+        ).to(dtype=vectors.dtype)
+        if self.tensors:
+            if self.tensor_weight is None:
+                raise RuntimeError("tensor normalization weight is missing")
+            normalized_tensors = (
+                tensors.to(dtype=dtype)
+                * inverse_rms[:, None, None]
+                * self.tensor_weight.to(dtype=dtype)[None, :, None]
+            ).to(dtype=tensors.dtype)
+        else:
+            normalized_tensors = tensors
+        return normalized_vectors, normalized_tensors
+
 
 class _EquivariantMomentLayer(nn.Module):
     def __init__(
@@ -604,6 +815,12 @@ class _EquivariantMomentLayer(nn.Module):
         normalize_edge_conditioned_local_by_sqrt_degree: bool,
         use_gated_local_transport: bool,
         use_grouped_invariant_normalization: bool,
+        use_irrep_rms_normalization: bool,
+        angular_feature_rank: int,
+        use_quartic_kernel: bool,
+        quartic_kernel_init: float,
+        quartic_kernel_max: float,
+        checkpoint_gated_local_mlp: bool,
         scalar_content_mode: str,
         use_tensor_product_kernel: bool,
         tensor_kernel_init: float,
@@ -656,6 +873,13 @@ class _EquivariantMomentLayer(nn.Module):
         self.use_radial_trace = use_radial_trace
         self.scalar_content_mode = scalar_content_mode
         self.tensor_kernel_max = tensor_kernel_max
+        self.angular_feature_rank = angular_feature_rank
+        self.quartic_kernel_max = quartic_kernel_max
+        self.irrep_rms_norm = (
+            _SeparableIrrepRMSNorm(vectors, tensors, eps=eps)
+            if use_irrep_rms_normalization
+            else None
+        )
         self.edge_conditioned_local = (
             _EdgeConditionedLocalTransport(
                 scalars=scalars,
@@ -680,6 +904,7 @@ class _EquivariantMomentLayer(nn.Module):
                     num_heads=local_head_count,
                     num_rbf=num_rbf,
                     eps=eps,
+                    checkpoint_mlp=checkpoint_gated_local_mlp,
                 )
 
         self.norm = nn.LayerNorm(scalars)
@@ -691,6 +916,34 @@ class _EquivariantMomentLayer(nn.Module):
         self.value_vector = _ChannelMix(vectors, num_heads)
         self.query_vector_gate = nn.Linear(scalars, num_heads)
         self.key_vector_gate = nn.Linear(scalars, num_heads)
+        self.query_vector_extra = None
+        self.key_vector_extra = None
+        self.query_vector_extra_gate = None
+        self.key_vector_extra_gate = None
+        if angular_feature_rank > 1:
+            extra_channels = num_heads * (angular_feature_rank - 1)
+            with torch.random.fork_rng(devices=[]):
+                self.query_vector_extra = _ChannelMix(vectors, extra_channels)
+                self.key_vector_extra = _ChannelMix(vectors, extra_channels)
+                self.query_vector_extra_gate = nn.Linear(scalars, extra_channels)
+                self.key_vector_extra_gate = nn.Linear(scalars, extra_channels)
+        self.quartic_feature_map = (
+            _QuarticFeatureMap(3)
+            if use_quartic_kernel
+            else None
+        )
+        self.raw_quartic_kernel = (
+            nn.Parameter(
+                torch.full(
+                    (num_heads,),
+                    _inverse_sigmoid(
+                        quartic_kernel_init / quartic_kernel_max
+                    ),
+                )
+            )
+            if use_quartic_kernel
+            else None
+        )
         self.tensor_kernel_query = None
         self.tensor_kernel_key = None
         self.raw_tensor_kernel = None
@@ -821,14 +1074,25 @@ class _EquivariantMomentLayer(nn.Module):
             return scalars, vectors, tensor
 
         s_norm = self.norm(scalars)
-        bounded_vectors = _bounded_irrep(vectors, self.eps)
-        bounded_persistent_tensor = _bounded_st_tensor(persistent_tensor)
+        normalized_vectors, normalized_persistent_tensor = (
+            self._normalize_non_scalars(vectors, persistent_tensor)
+        )
+        bounded_vectors = _bounded_irrep(normalized_vectors, self.eps)
+        bounded_persistent_tensor = _bounded_st_tensor(
+            normalized_persistent_tensor
+        )
         n_nodes = scalars.shape[0]
 
         q1 = _unit_ball(
             self.query_vector(bounded_vectors)
             * torch.tanh(self.query_vector_gate(s_norm)).unsqueeze(-1),
             self.eps,
+        )
+        q1_kernel = self._angular_kernel_vector(
+            q1,
+            bounded_vectors,
+            s_norm,
+            query=True,
         )
         all_local_gated = (
             self.gated_local is not None
@@ -847,7 +1111,7 @@ class _EquivariantMomentLayer(nn.Module):
                     num_nodes=n_nodes,
                 )
             )
-            moment_dtype = _moment_dtype(q1, raw_pos)
+            moment_dtype = _moment_dtype(q1_kernel, raw_pos)
         else:
             raw_query_scalar = self.query_scalar(s_norm).reshape(
                 n_nodes, self.num_heads, self.head_dim
@@ -887,7 +1151,41 @@ class _EquivariantMomentLayer(nn.Module):
                 * torch.tanh(self.key_vector_gate(s_norm)).unsqueeze(-1),
                 self.eps,
             )
-            moment_dtype = _moment_dtype(q0, k0, q1, k1, raw_pos)
+            k1_kernel = self._angular_kernel_vector(
+                k1,
+                bounded_vectors,
+                s_norm,
+                query=False,
+            )
+            if self.quartic_feature_map is not None:
+                if self.raw_quartic_kernel is None:
+                    raise RuntimeError("quartic kernel scale is missing")
+                quartic_scale = _bounded_kernel_scale(
+                    self.raw_quartic_kernel,
+                    self.quartic_kernel_max,
+                )
+                quartic_root = quartic_scale.sqrt()[None, :, None]
+                q0 = torch.cat(
+                    [
+                        q0,
+                        self.quartic_feature_map(q1) * quartic_root,
+                    ],
+                    dim=-1,
+                )
+                k0 = torch.cat(
+                    [
+                        k0,
+                        self.quartic_feature_map(k1) * quartic_root,
+                    ],
+                    dim=-1,
+                )
+            moment_dtype = _moment_dtype(
+                q0,
+                k0,
+                q1_kernel,
+                k1_kernel,
+                raw_pos,
+            )
             alignment_scale = _bounded_kernel_scale(
                 self.raw_linear_kernel,
                 self.linear_kernel_max,
@@ -939,8 +1237,8 @@ class _EquivariantMomentLayer(nn.Module):
                         _local_attention_weights(
                             q0[:, local],
                             k0[:, local],
-                            q1[:, local],
-                            k1[:, local],
+                            q1_kernel[:, local],
+                            k1_kernel[:, local],
                             kernel_scale[local],
                             raw_pos,
                             batch,
@@ -1031,8 +1329,8 @@ class _EquivariantMomentLayer(nn.Module):
                         _global_moment_messages(
                             q0[:, global_heads],
                             k0[:, global_heads],
-                            q1[:, global_heads],
-                            k1[:, global_heads],
+                            q1_kernel[:, global_heads],
+                            k1_kernel[:, global_heads],
                             kernel_scale[global_heads],
                             scalar_value[:, global_heads],
                             vector_value[:, global_heads],
@@ -1141,6 +1439,52 @@ class _EquivariantMomentLayer(nn.Module):
             return scalars, vectors, persistent_tensor, tensor
         return scalars, vectors, tensor
 
+    def _normalize_non_scalars(
+        self,
+        vectors: torch.Tensor,
+        persistent_tensor: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.irrep_rms_norm is None:
+            return vectors, persistent_tensor
+        return self.irrep_rms_norm(vectors, persistent_tensor)
+
+    def _angular_kernel_vector(
+        self,
+        base: torch.Tensor,
+        bounded_vectors: torch.Tensor,
+        scalars: torch.Tensor,
+        *,
+        query: bool,
+    ) -> torch.Tensor:
+        if self.angular_feature_rank == 1:
+            return base
+        mix = self.query_vector_extra if query else self.key_vector_extra
+        gate = (
+            self.query_vector_extra_gate
+            if query
+            else self.key_vector_extra_gate
+        )
+        if mix is None or gate is None:
+            raise RuntimeError("ranked angular feature modules are incomplete")
+        num_nodes = base.shape[0]
+        extra = mix(bounded_vectors).reshape(
+            num_nodes,
+            self.num_heads,
+            self.angular_feature_rank - 1,
+            3,
+        )
+        extra_gate = torch.tanh(gate(scalars)).reshape(
+            num_nodes,
+            self.num_heads,
+            self.angular_feature_rank - 1,
+            1,
+        )
+        direct_sum = torch.cat(
+            [base.unsqueeze(-2), extra * extra_gate],
+            dim=-2,
+        )
+        return _unit_ball(direct_sum.flatten(start_dim=-2), self.eps)
+
     def _apply_ffn(
         self,
         scalars: torch.Tensor,
@@ -1148,7 +1492,11 @@ class _EquivariantMomentLayer(nn.Module):
         persistent_tensor: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         ffn_scalars = self.ffn_norm(scalars)
-        ffn_vectors = _bounded_irrep(vectors, self.eps)
+        normalized_vectors, normalized_tensor = self._normalize_non_scalars(
+            vectors,
+            persistent_tensor,
+        )
+        ffn_vectors = _bounded_irrep(normalized_vectors, self.eps)
         if self.persistent_tensor_ffn_mix is not None:
             if (
                 self.persistent_tensor_ffn_gate is None
@@ -1156,7 +1504,7 @@ class _EquivariantMomentLayer(nn.Module):
             ):
                 raise RuntimeError("persistent tensor FFN is incomplete")
             tensor_ffn = self.persistent_tensor_ffn_mix(
-                _bounded_st_tensor(persistent_tensor)
+                _bounded_st_tensor(normalized_tensor)
             )
             tensor_ffn = tensor_ffn * torch.tanh(
                 self.persistent_tensor_ffn_gate(ffn_scalars)
@@ -1165,10 +1513,14 @@ class _EquivariantMomentLayer(nn.Module):
                 self.persistent_tensor_ffn_residual_scale
                 * _bounded_st_tensor(tensor_ffn)
             )
+            _, normalized_tensor = self._normalize_non_scalars(
+                vectors,
+                persistent_tensor,
+            )
         ffn_parts = [ffn_scalars, ffn_vectors.square().sum(dim=-1)]
         if self.tensors:
             ffn_parts.append(
-                _st_frobenius_square(_bounded_st_tensor(persistent_tensor)).to(
+                _st_frobenius_square(_bounded_st_tensor(normalized_tensor)).to(
                     dtype=scalars.dtype
                 )
             )
@@ -1315,6 +1667,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         num_heads: int,
         num_rbf: int,
         eps: float = 1e-12,
+        checkpoint_mlp: bool = False,
     ) -> None:
         super().__init__()
         if scalars % num_heads:
@@ -1326,6 +1679,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         self.head_dim = scalars // num_heads
         self.num_rbf = num_rbf
         self.eps = eps
+        self.checkpoint_mlp = checkpoint_mlp
         hidden_dim = max(32, 2 * self.head_dim)
         edge_input_dim = 2 * self.head_dim + num_rbf + 5
         edge_output_dim = self.head_dim + 5
@@ -1478,9 +1832,19 @@ class _GatedEquivariantLocalTransport(nn.Module):
         )
         if first_linear.bias is not None:
             hidden = hidden + first_linear.bias
-        hidden = F.silu(hidden)
-        hidden = F.silu(second_linear(hidden))
-        return output_linear(hidden)
+
+        def finish_mlp(value: torch.Tensor) -> torch.Tensor:
+            value = F.silu(value)
+            value = F.silu(second_linear(value))
+            return output_linear(value)
+
+        if self.checkpoint_mlp and self.training and torch.is_grad_enabled():
+            return activation_checkpoint(
+                finish_mlp,
+                hidden,
+                use_reentrant=False,
+            )
+        return finish_mlp(hidden)
 
 
 class _LocalPairwiseContent(nn.Module):
@@ -3102,22 +3466,29 @@ def _structured_key_mass(
         batch,
         num_graphs,
     )
-    vector_outer_sum = _segment_sum(
-        _vector_outer(query_vector) * row_scale[..., None, None],
+    query_quadratic = _symmetric_quadratic_features(
+        query_vector,
+        left_factor=True,
+    )
+    quadratic_sum = _segment_sum(
+        query_quadratic * row_scale.unsqueeze(-1),
         batch,
         num_graphs,
     )
     node_scalar_sum = _graph_summary_for_nodes(scalar_sum, batch, num_graphs)
     node_linear_sum = _graph_summary_for_nodes(linear_sum, batch, num_graphs)
-    node_vector_outer_sum = _graph_summary_for_nodes(
-        vector_outer_sum,
+    node_quadratic_sum = _graph_summary_for_nodes(
+        quadratic_sum,
         batch,
         num_graphs,
     )
     node_constant_sum = _graph_summary_for_nodes(constant_sum, batch, num_graphs)
     content = (key_scalar * node_scalar_sum).sum(dim=-1)
     linear = (key_vector * node_linear_sum).sum(dim=-1)
-    quadratic = _positive_quadratic_form(key_vector, node_vector_outer_sum)
+    quadratic = (
+        _symmetric_quadratic_features(key_vector, left_factor=False)
+        * node_quadratic_sum
+    ).sum(dim=-1).clamp_min(0.0)
     return (
         content
         + (pair_floor + pair_alignment_scale) * node_constant_sum
@@ -3173,22 +3544,29 @@ def _structured_row_denominator(
         batch,
         num_graphs,
     )
-    vector_outer_sum = _segment_sum(
-        _vector_outer(key_vector) * key_scale[..., None, None],
+    key_quadratic = _symmetric_quadratic_features(
+        key_vector,
+        left_factor=False,
+    )
+    quadratic_sum = _segment_sum(
+        key_quadratic * key_scale.unsqueeze(-1),
         batch,
         num_graphs,
     )
     node_scalar_sum = _graph_summary_for_nodes(scalar_sum, batch, num_graphs)
     node_linear_sum = _graph_summary_for_nodes(linear_sum, batch, num_graphs)
-    node_vector_outer_sum = _graph_summary_for_nodes(
-        vector_outer_sum,
+    node_quadratic_sum = _graph_summary_for_nodes(
+        quadratic_sum,
         batch,
         num_graphs,
     )
     node_constant_sum = _graph_summary_for_nodes(constant_sum, batch, num_graphs)
     content = (query_scalar * node_scalar_sum).sum(dim=-1)
     linear = (query_vector * node_linear_sum).sum(dim=-1)
-    quadratic = _positive_quadratic_form(query_vector, node_vector_outer_sum)
+    quadratic = (
+        _symmetric_quadratic_features(query_vector, left_factor=True)
+        * node_quadratic_sum
+    ).sum(dim=-1).clamp_min(0.0)
     return (
         content
         + (pair_floor + pair_alignment_scale) * node_constant_sum
@@ -3246,8 +3624,12 @@ def _structured_numerator(
         batch,
         num_graphs,
     )
+    key_quadratic = _symmetric_quadratic_features(
+        key_vector,
+        left_factor=False,
+    )
     quadratic_summary = _segment_sum(
-        _vector_outer(key_vector).unsqueeze(-1) * weighted_value[..., None, None, :],
+        key_quadratic.unsqueeze(-1) * weighted_value.unsqueeze(-2),
         batch,
         num_graphs,
     )
@@ -3274,10 +3656,9 @@ def _structured_numerator(
     content = torch.einsum("nhd,nhdf->nhf", query_scalar, node_scalar_summary)
     linear = torch.einsum("nha,nhaf->nhf", query_vector, node_linear_summary)
     quadratic = torch.einsum(
-        "nha,nhabf,nhb->nhf",
-        query_vector,
+        "nhd,nhdf->nhf",
+        _symmetric_quadratic_features(query_vector, left_factor=True),
         node_quadratic_summary,
-        query_vector,
     )
     return (
         content
@@ -3371,6 +3752,27 @@ def _vector_outer(value: torch.Tensor) -> torch.Tensor:
     return value.unsqueeze(-1) * value.unsqueeze(-2)
 
 
+def _symmetric_quadratic_features(
+    value: torch.Tensor,
+    *,
+    left_factor: bool,
+) -> torch.Tensor:
+    """Return one side of a compressed factorization of ``(x.y)^2``."""
+    dimension = value.shape[-1]
+    upper = torch.triu_indices(
+        dimension,
+        dimension,
+        offset=1,
+        device=value.device,
+    )
+    off_diagonal = (
+        value.index_select(-1, upper[0]) * value.index_select(-1, upper[1])
+    )
+    if left_factor:
+        off_diagonal = 2.0 * off_diagonal
+    return torch.cat((value.square(), off_diagonal), dim=-1)
+
+
 def _positive_quadratic_form(
     vector: torch.Tensor, matrix: torch.Tensor
 ) -> torch.Tensor:
@@ -3418,6 +3820,21 @@ def _st_features_to_matrix(value: torch.Tensor) -> torch.Tensor:
             torch.stack([xz, yz, zz], dim=-1),
         ],
         dim=-2,
+    )
+
+
+def _st_matrix_to_features(value: torch.Tensor) -> torch.Tensor:
+    if value.shape[-2:] != (3, 3):
+        raise ValueError("symmetric-traceless matrices require final shape (3, 3)")
+    return torch.stack(
+        [
+            value[..., 0, 0],
+            value[..., 1, 1],
+            value[..., 0, 1],
+            value[..., 0, 2],
+            value[..., 1, 2],
+        ],
+        dim=-1,
     )
 
 
@@ -3816,6 +4233,20 @@ def _moment_dtype(*values: torch.Tensor) -> torch.dtype:
     )
 
 
+def _validate_equivariant_input_tensor(
+    name: str,
+    value: torch.Tensor,
+    *,
+    reference: torch.Tensor,
+) -> None:
+    if not torch.is_floating_point(value):
+        raise TypeError(f"{name} must be a floating point tensor")
+    if value.device != reference.device:
+        raise ValueError(f"{name} and node_feats must be on the same device")
+    if not torch.isfinite(value).all():
+        raise ValueError(f"{name} must be finite")
+
+
 def _inverse_sigmoid(probability: float) -> float:
     if not 0.0 < probability < 1.0:
         raise ValueError("probability must lie strictly between zero and one")
@@ -3835,6 +4266,19 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             raise TypeError(f"{name} must be an integer")
         if value <= 0:
             raise ValueError(f"{name} must be positive")
+    for name in ("input_vector_dim", "input_tensor_dim"):
+        value = getattr(config, name)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{name} must be nonnegative")
+    if (
+        not isinstance(config.angular_feature_rank, int)
+        or isinstance(config.angular_feature_rank, bool)
+    ):
+        raise TypeError("angular_feature_rank must be an integer")
+    if not 1 <= config.angular_feature_rank <= 2:
+        raise ValueError("angular_feature_rank must lie in [1, 2]")
     for name in (
         "use_alignment_linear_term",
         "use_key_balancing",
@@ -3844,6 +4288,9 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "normalize_edge_conditioned_local_by_sqrt_degree",
         "use_gated_local_transport",
         "use_grouped_invariant_normalization",
+        "use_irrep_rms_normalization",
+        "use_quartic_kernel",
+        "checkpoint_gated_local_mlp",
         "use_tensor_product_kernel",
         "use_memory_interaction",
         "use_radial_trace",
@@ -3928,6 +4375,10 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                 "gated local transport cannot be combined with the "
                 "legacy learned local radial gate"
             )
+    elif config.checkpoint_gated_local_mlp:
+        raise ValueError(
+            "checkpoint_gated_local_mlp requires gated local transport"
+        )
     if config.use_edge_conditioned_local_transport:
         if not any(local_head_counts):
             raise ValueError(
@@ -3996,6 +4447,12 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     tensor_max = _normal_float32_control(
         "tensor_kernel_max", config.tensor_kernel_max, positive=True
     )
+    quartic_init = _normal_float32_control(
+        "quartic_kernel_init", config.quartic_kernel_init, positive=True
+    )
+    quartic_max = _normal_float32_control(
+        "quartic_kernel_max", config.quartic_kernel_max, positive=True
+    )
     kernel_floor = _normal_float32_control(
         "kernel_floor", config.kernel_floor, positive=True
     )
@@ -4026,11 +4483,17 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "tensor_kernel_init must be smaller than tensor_kernel_max in float32"
         )
+    if quartic_init >= quartic_max:
+        raise ValueError(
+            "quartic_kernel_init must be smaller than quartic_kernel_max in float32"
+        )
     upper_bound = torch.tensor(kernel_floor, dtype=torch.float32)
     content_upper_bound = 4.0 if config.scalar_content_mode == "bounded" else 1.0
     upper_bound = upper_bound + content_upper_bound + 2.0 * linear_max + vector_max
     if config.use_tensor_product_kernel:
         upper_bound = upper_bound + 2.0 * tensor_max
+    if config.use_quartic_kernel:
+        upper_bound = upper_bound + quartic_max
     if not torch.isfinite(upper_bound):
         raise ValueError("kernel upper bound must be finite in float32")
     _normal_float32_ratio(
@@ -4048,6 +4511,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         tensor_init,
         tensor_max,
     )
+    _normal_float32_ratio(
+        "quartic_kernel_init/quartic_kernel_max",
+        quartic_init,
+        quartic_max,
+    )
     hidden = CartesianIrreps.parse(config.hidden_irreps)
     output = CartesianIrreps.parse(config.output_irreps)
     if hidden.scalars <= 0 or hidden.vectors <= 0:
@@ -4056,6 +4524,8 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError("hidden scalar channels must be divisible by num_heads")
     if config.use_tensor_product_kernel and hidden.tensors <= 0:
         raise ValueError("tensor-product kernel requires persistent 2e hidden channels")
+    if config.input_tensor_dim and hidden.tensors <= 0:
+        raise ValueError("input_tensor_dim requires persistent hidden 2e channels")
     if (
         config.use_tensor_product_kernel
         and config.use_memory_interaction

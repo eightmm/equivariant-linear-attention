@@ -47,6 +47,22 @@ LOCAL_CUTOFF_ANGSTROM = 6.0
 INTRA_K = 16
 CROSS_K = 16
 DEFAULT_ARMS = ("candidate", "incumbent", "egnn")
+V3_VARIANTS = {
+    "irrep_norm": {
+        "use_irrep_rms_normalization": True,
+    },
+    "quartic": {
+        "use_quartic_kernel": True,
+    },
+    "rank2": {
+        "angular_feature_rank": 2,
+    },
+    "combined": {
+        "use_irrep_rms_normalization": True,
+        "use_quartic_kernel": True,
+        "angular_feature_rank": 2,
+    },
+}
 PUBLISHED_ATOM3D_GNN_RMSE_PK = 1.601
 
 
@@ -57,8 +73,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--arms",
         nargs="+",
-        choices=DEFAULT_ARMS,
+        choices=(*DEFAULT_ARMS, "v3"),
         default=list(DEFAULT_ARMS),
+    )
+    parser.add_argument(
+        "--v3-variant",
+        choices=tuple(V3_VARIANTS),
+        default="combined",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=16)
@@ -109,6 +130,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def _plan(args: argparse.Namespace) -> dict[str, object]:
     limited = args.train_limit is not None or args.val_limit is not None
+    primary_arm = "v3" if "v3" in args.arms else "candidate"
     return {
         "schema_version": 1,
         "run_id": RUN_ID,
@@ -123,13 +145,19 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         ),
         "test_policy": "test split is structurally inadmissible to this runner",
         "arms": list(args.arms),
+        "primary_arm": primary_arm,
         "primary_metric": "best validation RMSE in pK",
         "secondary_metrics": ["validation MAE", "Pearson", "Spearman"],
         "hypothesis": (
-            "gated+grouped LGL lowers official ID30 validation RMSE by at "
-            "least 0.02 pK relative to the matched incumbent LGL"
+            f"{primary_arm} lowers official ID30 validation RMSE by at least "
+            "0.02 pK relative to the matched incumbent LGL"
         ),
-        "same_harness_baselines": ["incumbent", "egnn", "train-target mean"],
+        "same_harness_baselines": [
+            *([] if primary_arm == "candidate" else ["candidate"]),
+            "incumbent",
+            "egnn",
+            "train-target mean",
+        ],
         "published_reference": {
             "name": "ATOM3D GNN, ID30",
             "rmse_pK": PUBLISHED_ATOM3D_GNN_RMSE_PK,
@@ -142,6 +170,8 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "local_head_counts": list(LOCAL_HEAD_COUNTS),
             "candidate_gated_local_transport": True,
             "candidate_grouped_invariant_normalization": True,
+            "v3_variant": args.v3_variant,
+            "v3_interventions": V3_VARIANTS[args.v3_variant],
             "coordinate_updates": False,
         },
         "topology": {
@@ -259,10 +289,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if sample.edge_index is not None
     )
 
-    candidate_parameters = _parameter_count(_build_model("candidate", None))
-    incumbent_parameters = _parameter_count(_build_model("incumbent", None))
-    egnn_width = _matched_egnn_width(candidate_parameters)
-    egnn_parameters = _parameter_count(_build_model("egnn", egnn_width))
+    candidate_parameters = _parameter_count(
+        _build_model("candidate", None, args.v3_variant)
+    )
+    incumbent_parameters = _parameter_count(
+        _build_model("incumbent", None, args.v3_variant)
+    )
+    v3_parameters = _parameter_count(_build_model("v3", None, args.v3_variant))
+    match_target_parameters = (
+        v3_parameters if "v3" in args.arms else candidate_parameters
+    )
+    egnn_width = _matched_egnn_width(match_target_parameters)
+    egnn_parameters = _parameter_count(
+        _build_model("egnn", egnn_width, args.v3_variant)
+    )
     result["dataset_summary"].update(
         {
             "topology_sha256": topology_sha256,
@@ -273,13 +313,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     result["model_summary"] = {
         "candidate_parameters": candidate_parameters,
         "incumbent_parameters": incumbent_parameters,
+        "v3_parameters": v3_parameters,
         "candidate_to_incumbent_parameter_ratio": (
             candidate_parameters / incumbent_parameters
         ),
+        "v3_to_candidate_parameter_ratio": v3_parameters / candidate_parameters,
         "matched_egnn_width": egnn_width,
         "egnn_parameters": egnn_parameters,
-        "egnn_to_candidate_parameter_ratio": (
-            egnn_parameters / candidate_parameters
+        "egnn_to_match_target_parameter_ratio": (
+            egnn_parameters / match_target_parameters
         ),
     }
     result["status"] = "training"
@@ -296,7 +338,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             continue
         arm_budget = remaining / remaining_arms
-        model = _build_model(arm, egnn_width)
+        model = _build_model(arm, egnn_width, args.v3_variant)
         arm_result = _train_arm(
             arm=arm,
             model=model,
@@ -332,7 +374,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _build_model(arm: str, egnn_width: int | None) -> torch.nn.Module:
+def _build_model(
+    arm: str,
+    egnn_width: int | None,
+    v3_variant: str = "combined",
+) -> torch.nn.Module:
     torch.manual_seed(MODEL_SEED)
     if arm == "egnn":
         if egnn_width is None:
@@ -342,8 +388,9 @@ def _build_model(arm: str, egnn_width: int | None) -> torch.nn.Module:
             hidden_dim=egnn_width,
             num_layers=NUM_LAYERS,
         )
-    if arm not in {"candidate", "incumbent"}:
+    if arm not in {"candidate", "incumbent", "v3"}:
         raise ValueError(f"unknown arm: {arm}")
+    v3_options = V3_VARIANTS[v3_variant] if arm == "v3" else {}
     return build_regression_model(
         node_dim=ATOM3D_LBA_NODE_DIM,
         hidden_dim=HIDDEN_DIM,
@@ -352,8 +399,9 @@ def _build_model(arm: str, egnn_width: int | None) -> torch.nn.Module:
         local_head_counts=LOCAL_HEAD_COUNTS,
         local_cutoff=LOCAL_CUTOFF_ANGSTROM,
         use_key_balancing=False,
-        use_gated_local_transport=arm == "candidate",
-        use_grouped_invariant_normalization=arm == "candidate",
+        use_gated_local_transport=arm in {"candidate", "v3"},
+        use_grouped_invariant_normalization=arm in {"candidate", "v3"},
+        **v3_options,
     )
 
 
@@ -573,6 +621,10 @@ def _train_arm(
         "best_epoch": best_epoch,
         "best_train": best_train_metrics,
         "best_validation": best_validation_metrics,
+        "last_epoch_validation": (
+            history[-1]["validation"] if history else None
+        ),
+        "validation_evaluation_count": len(history),
         "elapsed_seconds": time.perf_counter() - started,
         "step_latency_median_seconds": (
             statistics.median(latency_window) if latency_window else None
@@ -772,7 +824,8 @@ def _comparison(records: object) -> dict[str, object]:
         if isinstance(record, Mapping)
         and isinstance(record.get("best_validation"), Mapping)
     }
-    candidate = by_arm.get("candidate")
+    primary_arm = "v3" if "v3" in by_arm else "candidate"
+    candidate = by_arm.get(primary_arm)
     comparison: dict[str, object] = {
         "published_atom3d_gnn_rmse_pK": PUBLISHED_ATOM3D_GNN_RMSE_PK,
         "published_reference_is_same_harness": False,
@@ -780,24 +833,31 @@ def _comparison(records: object) -> dict[str, object]:
     if candidate is None:
         return comparison
     candidate_rmse = float(candidate["best_validation"]["rmse_pK"])
-    comparison["candidate_rmse_pK"] = candidate_rmse
-    comparison["candidate_below_published_gnn_reference"] = (
+    comparison["primary_arm"] = primary_arm
+    comparison[f"{primary_arm}_rmse_pK"] = candidate_rmse
+    comparison[f"{primary_arm}_below_published_gnn_reference"] = (
         candidate_rmse < PUBLISHED_ATOM3D_GNN_RMSE_PK
     )
-    for baseline in ("incumbent", "egnn"):
+    for baseline in ("candidate", "incumbent", "egnn"):
+        if baseline == primary_arm:
+            continue
         record = by_arm.get(baseline)
         if record is None:
             continue
         baseline_rmse = float(record["best_validation"]["rmse_pK"])
         delta = candidate_rmse - baseline_rmse
         comparison[f"{baseline}_rmse_pK"] = baseline_rmse
-        comparison[f"candidate_minus_{baseline}_rmse_pK"] = delta
-        comparison[f"candidate_beats_{baseline}"] = delta < 0.0
-    incumbent_delta = comparison.get("candidate_minus_incumbent_rmse_pK")
+        comparison[f"{primary_arm}_minus_{baseline}_rmse_pK"] = delta
+        comparison[f"{primary_arm}_beats_{baseline}"] = delta < 0.0
+    incumbent_delta = comparison.get(f"{primary_arm}_minus_incumbent_rmse_pK")
     if isinstance(incumbent_delta, float):
-        comparison["registered_candidate_improvement_passed"] = (
+        comparison["registered_primary_improvement_passed"] = (
             incumbent_delta <= -0.02
         )
+        if primary_arm == "candidate":
+            comparison["registered_candidate_improvement_passed"] = (
+                incumbent_delta <= -0.02
+            )
     return comparison
 
 

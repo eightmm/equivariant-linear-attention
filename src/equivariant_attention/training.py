@@ -46,6 +46,14 @@ def build_regression_model(
     use_tensor_product_kernel: bool = False,
     tensor_kernel_init: float = 0.05,
     tensor_kernel_max: float = 1.0,
+    input_vector_dim: int = 0,
+    input_tensor_dim: int = 0,
+    use_irrep_rms_normalization: bool = False,
+    angular_feature_rank: int = 1,
+    use_quartic_kernel: bool = False,
+    quartic_kernel_init: float = 0.01,
+    quartic_kernel_max: float = 1.0,
+    checkpoint_gated_local_mlp: bool = False,
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -57,6 +65,8 @@ def build_regression_model(
     model = EquivariantAttention(
         EquivariantAttentionConfig(
             node_dim=node_dim,
+            input_vector_dim=input_vector_dim,
+            input_tensor_dim=input_tensor_dim,
             hidden_irreps=(
                 f"{hidden_dim}x0e + {max(1, hidden_dim // 16)}x1o{tensor_irreps}"
             ),
@@ -80,6 +90,12 @@ def build_regression_model(
             ),
             use_gated_local_transport=use_gated_local_transport,
             use_grouped_invariant_normalization=(use_grouped_invariant_normalization),
+            use_irrep_rms_normalization=use_irrep_rms_normalization,
+            angular_feature_rank=angular_feature_rank,
+            use_quartic_kernel=use_quartic_kernel,
+            quartic_kernel_init=quartic_kernel_init,
+            quartic_kernel_max=quartic_kernel_max,
+            checkpoint_gated_local_mlp=checkpoint_gated_local_mlp,
             readout_mode=readout_mode,
             scalar_content_mode=scalar_content_mode,
             use_tensor_product_kernel=use_tensor_product_kernel,
@@ -143,6 +159,11 @@ def train_regression_step(
         target = target_normalizer.transform(target)
     loss = F.mse_loss(pred.float(), target.float())
     loss.backward()
+    path_norms = (
+        gradient_l2_norms_by_path(model)
+        if gradient_monitor is not None
+        else None
+    )
     if grad_clip is not None:
         pre_clip_norm = float(
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip).detach().cpu()
@@ -154,6 +175,7 @@ def train_regression_step(
             gradient_monitor,
             pre_clip_norm=pre_clip_norm,
             grad_clip=grad_clip,
+            path_norms=path_norms,
         )
     optimizer.step()
     return float(loss.detach().cpu().item())
@@ -168,11 +190,68 @@ def _gradient_l2_norm(parameters: Iterable[nn.Parameter]) -> float:
     return square_sum**0.5
 
 
+def gradient_l2_norms_by_path(model: nn.Module) -> dict[str, float]:
+    """Return a disjoint pre-clip gradient norm partition by model path."""
+
+    square_sums: dict[str, float] = {}
+    for name, parameter in model.named_parameters():
+        if parameter.grad is None:
+            continue
+        path = _gradient_path(name)
+        square_sums[path] = square_sums.get(path, 0.0) + float(
+            parameter.grad.detach().double().square().sum().cpu()
+        )
+    return {
+        path: square_sum**0.5
+        for path, square_sum in sorted(square_sums.items())
+    }
+
+
+def _gradient_path(name: str) -> str:
+    if name.startswith(
+        (
+            "scalar_out",
+            "vector_out",
+            "tensor_out",
+            "scalar_out_norm",
+            "interaction_readout",
+        )
+    ):
+        return "readout"
+    if name.startswith("coordinate_updaters"):
+        return "coordinate"
+    if any(
+        token in name
+        for token in (
+            ".gated_local.",
+            ".edge_conditioned_local.",
+            "local_pairwise_content.",
+        )
+    ):
+        return "local"
+    if ".ffn_" in name or ".irrep_rms_norm." in name:
+        return "ffn"
+    if name.startswith("layers."):
+        return "global"
+    if name.startswith(
+        (
+            "scalar_in",
+            "global_scalar_in",
+            "vector_in",
+            "external_vector_in",
+            "external_tensor_in",
+        )
+    ):
+        return "input"
+    return "other"
+
+
 def _update_gradient_monitor(
     monitor: dict[str, float | int],
     *,
     pre_clip_norm: float,
     grad_clip: float | None,
+    path_norms: dict[str, float] | None = None,
 ) -> None:
     step_count = int(monitor.get("step_count", 0)) + 1
     clipped = grad_clip is not None and pre_clip_norm > grad_clip
@@ -187,6 +266,14 @@ def _update_gradient_monitor(
     monitor["pre_clip_grad_norm_max"] = max(
         float(monitor.get("pre_clip_grad_norm_max", 0.0)), pre_clip_norm
     )
+    for path, norm in (path_norms or {}).items():
+        prefix = f"pre_clip_grad_norm_{path}"
+        monitor[f"{prefix}_last"] = norm
+        monitor[f"{prefix}_sum"] = float(monitor.get(f"{prefix}_sum", 0.0)) + norm
+        monitor[f"{prefix}_max"] = max(
+            float(monitor.get(f"{prefix}_max", 0.0)),
+            norm,
+        )
 
 
 @torch.no_grad()

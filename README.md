@@ -143,6 +143,38 @@ candidate-versus-incumbent validation interval crosses zero and all arms clip
 over 99% of updates, so the switches remain opt-in. See the
 [full LBA report](docs/LBA_ID30_VALIDATION_20260724.md).
 
+Architecture v3 adds opt-in exact quartic angular features, a second learned
+`1o` axis per head, invariant non-scalar RMS normalization, and public
+equivariant inputs:
+
+```python
+model = EquivariantAttention(
+    EquivariantAttentionConfig(
+        node_dim=node_dim,
+        input_vector_dim=2,
+        input_tensor_dim=1,
+        hidden_irreps="64x0e + 4x1o + 4x2e",
+        angular_feature_rank=2,
+        use_quartic_kernel=True,
+        use_irrep_rms_normalization=True,
+    )
+)
+out = model(
+    node_feats,
+    pos,
+    node_vectors=polar_vectors,          # (N, 2, 3)
+    node_tensors=symmetric_traceless,    # (N, 1, 3, 3)
+)
+```
+
+The two-axis option is two copies of `1o`, not a general `l=2` irrep. The
+quartic term and compressed quadratic summaries remain exact and fixed width,
+so global scaling is still `O(N)` without an `N x N` tensor. The implementation
+and CPU contracts are complete; v3 QM9/CUDA and conditional LBA evidence is
+pending because CUDA was unavailable at the recorded run boundary. See the
+[v3 capability comparison](docs/ARCHITECTURE_V3_20260725.md) and
+[exact equations](docs/LAYER_MATH.md#optional-architecture-v3-angular-features).
+
 For protein-ligand affinity experiments, `readout_mode="interaction"` keeps the
 ligand mean prediction as a zero-initialized residual baseline and adds
 ligand, pocket, cross-interface, and parity-even triple-product features. It

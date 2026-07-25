@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from math import sqrt
+from math import ceil, sqrt
+import statistics
 import time
 from pathlib import Path
 from typing import Sequence
@@ -104,9 +105,11 @@ def main() -> None:
     )
     final_loss = 0.0
     gradient_monitor: dict[str, float | int] = {}
+    step_latencies: list[float] = []
     for step in range(args.steps):
         batch_indices = _cyclic_batch(train_idx, step, args.batch_size)
         batch = collate_graphs([dataset[i] for i in batch_indices])
+        step_started = time.perf_counter()
         final_loss = train_regression_step(
             model,
             batch,
@@ -116,6 +119,7 @@ def main() -> None:
             amp_dtype=amp_dtype,
             gradient_monitor=gradient_monitor,
         )
+        step_latencies.append(time.perf_counter() - step_started)
 
     val_batches = list(_iter_batches(dataset, val_idx, args.batch_size))
     val_metrics = evaluate_regression(
@@ -131,6 +135,11 @@ def main() -> None:
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     elapsed_seconds = time.perf_counter() - run_started
+    latency_window = step_latencies[min(10, len(step_latencies)) :]
+    if not latency_window:
+        latency_window = step_latencies
+    sorted_latencies = sorted(latency_window)
+    p90_index = max(0, ceil(0.9 * len(sorted_latencies)) - 1)
     metrics = {
         "dataset": args.dataset,
         "model": args.benchmark_model,
@@ -160,6 +169,8 @@ def main() -> None:
         "amp_dtype": args.amp_dtype,
         "reproducibility": reproducibility,
         "elapsed_seconds": elapsed_seconds,
+        "step_latency_median_seconds": statistics.median(latency_window),
+        "step_latency_p90_seconds": sorted_latencies[p90_index],
         "peak_cuda_memory_bytes": (
             int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
         ),
@@ -395,6 +406,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--gated-local-transport", action="store_true")
     parser.add_argument("--grouped-invariant-normalization", action="store_true")
+    parser.add_argument("--irrep-rms-normalization", action="store_true")
+    parser.add_argument(
+        "--angular-feature-rank",
+        type=int,
+        choices=(1, 2),
+        default=1,
+    )
+    parser.add_argument("--quartic-kernel", action="store_true")
+    parser.add_argument("--quartic-kernel-init", type=float, default=0.01)
+    parser.add_argument("--quartic-kernel-max", type=float, default=1.0)
+    parser.add_argument("--checkpoint-gated-local-mlp", action="store_true")
     parser.add_argument("--precompute-local-edges", action="store_true")
     parser.add_argument("--memory-count", type=int, choices=[1, 4, 8], default=1)
     parser.add_argument("--memory-interaction", action="store_true")
@@ -491,6 +513,12 @@ def _build_benchmark_model(
             "edge_conditioned_local_sqrt_degree": False,
             "gated_local_transport": False,
             "grouped_invariant_normalization": False,
+            "irrep_rms_normalization": False,
+            "angular_feature_rank": 1,
+            "quartic_kernel": False,
+            "quartic_kernel_init": 0.01,
+            "quartic_kernel_max": 1.0,
+            "checkpoint_gated_local_mlp": False,
             "hidden_tensor_dim": 0,
             "scalar_content_mode": "unit",
             "tensor_product_kernel": False,
@@ -551,6 +579,12 @@ def _build_benchmark_model(
         ),
         use_gated_local_transport=args.gated_local_transport,
         use_grouped_invariant_normalization=(args.grouped_invariant_normalization),
+        use_irrep_rms_normalization=args.irrep_rms_normalization,
+        angular_feature_rank=args.angular_feature_rank,
+        use_quartic_kernel=args.quartic_kernel,
+        quartic_kernel_init=args.quartic_kernel_init,
+        quartic_kernel_max=args.quartic_kernel_max,
+        checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         hidden_tensor_dim=args.hidden_tensor_dim,
         scalar_content_mode=args.scalar_content_mode,
         use_tensor_product_kernel=args.tensor_product_kernel,
@@ -694,11 +728,25 @@ def _gradient_clipping_summary(
     monitor: dict[str, float | int],
     *,
     grad_clip: float | None,
-) -> dict[str, float | int | str]:
+) -> dict[str, object]:
     step_count = int(monitor.get("step_count", 0))
     if step_count <= 0:
         raise ValueError("gradient clipping summary requires at least one step")
     clipped_step_count = int(monitor.get("clipped_step_count", 0))
+    pathwise: dict[str, dict[str, float]] = {}
+    suffix = "_sum"
+    prefix = "pre_clip_grad_norm_"
+    for key, value in monitor.items():
+        if not key.startswith(prefix) or not key.endswith(suffix):
+            continue
+        path = key[len(prefix) : -len(suffix)]
+        if not path:
+            continue
+        pathwise[path] = {
+            "mean": float(value) / step_count,
+            "max": float(monitor[f"{prefix}{path}_max"]),
+            "last": float(monitor[f"{prefix}{path}_last"]),
+        }
     return {
         "measurement_point": "before_clipping",
         "clip_threshold": "disabled" if grad_clip is None else float(grad_clip),
@@ -709,6 +757,7 @@ def _gradient_clipping_summary(
         / step_count,
         "pre_clip_grad_norm_max": float(monitor["pre_clip_grad_norm_max"]),
         "pre_clip_grad_norm_last": float(monitor["pre_clip_grad_norm_last"]),
+        "pathwise": pathwise,
     }
 
 
@@ -857,7 +906,15 @@ def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
             "vector_out.",
             "tensor_out.",
         ),
-        excluded_infixes=(".gated_local.",),
+        excluded_infixes=(
+            ".gated_local.",
+            ".irrep_rms_norm.",
+            ".query_vector_extra.",
+            ".key_vector_extra.",
+            ".query_vector_extra_gate.",
+            ".key_vector_extra_gate.",
+            ".raw_quartic_kernel",
+        ),
     )
 
 
@@ -1758,12 +1815,21 @@ def _kernel_formula(
     args: argparse.Namespace,
     inverse_positive_baseline: bool,
 ) -> str:
+    angular = "t_ranked" if args.angular_feature_rank > 1 else "t"
     content = "a_dot_b"
     if args.tensor_product_kernel:
         content += " + eta*(1+u)"
+    if args.quartic_kernel:
+        content += " + kappa4*t_primary^4"
     if inverse_positive_baseline:
-        return f"{content} + (c + beta*(1 + delta*t))/N_g + gamma*t^2"
-    return f"{content} + c + beta*(1 + delta*t) + gamma*t^2"
+        return (
+            f"{content} + (c + beta*(1 + delta*{angular}))/N_g "
+            f"+ gamma*{angular}^2"
+        )
+    return (
+        f"{content} + c + beta*(1 + delta*{angular}) "
+        f"+ gamma*{angular}^2"
+    )
 
 
 def _run_config(
@@ -1908,7 +1974,14 @@ def _run_config(
         "geometry_recomputed_per_layer": args.coordinate_updates,
         "attention": "factorized_moment",
         "kernel_version": (
-            4 if args.scalar_content_mode != "unit" or args.tensor_product_kernel else 3
+            5
+            if args.quartic_kernel or args.angular_feature_rank > 1
+            else (
+                4
+                if args.scalar_content_mode != "unit"
+                or args.tensor_product_kernel
+                else 3
+            )
         ),
         "balance_cycles": 0 if args.no_key_balancing else 1,
         "key_balancing": not args.no_key_balancing,
@@ -1928,6 +2001,16 @@ def _run_config(
         ),
         "tensor_kernel_init": args.tensor_kernel_init,
         "tensor_kernel_max": args.tensor_kernel_max,
+        "angular_feature_rank": args.angular_feature_rank,
+        "angular_feature_dimension": 3 * args.angular_feature_rank,
+        "quartic_kernel": args.quartic_kernel,
+        "quartic_kernel_formula": (
+            "kappa4*(primary_vector_q_dot_primary_vector_k)^4"
+            if args.quartic_kernel
+            else "not_applicable"
+        ),
+        "quartic_kernel_init": args.quartic_kernel_init,
+        "quartic_kernel_max": args.quartic_kernel_max,
         "kernel_floor_mode": args.kernel_floor_mode,
         "kernel_scaling_formula_version": "positive_baseline_v1",
         "graph_size_scaled_positive_baseline": inverse_positive_baseline,
@@ -1941,6 +2024,7 @@ def _run_config(
             "content",
             "alignment_quadratic",
             *(["shifted_tensor_product"] if args.tensor_product_kernel else []),
+            *(["quartic_angular"] if args.quartic_kernel else []),
         ],
         "routing": args.routing,
         "global_transport_mode": args.global_transport_mode,
@@ -1974,6 +2058,8 @@ def _run_config(
             else "not_applicable"
         ),
         "grouped_invariant_normalization": (args.grouped_invariant_normalization),
+        "irrep_rms_normalization": args.irrep_rms_normalization,
+        "checkpoint_gated_local_mlp": args.checkpoint_gated_local_mlp,
         "precompute_local_edges": args.precompute_local_edges,
         "local_candidate_builder": (
             "load_time_dense_radius_scan"

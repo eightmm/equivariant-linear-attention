@@ -18,6 +18,24 @@ full routing/kernel/memory run configuration, and whether test evaluation
 occurred. Test evaluation is disabled by default and requires explicit
 `--evaluate-test`; adaptive architecture work selects only on validation.
 
+## Architecture-v3 evaluation boundary (2026-07-25)
+
+The opt-in quartic, two-axis angular, and irrep-normalization additions are
+screened independently and jointly by
+`scripts/run_architecture_v3_qm9.py`. Every arm uses the same raw QM9 features,
+coordinates, split, target, precomputed candidates, optimizer, update count,
+and paired base initialization. A candidate advances only when its validation
+MAE improves by at least `0.010 eV` and both median full train-step latency and
+CUDA peak allocation are at most `1.25x` the current gated-plus-grouped
+incumbent. Test evaluation is structurally disabled.
+
+Only the lowest-MAE passing candidate can enter the fixed-budget
+ATOM3D-LBA ID30 validation runner. At the current record boundary all focused
+CPU contracts and both runner plans pass, but the host exposes no CUDA device.
+The v3 real-data screen and conditional LBA comparison therefore remain
+unexecuted; this is an environment stop, not a positive or negative model
+result. See [the v3 capability record](ARCHITECTURE_V3_20260725.md).
+
 ## Function-preserving performance refactor (2026-07-24)
 
 The gated LGL hot path now skips route-inactive projections, factorizes the

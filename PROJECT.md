@@ -2,6 +2,55 @@
 
 ## Status
 
+- Architecture-v3 was confirmed and CPU-implemented on 2026-07-25. It
+  deliberately does not repeat the rejected bounded-content/persistent-`2e`
+  architecture-v2 package. The opt-in v3 candidate adds: (1) a fixed-width
+  exact quartic angular feature map whose dot product is
+  `(q_i . k_j)^4`, (2) two direct-summed polar-`1o` query/key axes while
+  retaining exact factorization, (3) public polar-`1o` vector and
+  symmetric-traceless-`2e` tensor inputs, (4) invariant RMS normalization for
+  non-scalar irreps, and (5) optional activation recomputation for the gated
+  local edge MLP. The quadratic factorization is compressed from `D^2` to
+  `D(D+1)/2` components without changing the kernel. Defaults and existing
+  checkpoints remain compatible. Focused CPU contracts and runner dry-runs
+  pass; the host currently exposes no CUDA device, so v3 QM9 accuracy,
+  train-step resources, and conditional LBA validation remain pending and no
+  v3 option is promoted.
+- The v3 mathematical contract is full `O(3)`, translation invariance of scalar
+  predictions, node permutation equivariance, edge-order invariance,
+  graph-batch isolation, and no materialized `N x N` pair tensor. At fixed
+  angular rank, the new global path must remain `O(N)` in node count. The
+  quartic map must agree with an explicit dense kernel and expose fourth-order
+  angular moments that collide under the incumbent degree-two map. External
+  `1o` and `2e` inputs must transform covariantly and receive finite nonzero
+  gradients.
+- Training repair is part of v3 rather than an architecture-specific advantage.
+  The common harness will record pathwise pre-clip norms, support a matched
+  clipping policy for every compared arm, use a fixed evaluation/epoch budget
+  for the primary comparison, and report both fixed-budget and best-checkpoint
+  metrics. A clipping intervention is admitted only if it materially reduces
+  clipping without degrading the matched validation metric; merely raising a
+  threshold is reported as a policy change, not an architecture gain.
+- Functional comparison will cover the incumbent moment attention, the private
+  same-feature EGNN control, SE(3)-Transformer/Equiformer-style local
+  equivariant attention, and published global equivariant linear/subquadratic
+  attention along explicit axes: `O(3)` versus `SO(3)`, permutation contract,
+  local/global receptive field, asymptotic pair materialization, accepted
+  input/output irreps, coordinate updates, sparse-edge dependence, and
+  train-step rather than forward-only cost. "Functionally superior" is allowed
+  only for the conjunction actually implemented and verified; v3 does not
+  claim arbitrary `l`, parity-complete `0o/1e/2o`, softmax equivalence,
+  universal approximation, or published-model accuracy superiority.
+- The confirmed real-data packet uses only cached QM9 `gap` and official
+  ATOM3D-LBA ID30 train/validation data, never test labels. It first runs a
+  strict seed-42/500-update QM9 ablation of quartic, rank-two, and normalization
+  interventions against the current gated-plus-grouped LGL. Only a finite
+  candidate improving validation MAE by at least `0.010 eV` and staying within
+  `1.25x` train-step latency and peak allocation advances. The admitted
+  candidate then receives a fixed-budget LBA validation comparison against the
+  incumbent and private EGNN. The proposed ceiling is one local GPU, no new
+  dependency or download, and at most 1,800 cumulative GPU-wall seconds; OOM,
+  nonfinite values, or exhaustion is a recorded terminal result.
 - Soft-normalization v2 was implemented and screened on 2026-07-24. The
   previous divisor `sqrt(sum_j f_c^2 + eps)` cancelled radial attenuation for
   a singleton edge. Normalized edge-conditioned, gated, pairwise, and
