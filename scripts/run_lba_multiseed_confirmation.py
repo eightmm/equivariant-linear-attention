@@ -22,6 +22,8 @@ PACKET_ID = "lba-multiseed-confirmation-20260727"
 SEEDS = (41, 42, 43)
 MAX_GPU_SECONDS = 2_250.0
 RESERVE_SECONDS = 10.0
+CHILD_FINALIZATION_GRACE_SECONDS = 45.0
+MATCHED_EPOCHS = 35
 MINIMUM_MEAN_IMPROVEMENT_PK = 0.020
 MINIMUM_IMPROVING_SEEDS = 2
 MAXIMUM_WORST_REGRESSION_PK = 0.050
@@ -78,14 +80,14 @@ def build_command(
         "candidate",
         "incumbent",
         "--arm-budget-weights",
-        "2",
+        "1",
         "1",
         "--batch-size",
         "16",
         "--max-epochs",
-        "100",
+        str(MATCHED_EPOCHS),
         "--min-epochs",
-        "30",
+        str(MATCHED_EPOCHS),
         "--patience",
         "15",
         "--warmup-epochs",
@@ -193,11 +195,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise TimeoutError("LBA multi-seed confirmation budget exhausted")
         seed_budget = remaining / remaining_seeds
         output_dir = args.output_dir / f"seed{seed}"
+        training_budget = seed_budget - CHILD_FINALIZATION_GRACE_SECONDS
+        if training_budget <= 0.0:
+            raise TimeoutError("per-seed budget is too small after finalization grace")
         command = build_command(
             seed=seed,
             output_dir=output_dir,
             device=args.device,
-            budget_seconds=seed_budget,
+            budget_seconds=training_budget,
         )
         command_elapsed = _run_command(command, timeout=seed_budget)
         record = _load_json(output_dir / "result.json")
@@ -244,9 +249,10 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "schema_version": 1,
         "packet_id": PACKET_ID,
         "question": (
-            "Does the squared-RBF gated-plus-grouped LGL improve official "
-            "ATOM3D-LBA ID30 validation RMSE over the preceding LGL across "
-            "model and order seeds 41--43?"
+            "Under a matched 35-epoch training budget, does the squared-RBF "
+            "gated-plus-grouped LGL improve official ATOM3D-LBA ID30 "
+            "validation RMSE over the preceding LGL across model and order "
+            "seeds 41--43?"
         ),
         "prediction": (
             "Mean paired improvement is at least 0.020 pK, at least two seeds "
@@ -260,9 +266,12 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "order_seeds": list(SEEDS),
         "arms": ["candidate", "incumbent"],
         "execution_budget_weights": {
-            "candidate": 2,
+            "candidate": 1,
             "incumbent": 1
         },
+        "matched_epochs": MATCHED_EPOCHS,
+        "child_finalization_grace_seconds": CHILD_FINALIZATION_GRACE_SECONDS,
+        "evidence_grade": "exploratory_after_seed41_partial_curves",
         "device": args.device,
         "budget_seconds": args.budget_seconds,
         "validation_evaluated": True,

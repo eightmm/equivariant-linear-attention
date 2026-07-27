@@ -58,9 +58,11 @@ def test_command_freezes_seeds_arms_and_test_boundary() -> None:
         "candidate",
         "incumbent",
         "--arm-budget-weights",
-        "2",
+        "1",
         "1",
     ]
+    assert command[command.index("--max-epochs") + 1] == "35"
+    assert command[command.index("--min-epochs") + 1] == "35"
     assert "--evaluate-test" not in command
 
 
