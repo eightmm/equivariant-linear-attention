@@ -54,7 +54,13 @@ def test_command_freezes_seeds_arms_and_test_boundary() -> None:
     assert command[command.index("--model-seed") + 1] == "42"
     assert command[command.index("--order-seed") + 1] == "42"
     arms = command[command.index("--arms") + 1 : command.index("--batch-size")]
-    assert arms == ["candidate", "incumbent"]
+    assert arms == [
+        "candidate",
+        "incumbent",
+        "--arm-budget-weights",
+        "3",
+        "2",
+    ]
     assert "--evaluate-test" not in command
 
 

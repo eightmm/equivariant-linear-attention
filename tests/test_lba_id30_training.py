@@ -68,6 +68,29 @@ def test_plan_records_explicit_model_and_order_seeds() -> None:
     assert plan["order_seed"] == 1041
 
 
+def test_plan_records_optional_arm_budget_weights() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba",
+            "--arms",
+            "candidate",
+            "incumbent",
+            "--arm-budget-weights",
+            "3",
+            "2",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+
+    assert plan["arm_budget_weights"] == {
+        "candidate": 3.0,
+        "incumbent": 2.0,
+    }
+
+
 def test_explicit_model_seed_controls_initialization() -> None:
     symbols = _symbols()
     build_model = symbols["_build_model"]

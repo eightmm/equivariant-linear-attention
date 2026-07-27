@@ -94,6 +94,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-seed", type=int, default=MODEL_SEED)
     parser.add_argument("--order-seed", type=int, default=ORDER_SEED)
     parser.add_argument(
+        "--arm-budget-weights",
+        nargs="+",
+        type=float,
+        help=(
+            "optional positive execution-budget weights aligned with --arms; "
+            "this changes only wall-time allocation, not optimization"
+        ),
+    )
+    parser.add_argument(
         "--amp-dtype",
         choices=("none", "bfloat16"),
         default="none",
@@ -129,6 +138,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must be positive")
     if len(set(args.arms)) != len(args.arms):
         parser.error("--arms must not contain duplicates")
+    if args.arm_budget_weights is not None:
+        if len(args.arm_budget_weights) != len(args.arms):
+            parser.error("--arm-budget-weights must align one-to-one with --arms")
+        if any(
+            not math.isfinite(weight) or weight <= 0.0
+            for weight in args.arm_budget_weights
+        ):
+            parser.error("--arm-budget-weights must be finite and positive")
     return args
 
 
@@ -208,6 +225,18 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "determinism": "strict",
         "amp_dtype": args.amp_dtype,
         "budget_seconds": args.budget_seconds,
+        "arm_budget_weights": (
+            None
+            if args.arm_budget_weights is None
+            else {
+                arm: weight
+                for arm, weight in zip(
+                    args.arms,
+                    args.arm_budget_weights,
+                    strict=True,
+                )
+            }
+        ),
         "train_limit": args.train_limit,
         "val_limit": args.val_limit,
         "claim_boundary": (
@@ -357,16 +386,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_json(result_path, result)
 
     amp_dtype = torch.bfloat16 if args.amp_dtype == "bfloat16" else None
+    budget_weights = (
+        [1.0] * len(args.arms)
+        if args.arm_budget_weights is None
+        else list(args.arm_budget_weights)
+    )
     for arm_index, arm in enumerate(args.arms):
         elapsed = time.perf_counter() - run_started
         remaining = args.budget_seconds - elapsed
-        remaining_arms = len(args.arms) - arm_index
         if remaining <= 0.0:
             result["arm_results"].append(
                 {"arm": arm, "status": "not_run_total_budget_exhausted"}
             )
             continue
-        arm_budget = remaining / remaining_arms
+        remaining_weight = sum(budget_weights[arm_index:])
+        arm_budget = remaining * budget_weights[arm_index] / remaining_weight
         model = _build_model(
             arm,
             egnn_width,

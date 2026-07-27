@@ -77,6 +77,9 @@ def build_command(
         "--arms",
         "candidate",
         "incumbent",
+        "--arm-budget-weights",
+        "3",
+        "2",
         "--batch-size",
         "16",
         "--max-epochs",
@@ -256,6 +259,10 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "model_seeds": list(SEEDS),
         "order_seeds": list(SEEDS),
         "arms": ["candidate", "incumbent"],
+        "execution_budget_weights": {
+            "candidate": 3,
+            "incumbent": 2
+        },
         "device": args.device,
         "budget_seconds": args.budget_seconds,
         "validation_evaluated": True,
