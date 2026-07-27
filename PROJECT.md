@@ -2,6 +2,28 @@
 
 ## Status
 
+- A frozen seed-44 ATOM3D-LBA clipping screen found that the remaining
+  optimization issue is not local-message explosion. At 20 matched epochs,
+  clip-1 / clip-10 / unclipped last validation RMSEs were
+  `1.628645/1.611120/1.600802 pK`. No clipping improved the primary metric by
+  `0.027843 pK`, passed every one-seed screen criterion, and stayed resource
+  neutral (`1.0101x` latency, `0.9988x` peak allocation). Clip 10 improved
+  `0.017524 pK` but missed the registered `0.020 pK` threshold. The clip-1
+  path scaled gradients by only `0.1719x` on average, while squared-norm share
+  was spread over FFN/global/input/readout/local
+  (`36.25/24.64/19.26/15.81/4.04%`). The default remains `grad_clip=1.0`:
+  this is one-seed exploratory evidence and needs a clean paired multi-seed
+  confirmation. The runner now accepts `--grad-clip none` and records scale,
+  norm dispersion, threshold exceedance, and path shares. See
+  `docs/LBA_GRADIENT_CLIPPING_20260727.md`.
+- That packet also found a cross-run topology reproducibility defect. Its one
+  shared precomputed list had 32,303,245 edges/hash `344158...`, while the
+  preceding three-seed packet had 32,303,244/hash `1eea0a...`; a fresh seed-41
+  rebuild returned `344158...`, so seed is not the cause. The paired clipping
+  conclusion is unaffected because every arm consumed the same list, but a
+  permutation-safe deterministic distance/tie contract must be frozen before
+  multi-seed confirmation. An explicit squared-distance probe is only a
+  candidate contract and has not replaced the current topology.
 - A real-batch operator profile explains the accepted LBA candidate's resource
   behavior. On 16 cached train complexes (7,378 nodes / 153,029 edges), the
   candidate used fewer indexing/scatter launches and more edge-MLP matrix

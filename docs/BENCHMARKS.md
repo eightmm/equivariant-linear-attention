@@ -641,3 +641,28 @@ This is exploratory validation evidence: the matched-epoch protocol was
 selected after partial seed-41 curves existed while repairing the coordinator.
 It is not a test, cold-target, or published-model comparison. Full provenance
 and limitations are in `docs/LBA_MULTISEED_CONFIRMATION_20260727.md`.
+
+## ATOM3D-LBA clipping-policy screen (2026-07-27)
+
+The accepted candidate was trained on the full official ID30 train/validation
+split for 20 fixed epochs at model/data-order seed 44. All policies shared raw
+features, bound coordinates, target normalization, one precomputed topology,
+initial parameters, batches, AdamW schedule, and 4,400 updates.
+
+| global clip | last validation RMSE | best validation RMSE | clip fraction | mean effective scale |
+|---:|---:|---:|---:|---:|
+| 1 | 1.628645 | 1.617674 | 98.55% | 0.1719 |
+| 10 | 1.611120 | **1.593766** | 38.18% | 0.8644 |
+| none | **1.600802** | 1.598508 | 0% | 1.0000 |
+
+No clipping improved the registered primary metric by `0.027843 pK` and passed
+the frozen one-seed screen. Clip 10 improved `0.017524 pK`, just below the
+`0.020 pK` threshold. The unclipped trajectory beat clip 1 in 15/20 validation
+epochs and all final six epochs. Its latency and peak-allocation ratios were
+`1.0101x` and `0.9988x`.
+
+This is exploratory optimization evidence, not authorization to change the
+default. The packet also found a one-edge topology-hash drift relative to the
+preceding LBA study. It does not confound the within-packet comparison, but the
+distance/tied-neighbour contract must be made cross-run deterministic before a
+multi-seed confirmation. See `docs/LBA_GRADIENT_CLIPPING_20260727.md`.

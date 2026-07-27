@@ -121,6 +121,23 @@ def test_plan_records_checkpointed_candidate_memory_mode() -> None:
     assert all(layer.gated_local is None for layer in incumbent.layers)
 
 
+def test_plan_records_explicit_no_clipping_policy() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba",
+            "--grad-clip",
+            "none",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+
+    assert args.grad_clip is None
+    assert plan["optimizer"]["gradient_clip"] is None
+
+
 def test_explicit_model_seed_controls_initialization() -> None:
     symbols = _symbols()
     build_model = symbols["_build_model"]

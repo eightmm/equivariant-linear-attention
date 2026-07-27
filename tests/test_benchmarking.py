@@ -237,6 +237,10 @@ def test_regression_step_records_preclip_norm_and_clip_fraction() -> None:
     assert monitor["pre_clip_grad_norm_last"] > 0.0
     assert monitor["pre_clip_grad_norm_max"] >= monitor["pre_clip_grad_norm_last"]
     assert monitor["pre_clip_grad_norm_sum"] > 0.0
+    assert 0.0 < monitor["effective_grad_scale_min"] < 1.0
+    assert monitor["effective_grad_scale_sum"] < 3.0
+    assert monitor["pre_clip_grad_norm_gt_1_count"] >= 0
+    assert monitor["gradient_monitor_path_squared_norm_share_input_sum"] >= 0.0
 
 
 def test_builder_uses_the_single_promoted_architecture() -> None:

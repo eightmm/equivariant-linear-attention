@@ -136,3 +136,23 @@ real 16-complex LBA batch it reduced candidate peak allocation by `20.29%`
 while increasing median step latency by `22.03%`, so it remains opt-in. Use
 `scripts/profile_lba_train_step.py` to reproduce the workload-specific tradeoff;
 see `docs/LBA_OPERATOR_PROFILE_20260727.md`.
+
+`train_lba_id30.py --grad-clip` accepts either a positive global-norm threshold
+or `none`. The public default remains `1.0`. Every monitored run now records
+the pre-clip norm mean/standard deviation, effective global scale, exceedance
+fractions at norms 1/5/10/20/50, and mean squared-norm share by model path.
+
+The registered one-seed policy screen is:
+
+```bash
+uv run --locked python scripts/run_lba_gradient_clipping.py \
+  artifacts/lba-gradient-clipping-20260727/id30-seed44-20epoch \
+  --device cuda --epochs 20 --model-seed 44 --order-seed 44 \
+  --budget-seconds 900
+```
+
+It compares clip 1, clip 10, and no clipping on one shared topology. The
+unclipped arm passed that exploratory screen, but no default change is allowed
+until the topology distance/tie contract is made cross-run deterministic and a
+new paired multi-seed confirmation passes. See
+`docs/LBA_GRADIENT_CLIPPING_20260727.md`.

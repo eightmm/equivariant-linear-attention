@@ -258,6 +258,11 @@ def _update_gradient_monitor(
 ) -> None:
     step_count = int(monitor.get("step_count", 0)) + 1
     clipped = grad_clip is not None and pre_clip_norm > grad_clip
+    effective_scale = (
+        1.0
+        if grad_clip is None or pre_clip_norm <= grad_clip
+        else grad_clip / max(pre_clip_norm, torch.finfo(torch.float64).tiny)
+    )
     monitor["step_count"] = step_count
     monitor["clipped_step_count"] = int(monitor.get("clipped_step_count", 0)) + int(
         clipped
@@ -269,6 +274,21 @@ def _update_gradient_monitor(
     monitor["pre_clip_grad_norm_max"] = max(
         float(monitor.get("pre_clip_grad_norm_max", 0.0)), pre_clip_norm
     )
+    monitor["gradient_monitor_pre_clip_norm_square_sum"] = (
+        float(monitor.get("gradient_monitor_pre_clip_norm_square_sum", 0.0))
+        + pre_clip_norm**2
+    )
+    monitor["effective_grad_scale_last"] = effective_scale
+    monitor["effective_grad_scale_sum"] = (
+        float(monitor.get("effective_grad_scale_sum", 0.0)) + effective_scale
+    )
+    monitor["effective_grad_scale_min"] = min(
+        float(monitor.get("effective_grad_scale_min", 1.0)),
+        effective_scale,
+    )
+    for threshold in (1, 5, 10, 20, 50):
+        key = f"pre_clip_grad_norm_gt_{threshold}_count"
+        monitor[key] = int(monitor.get(key, 0)) + int(pre_clip_norm > threshold)
     for path, norm in (path_norms or {}).items():
         prefix = f"pre_clip_grad_norm_{path}"
         monitor[f"{prefix}_last"] = norm
@@ -276,6 +296,16 @@ def _update_gradient_monitor(
         monitor[f"{prefix}_max"] = max(
             float(monitor.get(f"{prefix}_max", 0.0)),
             norm,
+        )
+        squared_share = (
+            norm**2 / pre_clip_norm**2
+            if pre_clip_norm > 0.0
+            else 0.0
+        )
+        share_key = f"gradient_monitor_path_squared_norm_share_{path}_sum"
+        monitor[share_key] = (
+            float(monitor.get(share_key, 0.0))
+            + squared_share
         )
 
 

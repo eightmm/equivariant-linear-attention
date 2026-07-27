@@ -66,6 +66,22 @@ V3_VARIANTS = {
 PUBLISHED_ATOM3D_GNN_RMSE_PK = 1.601
 
 
+def _optional_positive_float(value: str) -> float | None:
+    if value.lower() == "none":
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "expected a positive number or 'none'"
+        ) from error
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError(
+            "expected a positive finite number or 'none'"
+        )
+    return parsed
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", type=Path)
@@ -89,7 +105,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--warmup-epochs", type=int, default=5)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument(
+        "--grad-clip",
+        type=_optional_positive_float,
+        default=1.0,
+        help="global gradient-norm threshold, or 'none' to disable clipping",
+    )
     parser.add_argument("--min-lr-ratio", type=float, default=0.05)
     parser.add_argument("--model-seed", type=int, default=MODEL_SEED)
     parser.add_argument("--order-seed", type=int, default=ORDER_SEED)
@@ -132,8 +153,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--warmup-epochs must lie in [0, max-epochs]")
     if args.learning_rate <= 0.0 or args.weight_decay < 0.0:
         parser.error("learning rate must be positive and weight decay nonnegative")
-    if args.grad_clip <= 0.0:
-        parser.error("--grad-clip must be positive")
     if args.model_seed < 0 or args.order_seed < 0:
         parser.error("--model-seed and --order-seed must be nonnegative")
     if not 0.0 <= args.min_lr_ratio <= 1.0:
@@ -696,6 +715,23 @@ def _train_arm(
         latency_window = latencies
     clip_count = int(gradient_monitor.get("clipped_step_count", 0))
     monitored_steps = int(gradient_monitor.get("step_count", 0))
+    mean_pre_clip_norm = (
+        float(gradient_monitor.get("pre_clip_grad_norm_sum", 0.0))
+        / monitored_steps
+        if monitored_steps
+        else None
+    )
+    mean_square_pre_clip_norm = (
+        float(
+            gradient_monitor.get(
+                "gradient_monitor_pre_clip_norm_square_sum",
+                0.0,
+            )
+        )
+        / monitored_steps
+        if monitored_steps
+        else None
+    )
     status = (
         "completed"
         if stop_reason in {"max_epochs", "early_stopping"}
@@ -734,12 +770,55 @@ def _train_arm(
             "clip_fraction": (
                 clip_count / monitored_steps if monitored_steps else None
             ),
-            "pre_clip_grad_norm_mean": (
-                float(gradient_monitor.get("pre_clip_grad_norm_sum", 0.0))
+            "pre_clip_grad_norm_mean": mean_pre_clip_norm,
+            "pre_clip_grad_norm_std": (
+                max(
+                    0.0,
+                    mean_square_pre_clip_norm - mean_pre_clip_norm**2,
+                )
+                ** 0.5
+                if mean_pre_clip_norm is not None
+                and mean_square_pre_clip_norm is not None
+                else None
+            ),
+            "effective_grad_scale_mean": (
+                float(gradient_monitor.get("effective_grad_scale_sum", 0.0))
                 / monitored_steps
                 if monitored_steps
                 else None
             ),
+            "threshold_exceedance_fraction": {
+                str(threshold): (
+                    int(
+                        gradient_monitor.get(
+                            f"pre_clip_grad_norm_gt_{threshold}_count",
+                            0,
+                        )
+                    )
+                    / monitored_steps
+                    if monitored_steps
+                    else None
+                )
+                for threshold in (1, 5, 10, 20, 50)
+            },
+            "pathwise_squared_norm_share_mean": {
+                path: (
+                    float(
+                        gradient_monitor.get(
+                            (
+                                "gradient_monitor_path_squared_norm_share_"
+                                f"{path}_sum"
+                            ),
+                            0.0,
+                        )
+                    )
+                    / monitored_steps
+                    if monitored_steps
+                    else None
+                )
+                for path in ("input", "global", "local", "ffn", "readout")
+                if f"pre_clip_grad_norm_{path}_sum" in gradient_monitor
+            },
         },
         "history": history,
         "best_checkpoint": str(output_dir / "best.pt"),
