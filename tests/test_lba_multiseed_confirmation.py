@@ -94,3 +94,11 @@ def test_decision_rejects_a_one_seed_only_gain() -> None:
 
     assert result["passed"] is False
     assert result["improving_seed_count"] == 1
+
+
+def test_resume_is_explicit() -> None:
+    symbols = _symbols()
+
+    args = symbols["parse_args"](["out", "--resume"])
+
+    assert args.resume is True

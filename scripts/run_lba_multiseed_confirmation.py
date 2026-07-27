@@ -37,7 +37,7 @@ EXPECTED_VALIDATION_IDENTITY = (
     "ed4565afc9e87adb926798dd1909a3987fc849a7f0e1f5e3ba92d52c10e7d99c"
 )
 EXPECTED_TOPOLOGY = (
-    "344158d83490a23d25121d84c5ac8d5700281b37c4e699581a6a61385c171080"
+    "1eea0af8bca4bd3106457f704677265acb09b322abcd3a1c9b7ed92bed42399c"
 )
 
 
@@ -47,6 +47,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--budget-seconds", type=float, default=MAX_GPU_SECONDS)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse provenance-valid completed seed results in output_dir",
+    )
     args = parser.parse_args(argv)
     if not 0.0 < args.budget_seconds <= MAX_GPU_SECONDS:
         parser.error(
@@ -182,15 +187,55 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         print(json.dumps(plan, indent=2, sort_keys=True))
         return 0
-    args.output_dir.mkdir(parents=True, exist_ok=False)
-    _write_json(args.output_dir / "plan.json", plan)
+    plan_path = args.output_dir / "plan.json"
+    if args.resume:
+        if not args.output_dir.is_dir():
+            raise FileNotFoundError(f"resume directory does not exist: {args.output_dir}")
+        if _load_json(plan_path) != plan:
+            raise RuntimeError("resume plan does not match the current frozen plan")
+    else:
+        args.output_dir.mkdir(parents=True, exist_ok=False)
+        _write_json(plan_path, plan)
     started = time.monotonic()
     records: list[dict[str, object]] = []
     executions: list[dict[str, object]] = []
-    for index, seed in enumerate(SEEDS):
-        elapsed = time.monotonic() - started
+    pending_seeds: list[int] = []
+    reused_seconds = 0.0
+    for seed in SEEDS:
+        result_path = args.output_dir / f"seed{seed}" / "result.json"
+        if not args.resume or not result_path.is_file():
+            pending_seeds.append(seed)
+            continue
+        record = _load_json(result_path)
+        _validate_record(record, seed=seed)
+        records.append(record)
+        command_wall_seconds = float(record["elapsed_seconds"])
+        reused_seconds += command_wall_seconds
+        executions.append(
+            {
+                "seed": seed,
+                "command": build_command(
+                    seed=seed,
+                    output_dir=result_path.parent,
+                    device=args.device,
+                    budget_seconds=float(record["budget_seconds"]),
+                ),
+                "command_wall_seconds": command_wall_seconds,
+                "result_path": f"seed{seed}/result.json",
+                "exit_code": 0,
+                "reused": True,
+            }
+        )
+        arms = _arms_by_name(record)
+        print(
+            f"reused seed {seed}: candidate={_rmse(arms['candidate']):.6f} "
+            f"incumbent={_rmse(arms['incumbent']):.6f}",
+            flush=True,
+        )
+    for index, seed in enumerate(pending_seeds):
+        elapsed = reused_seconds + time.monotonic() - started
         remaining = args.budget_seconds - elapsed - RESERVE_SECONDS
-        remaining_seeds = len(SEEDS) - index
+        remaining_seeds = len(pending_seeds) - index
         if remaining <= 0.0:
             raise TimeoutError("LBA multi-seed confirmation budget exhausted")
         seed_budget = remaining / remaining_seeds
@@ -215,20 +260,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "command_wall_seconds": command_elapsed,
                 "result_path": f"seed{seed}/result.json",
                 "exit_code": 0,
+                "reused": False,
             }
         )
         arms = _arms_by_name(record)
         print(
             f"completed seed {seed}: candidate={_rmse(arms['candidate']):.6f} "
             f"incumbent={_rmse(arms['incumbent']):.6f} "
-            f"packet_wall={time.monotonic() - started:.1f}s",
+            f"packet_wall={reused_seconds + time.monotonic() - started:.1f}s",
             flush=True,
         )
+    records.sort(key=lambda record: int(record["model_seed"]))
+    executions.sort(key=lambda execution: int(execution["seed"]))
     final_decision = decision(records)
     summary = {
         **plan,
         "status": "completed",
-        "elapsed_seconds": time.monotonic() - started,
+        "elapsed_seconds": reused_seconds + time.monotonic() - started,
         "source_sha256": records[0]["source_sha256"],
         "executions": executions,
         "arm_summaries": {
