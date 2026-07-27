@@ -114,3 +114,25 @@ sets `min_epochs=max_epochs` and patience above that budget; results expose
 both best-checkpoint and last-epoch validation metrics. The registered v3
 protocol runs this lane only after a QM9 candidate passes its accuracy and
 train-step resource screen.
+
+The current multi-seed matched-budget LBA command is:
+
+```bash
+uv run --locked python scripts/run_lba_multiseed_confirmation.py \
+  artifacts/lba-multiseed-confirmation-20260727/id30-3seed-fixed35 \
+  --device cuda --budget-seconds 2250
+```
+
+It freezes seeds 41--43 and gives candidate/incumbent exactly 35 epochs each.
+`--resume` reuses only completed seed results that pass the full dataset,
+topology, split, arm, finiteness, source, and no-test provenance checks; reused
+wall time remains charged to the packet budget. See
+`docs/LBA_MULTISEED_CONFIRMATION_20260727.md`.
+
+For memory-limited candidate/v3 training, add
+`--checkpoint-gated-local-mlp`. It recomputes the latter gated edge-MLP
+segment during backward and does not alter parameters or equations. On one
+real 16-complex LBA batch it reduced candidate peak allocation by `20.29%`
+while increasing median step latency by `22.03%`, so it remains opt-in. Use
+`scripts/profile_lba_train_step.py` to reproduce the workload-specific tradeoff;
+see `docs/LBA_OPERATOR_PROFILE_20260727.md`.

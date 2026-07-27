@@ -2,6 +2,30 @@
 
 ## Status
 
+- A real-batch operator profile explains the accepted LBA candidate's resource
+  behavior. On 16 cached train complexes (7,378 nodes / 153,029 edges), the
+  candidate used fewer indexing/scatter launches and more edge-MLP matrix
+  multiplies; this profile is consistent with its `0.7364x` synchronized step
+  time and `1.3698x` peak allocation relative to the incumbent. Checkpointing
+  the latter gated edge-MLP
+  segment reduced candidate peak allocation by `20.29%` at a `22.03%`
+  step-latency cost. The LBA runner now exposes this existing
+  equation-preserving mechanism as opt-in
+  `--checkpoint-gated-local-mlp`; default speed behavior is unchanged. See
+  `docs/LBA_OPERATOR_PROFILE_20260727.md`.
+- The 2026-07-27 matched-budget ATOM3D-LBA ID30 study gives the first
+  multi-seed real-affinity support for the current squared-RBF
+  gated-plus-grouped LGL. At exactly 35 epochs / 7,700 updates per arm and
+  seeds 41--43, candidate/incumbent mean validation RMSEs were
+  `1.598765/1.619865 pK`; paired improvement was `0.021099 pK` with `3/3`
+  wins. The candidate was also faster (`0.9347x` median step latency) while
+  using more memory (`1.3723x` peak allocation). All frozen numeric/resource
+  gates passed and test stayed structurally inaccessible. The evidence remains
+  exploratory because the matched-epoch repair was chosen after partial
+  seed-41 curves were observed; most of the mean gain came from seed 41.
+  Pathwise diagnostics show the candidate reduced shared pre-clip norms, but
+  both arms still clipped about 99% of updates. See
+  `docs/LBA_MULTISEED_CONFIRMATION_20260727.md`.
 - The 2026-07-27 strict-CUDA confirmation closes the radial-spacing question.
   Five paired 2,000-update QM9 `gap` runs at model seeds 41--45 gave mean
   validation MAE `0.371793 +/- 0.020792 eV` for the current gated-plus-grouped

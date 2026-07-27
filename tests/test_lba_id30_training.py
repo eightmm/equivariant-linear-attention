@@ -91,6 +91,36 @@ def test_plan_records_optional_arm_budget_weights() -> None:
     }
 
 
+def test_plan_records_checkpointed_candidate_memory_mode() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba",
+            "--checkpoint-gated-local-mlp",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+    candidate = symbols["_build_model"](
+        "candidate",
+        None,
+        checkpoint_gated_local_mlp=True,
+    )
+    incumbent = symbols["_build_model"](
+        "incumbent",
+        None,
+        checkpoint_gated_local_mlp=True,
+    )
+
+    assert plan["architecture"]["candidate_checkpoint_gated_local_mlp"] is True
+    assert all(
+        layer.gated_local is None or layer.gated_local.checkpoint_mlp
+        for layer in candidate.layers
+    )
+    assert all(layer.gated_local is None for layer in incumbent.layers)
+
+
 def test_explicit_model_seed_controls_initialization() -> None:
     symbols = _symbols()
     build_model = symbols["_build_model"]

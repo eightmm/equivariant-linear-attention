@@ -618,3 +618,26 @@ Candidate/incumbent/private-EGNN median synchronized steps were
 1.732/1.253/1.545 GB. Every arm clipped more than 99% of updates. The complete
 protocol, external published context, hashes, and interpretation are in
 `docs/LBA_ID30_VALIDATION_20260724.md`.
+
+## ATOM3D-LBA matched 35-epoch multi-seed result (2026-07-27)
+
+The current squared-RBF gated-plus-grouped LGL was compared with the preceding
+LGL on the same official ID30 train/validation data, strict FP32 CUDA, and
+model/data-order seeds 41--43. Each arm received exactly 35 epochs / 7,700
+updates. Test remained structurally inaccessible.
+
+| arm | mean validation RMSE (pK) | sample SD | median step | median peak CUDA |
+|---|---:|---:|---:|---:|
+| gated + grouped LGL | **1.598765** | 0.023390 | **27.644 ms** | 1,728,283,648 B |
+| previous LGL | 1.619865 | 0.018482 | 29.578 ms | **1,258,568,192 B** |
+
+Paired candidate improvements were `0.050701`, `0.005158`, and `0.007439 pK`;
+the mean was `0.021099 pK` with `3/3` wins. The latency and memory ratios were
+`0.93472x` and `1.37233x`, so every frozen accuracy/resource criterion passed.
+The candidate also reduced mean pre-clip norm from `14.8994` to `12.4345`, but
+both arms still clipped about 99% of updates.
+
+This is exploratory validation evidence: the matched-epoch protocol was
+selected after partial seed-41 curves existed while repairing the coordinator.
+It is not a test, cold-target, or published-model comparison. Full provenance
+and limitations are in `docs/LBA_MULTISEED_CONFIRMATION_20260727.md`.

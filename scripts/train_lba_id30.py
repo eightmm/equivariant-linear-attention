@@ -107,6 +107,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("none", "bfloat16"),
         default="none",
     )
+    parser.add_argument(
+        "--checkpoint-gated-local-mlp",
+        action="store_true",
+        help=(
+            "recompute the candidate gated edge MLP during backward to reduce "
+            "activation memory without changing its equations or parameters"
+        ),
+    )
     parser.add_argument("--budget-seconds", type=float, default=7_200.0)
     parser.add_argument("--train-limit", type=int)
     parser.add_argument("--val-limit", type=int)
@@ -191,6 +199,9 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "local_head_counts": list(LOCAL_HEAD_COUNTS),
             "candidate_gated_local_transport": True,
             "candidate_grouped_invariant_normalization": True,
+            "candidate_checkpoint_gated_local_mlp": (
+                args.checkpoint_gated_local_mlp
+            ),
             "v3_variant": args.v3_variant,
             "v3_interventions": V3_VARIANTS[args.v3_variant],
             "coordinate_updates": False,
@@ -331,6 +342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             None,
             args.v3_variant,
             model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
     incumbent_parameters = _parameter_count(
@@ -339,6 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             None,
             args.v3_variant,
             model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
     v3_parameters = _parameter_count(
@@ -347,6 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             None,
             args.v3_variant,
             model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
     match_target_parameters = (
@@ -359,6 +373,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             egnn_width,
             args.v3_variant,
             model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
     result["dataset_summary"].update(
@@ -406,6 +421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             egnn_width,
             args.v3_variant,
             model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
         arm_result = _train_arm(
             arm=arm,
@@ -448,6 +464,7 @@ def _build_model(
     v3_variant: str = "combined",
     *,
     model_seed: int = MODEL_SEED,
+    checkpoint_gated_local_mlp: bool = False,
 ) -> torch.nn.Module:
     torch.manual_seed(model_seed)
     if arm == "egnn":
@@ -471,6 +488,9 @@ def _build_model(
         use_key_balancing=False,
         use_gated_local_transport=arm in {"candidate", "v3"},
         use_grouped_invariant_normalization=arm in {"candidate", "v3"},
+        checkpoint_gated_local_mlp=(
+            checkpoint_gated_local_mlp if arm in {"candidate", "v3"} else False
+        ),
         **v3_options,
     )
 
