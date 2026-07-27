@@ -20,7 +20,7 @@ import time
 
 PACKET_ID = "lba-multiseed-confirmation-20260727"
 SEEDS = (41, 42, 43)
-MAX_GPU_SECONDS = 1_800.0
+MAX_GPU_SECONDS = 2_250.0
 RESERVE_SECONDS = 10.0
 MINIMUM_MEAN_IMPROVEMENT_PK = 0.020
 MINIMUM_IMPROVING_SEEDS = 2
@@ -78,8 +78,8 @@ def build_command(
         "candidate",
         "incumbent",
         "--arm-budget-weights",
-        "3",
         "2",
+        "1",
         "--batch-size",
         "16",
         "--max-epochs",
@@ -260,8 +260,8 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "order_seeds": list(SEEDS),
         "arms": ["candidate", "incumbent"],
         "execution_budget_weights": {
-            "candidate": 3,
-            "incumbent": 2
+            "candidate": 2,
+            "incumbent": 1
         },
         "device": args.device,
         "budget_seconds": args.budget_seconds,

@@ -58,8 +58,8 @@ def test_command_freezes_seeds_arms_and_test_boundary() -> None:
         "candidate",
         "incumbent",
         "--arm-budget-weights",
-        "3",
         "2",
+        "1",
     ]
     assert "--evaluate-test" not in command
 
