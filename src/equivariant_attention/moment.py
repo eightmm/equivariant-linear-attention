@@ -19,6 +19,7 @@ _MEMORY_ROUTER_LOGIT_SCALE = 4.0
 _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
 _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 _COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
+_LOCAL_RBF_SPACINGS = frozenset({"squared", "distance"})
 _READOUT_MODES = frozenset({"interaction", "mean", "sum"})
 
 
@@ -194,6 +195,8 @@ class EquivariantAttentionConfig:
     quartic_kernel_init: float = 0.01
     quartic_kernel_max: float = 1.0
     checkpoint_gated_local_mlp: bool = False
+    # Appended so existing positional construction keeps its meaning.
+    local_rbf_spacing: str = "squared"
 
 
 class EquivariantAttention(nn.Module):
@@ -282,6 +285,7 @@ class EquivariantAttention(nn.Module):
                     ),
                     local_cutoff=config.local_cutoff,
                     num_rbf=config.num_rbf,
+                    local_rbf_spacing=config.local_rbf_spacing,
                     learn_local_radial_gate=config.learn_local_radial_gate,
                     use_edge_conditioned_local_transport=(
                         config.use_edge_conditioned_local_transport
@@ -357,6 +361,7 @@ class EquivariantAttention(nn.Module):
                 output_scalars=self.output_irreps.scalars,
                 num_rbf=config.num_rbf,
                 cutoff=config.local_cutoff,
+                rbf_spacing=config.local_rbf_spacing,
                 eps=config.eps,
             )
             if config.readout_mode == "interaction"
@@ -448,6 +453,7 @@ class EquivariantAttention(nn.Module):
                 num_graphs=num_graphs,
                 cutoff=self.config.local_cutoff,
                 num_rbf=self.config.num_rbf,
+                rbf_spacing=self.config.local_rbf_spacing,
                 graph_counts=graph_counts,
                 edge_index=resolved_edge_index,
                 edge_index_is_validated=resolved_edge_index_is_validated,
@@ -464,6 +470,7 @@ class EquivariantAttention(nn.Module):
                         num_graphs=num_graphs,
                         cutoff=self.config.local_cutoff,
                         num_rbf=self.config.num_rbf,
+                        rbf_spacing=self.config.local_rbf_spacing,
                         graph_counts=graph_counts,
                         edge_index=resolved_edge_index,
                         edge_index_is_validated=(resolved_edge_index_is_validated),
@@ -810,6 +817,7 @@ class _EquivariantMomentLayer(nn.Module):
         use_multiscale_spatial_kernel: bool,
         local_cutoff: float,
         num_rbf: int,
+        local_rbf_spacing: str,
         learn_local_radial_gate: bool,
         use_edge_conditioned_local_transport: bool,
         normalize_edge_conditioned_local_by_sqrt_degree: bool,
@@ -865,6 +873,7 @@ class _EquivariantMomentLayer(nn.Module):
         )
         self.local_cutoff = local_cutoff
         self.num_rbf = num_rbf
+        self.local_rbf_spacing = local_rbf_spacing
         self.global_memory_count = global_memory_count
         self.use_memory_interaction = use_memory_interaction
         self.memory_assignment_temperature = memory_assignment_temperature
@@ -1249,6 +1258,7 @@ class _EquivariantMomentLayer(nn.Module):
                             kernel_floor=self.kernel_floor,
                             cutoff=self.local_cutoff,
                             num_rbf=self.num_rbf,
+                            rbf_spacing=self.local_rbf_spacing,
                             radial_weight=self.local_radial_weight[local],
                             radial_bias=self.local_radial_bias[local],
                             local_geometry=local_geometry,
@@ -1929,11 +1939,13 @@ class _InteractionReadout(nn.Module):
         num_rbf: int,
         cutoff: float,
         eps: float,
+        rbf_spacing: str = "squared",
     ) -> None:
         super().__init__()
         width = max(8, min(32, scalars // 4))
         self.num_rbf = num_rbf
         self.cutoff = cutoff
+        self.rbf_spacing = rbf_spacing
         self.eps = eps
         self.node_norm = nn.LayerNorm(scalars)
         self.entity_projection = nn.Linear(scalars, width, bias=False)
@@ -1990,6 +2002,7 @@ class _InteractionReadout(nn.Module):
             num_graphs=num_graphs,
             cutoff=self.cutoff,
             num_rbf=self.num_rbf,
+            rbf_spacing=self.rbf_spacing,
             graph_counts=graph_counts,
             edge_index=edge_index,
             edge_index_is_validated=edge_index_is_validated,
@@ -2451,6 +2464,7 @@ def _local_attention_weights(
     kernel_floor: float = 1.0,
     cutoff: float = 2.5,
     num_rbf: int = 16,
+    rbf_spacing: str = "squared",
     radial_weight: torch.Tensor,
     radial_bias: torch.Tensor,
     local_geometry: _LocalGeometryInput | None = None,
@@ -2462,6 +2476,7 @@ def _local_attention_weights(
             num_graphs=num_graphs,
             cutoff=cutoff,
             num_rbf=num_rbf,
+            rbf_spacing=rbf_spacing,
         )
     receiver, sender, displacement, squared_distance, rbf = local_geometry
 
@@ -2536,6 +2551,7 @@ def _local_geometry(
     num_graphs: int,
     cutoff: float,
     num_rbf: int,
+    rbf_spacing: str = "squared",
     graph_counts: torch.Tensor | None = None,
     edge_index: torch.Tensor | None = None,
     edge_index_is_validated: bool = False,
@@ -2565,17 +2581,7 @@ def _local_geometry(
     sender = sender[inside]
     displacement = candidate_displacement[inside] / cutoff_tensor
     squared_distance = displacement.square().sum(dim=-1)
-    rbf_centers = torch.linspace(
-        0.0,
-        1.0,
-        num_rbf,
-        dtype=pos.dtype,
-        device=pos.device,
-    )
-    rbf_width = 1.0 / max(1, num_rbf - 1)
-    rbf = torch.exp(
-        -0.5 * ((squared_distance.unsqueeze(-1) - rbf_centers) / rbf_width).square()
-    )
+    rbf = _radial_basis(squared_distance, num_rbf=num_rbf, spacing=rbf_spacing)
     nonself = receiver != sender
     nonself_displacement = displacement[nonself]
     nonself_squared_distance = squared_distance[nonself]
@@ -2596,6 +2602,45 @@ def _local_geometry(
         nonself_tensor_features=_symmetric_traceless_features(
             nonself_displacement
         ),
+    )
+
+
+def _radial_basis(
+    squared_distance: torch.Tensor,
+    *,
+    num_rbf: int,
+    spacing: str,
+) -> torch.Tensor:
+    """Gaussian radial basis on the normalized squared distance.
+
+    ``squared`` places centers uniformly in ``u = ||d||^2 / R_c^2``; its radial
+    resolution therefore depends on the cutoff and is coarsest at short range.
+    ``distance`` places centers uniformly in ``r / R_c`` and gives each basis
+    function the squared-distance gap to its successor as width, distributing
+    relative radial resolution uniformly over the normalized cutoff interval.
+    Both evaluate polynomials of the coordinates without a square root, keeping
+    the coincident-node derivative finite.
+    """
+
+    if spacing not in _LOCAL_RBF_SPACINGS:
+        choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
+        raise ValueError(f"local_rbf_spacing must be one of: {choices}")
+    knots = torch.linspace(
+        0.0,
+        1.0,
+        num_rbf,
+        dtype=squared_distance.dtype,
+        device=squared_distance.device,
+    )
+    step = 1.0 / max(1, num_rbf - 1)
+    if spacing == "squared":
+        centers = knots
+        widths: torch.Tensor | float = step
+    else:
+        centers = knots.square()
+        widths = (knots + step).square() - centers
+    return torch.exp(
+        -0.5 * ((squared_distance.unsqueeze(-1) - centers) / widths).square()
     )
 
 
@@ -4309,6 +4354,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.coordinate_neighbor_policy not in _COORDINATE_NEIGHBOR_POLICIES:
         choices = ", ".join(sorted(_COORDINATE_NEIGHBOR_POLICIES))
         raise ValueError(f"coordinate_neighbor_policy must be one of: {choices}")
+    if not isinstance(config.local_rbf_spacing, str):
+        raise TypeError("local_rbf_spacing must be a string")
+    if config.local_rbf_spacing not in _LOCAL_RBF_SPACINGS:
+        choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
+        raise ValueError(f"local_rbf_spacing must be one of: {choices}")
     if not isinstance(config.readout_mode, str):
         raise TypeError("readout_mode must be a string")
     if config.readout_mode not in _READOUT_MODES:

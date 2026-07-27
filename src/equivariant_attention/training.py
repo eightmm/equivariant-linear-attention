@@ -54,6 +54,8 @@ def build_regression_model(
     quartic_kernel_init: float = 0.01,
     quartic_kernel_max: float = 1.0,
     checkpoint_gated_local_mlp: bool = False,
+    # Appended so existing positional calls keep their meaning.
+    local_rbf_spacing: str = "squared",
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -81,6 +83,7 @@ def build_regression_model(
             global_transport_mode=global_transport_mode,
             local_cutoff=local_cutoff,
             num_rbf=num_rbf,
+            local_rbf_spacing=local_rbf_spacing,
             learn_local_radial_gate=learn_local_radial_gate,
             use_pairwise_local_content=use_pairwise_local_content,
             pairwise_residual_scale_init=pairwise_residual_scale_init,

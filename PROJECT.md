@@ -2,6 +2,159 @@
 
 ## Status
 
+- The 2026-07-27 strict-CUDA confirmation closes the radial-spacing question.
+  Five paired 2,000-update QM9 `gap` runs at model seeds 41--45 gave mean
+  validation MAE `0.371793 +/- 0.020792 eV` for the current gated-plus-grouped
+  LGL with the incumbent squared-distance RBF and
+  `0.383284 +/- 0.019450 eV` for distance spacing. Distance spacing improved
+  only seed 45, regressed the paired mean by `0.011491 eV`, and had a worst
+  regression of `0.036583 eV`; it failed three of the five frozen promotion
+  criteria. Its median train-step latency and peak allocation were effectively
+  unchanged (`0.994x` and `1.000x`), so the rejection is an accuracy result,
+  not a resource tradeoff. The 500-update seed-42 gain of `0.029220 eV` was an
+  early-training false positive. The option remains an experimental,
+  schema-compatible radial basis for reproducibility and non-QM9 work, but the
+  public default remains `local_rbf_spacing="squared"`. The conditional LBA
+  run was correctly not executed and test labels remained closed. See
+  `docs/DISTANCE_RBF_CONFIRMATION_20260727.md`.
+- The same packet materially revises the old same-harness EGNN narrative. The
+  current squared-RBF LGL averaged `0.371793 eV`, versus `0.418467 eV` for the
+  private complete-graph static EGNN and `0.417983 eV` for the private
+  topology-matched 2.5-Angstrom static EGNN. LGL won three of five complete
+  pairs and all five topology-matched pairs, with mean advantages
+  `0.046674/0.046191 eV`. This is validation-only evidence against internal
+  controls, not an official EGNN or published-model superiority claim. The
+  cost boundary is equally important: LGL was `5.53x/5.56x` slower per
+  train step than the complete/matched controls; it used `0.708x` the complete
+  EGNN peak allocation but `1.427x` the matched EGNN allocation. Accuracy is
+  no longer the immediate same-harness blocker; small-graph constant factors,
+  affinity seed uncertainty, and an official external baseline are.
+- Production cleanup followed the negative evidence rather than preserving
+  every screened mechanism. Differential global attention, the global output
+  gain, and local angular conditioning were removed from the production model,
+  CLI, and construction path after their registered negative/null screens.
+  Their immutable results remain in the experiment ledger and local artifacts.
+  The retained implementation delta is the small opt-in radial-spacing control
+  plus the corrected private-EGNN topology-matching harness. The full local
+  gate after cleanup passed 572 tests at 88.68% coverage, and direct CUDA BF16
+  and FP32 smokes plus real-QM9 strict-CUDA two-update smokes passed.
+- The local angular-conditioning packet was implemented and strict-CUDA screened
+  on 2026-07-26 in 140.7 of 900 authorized GPU-wall seconds. The defect it
+  targeted is recorded as an executable fact rather than an argument: because the
+  hidden vector state is zero at the first block, the gated local edge MLP sees
+  only distances from the receiver, and for two three-node configurations with
+  equal distances from the centre and different neighbour angles the incumbent's
+  central-edge hidden activations agree to `atol=1e-12`. Angular information
+  therefore reaches the model only after aggregation, where it cannot modulate an
+  individual message. The opt-in intervention conditions each gated edge message
+  on two parity-even invariants of the receiver's cutoff-weighted first and
+  second direction moments contracted with the edge direction, normalized by the
+  soft-normalization v2 convention. It costs one extra fused reduction and two
+  scalars per edge, so `O(E)` with no triplet enumeration, and adds no irrep, no
+  square root, and 128 parameters; a separate zero-initialized projection keeps
+  every incumbent weight draw intact so the enabled model reproduces the
+  incumbent exactly at initialization while still receiving gradient from the
+  first update. Screened against both radial bases, incumbent, angular,
+  squared-incumbent, and squared-angular validation MAEs were
+  `0.617117/0.626126/0.646338/0.643612 eV`. Nothing was admitted and no default
+  changed. Evidence is in `artifacts/local-angular-20260726/`.
+- That result is a null, not a refutation. The two paired effects straddle zero
+  (`-0.009008 eV` on the distance basis, `+0.002726 eV` on the squared basis),
+  both are far under the `0.020 eV` threshold, and the sign flips with the radial
+  basis, so the effect sits below the resolution of a one-seed 500-update screen.
+  This differs from the differential-attention packet, whose regressions were
+  about six times the threshold. Cost was negligible (`1.059x` latency, `1.001x`
+  peak allocation, `1.0008x` parameters), so the rejection concerns only the
+  absent gain, and the mechanism was verified active beforehand, so the null is
+  not an inert-wiring artifact. Two limitations are recorded: 500 updates is an
+  early-training screen and this project has already seen the radial trace
+  improve at 500 updates and lose at 2,000, and whether the zero-initialized
+  angular weights grew materially within 500 updates was not measured, so "too
+  few updates for a newly initialized path" is not excluded. The
+  `squared_incumbent` arm returned `0.6463378731`, bit-matching the
+  architecture-v3 screen's incumbent, so cross-packet strict determinism is
+  reproduced and effects of this size can be read at all.
+- The differential-attention packet was implemented and strict-CUDA screened on
+  2026-07-26 in 144.9 of 900 authorized GPU-wall seconds, and it closes a
+  direction. The motivating measurement, taken with the repository's own bounded
+  diagnostics on a 20-atom cached QM9 graph, is that the exact factorized global
+  kernel is numerically uniform: normalized entropy over `log N` is `0.999759`,
+  mean maximum weight is `1.05x` the uniform weight, column CV is `0.00253`, and
+  the selectivity-bearing alignment and quadratic terms span `4.9e-3` and
+  `1.6e-4` inside a kernel of `1.51..2.01`, so they are `0.3%` of it. Neither
+  the never-before-screened `inverse_graph_size` floor nor a tenfold larger
+  alignment initialization repairs this. Two opt-in interventions from the recent
+  attention literature were screened as a 2x2 factorial: differential attention,
+  which subtracts a second independently parameterized normalized global output
+  with a bounded per-head `lambda`, and a bounded per-head multiplicative gain
+  `2 sigmoid(W x)` on the global transport output. Both keep the exact
+  factorization, stay `O(N)` with no pair tensor, keep full `O(3)`, and are
+  initialized to the incumbent function exactly. Incumbent, differential,
+  output-gain, and combined validation MAEs were
+  `0.617117/0.741417/0.741077/0.650565 eV`. The hypothesis is falsified: the two
+  isolated interventions regressed by `0.124300` and `0.123960 eV`, about six
+  times the admission threshold, and the combination regressed `0.033448 eV`
+  with a large positive factorial interaction of `0.214811 eV` that must be read
+  as an interaction and not as evidence for either mechanism. Every resource
+  ceiling passed, so the rejection is on accuracy alone. Nothing is promoted and
+  no default changed. Evidence is in `artifacts/differential-attention-20260726/`.
+- The interventions were verified active before the screen rather than assumed:
+  at `lambda = 0.5` the trained per-head `lambda` held near `0.48..0.51` and the
+  across-node dispersion of the global scalar message rose from `0.0324` to
+  `0.0958`, a `2.96x` increase, while the exactly-incumbent `lambda = 0`
+  initialization left it inert at `+2%`. Making the global message node
+  dependent is therefore precisely what cost accuracy. Read together with the
+  registered transport study, where learned transport (`0.515688 eV`) barely
+  beat an exact uniform mean broadcast (`0.534776 eV`) and both far beat no
+  transport (`0.691821 eV`), the conclusion is that for QM9 `gap` the useful
+  content of the global path is the near-uniform graph mean: its uniformity is
+  desirable, not defective. This closes the "make global attention selective"
+  direction, which was the last untested structural explanation for the
+  private-EGNN gap, and it retrospectively explains the architecture-v2 and v3
+  rejections, since adding polynomial order to terms worth `0.3%` of a kernel
+  whose uniformity is wanted could not have helped. One oddity is recorded and
+  not interpreted: two structurally different perturbations landed within
+  `0.00034 eV` of each other, which the recorded pathwise pre-clip gradient
+  norms do not explain. Local attention, by contrast, is measurably selective
+  (entropy over log degree, mean `0.85`, minimum `0.67`), and every accepted gain
+  in this project's history came from the local path, so that is where the next
+  packet should spend capacity.
+- The receptive-field/radial-resolution packet was implemented and strict-CUDA
+  screened on 2026-07-25 in 171.6 of 900 authorized GPU-wall seconds. It split
+  two previously confounded factors of the local route at fixed features,
+  split, seed, optimizer, and one shared initial state: how much of the molecule
+  the local heads may see (`local_cutoff`), and how the radial basis distributes
+  resolution at that cutoff (the new opt-in `local_rbf_spacing="distance"`,
+  whose Gaussian centers are uniform in normalized radius instead of normalized
+  squared distance, still evaluated as a square-root-free polynomial of the
+  coordinates with an unchanged parameter schema). Incumbent, distance-spacing,
+  5.0-Angstrom, and 5.0-Angstrom-plus-distance validation MAEs were
+  `0.646338/0.617117/0.796026/0.804809 eV`. Only distance spacing at the
+  incumbent 2.5-Angstrom cutoff passed the frozen gate, improving `0.029220 eV`
+  at `0.969x` median train-step latency and `1.000x` peak allocation. The
+  receptive-field half of the hypothesis is falsified: raising the cutoff lifted
+  same-molecule pair coverage from `0.418` to `0.941` but cost about `0.15 eV`
+  and `1.445x` peak allocation, so local coverage is not the binding constraint
+  at this budget. The incumbent value reproduced the architecture-v3 screen's
+  incumbent exactly. The gain mechanism is not the predicted one: at
+  `R_c = 2.5` the distance basis is slightly coarser near `1.5 Angstrom`
+  (radius-space FWHM `0.418` versus `0.342`), so it is not finer covalent
+  resolution and remains unexplained. Clipping stayed above `0.90` in every arm.
+  No test labels were evaluated, no default changed, and the arm remains opt-in
+  pending multi-seed confirmation under a separate packet. Evidence is in
+  `artifacts/receptive-field-20260725/`.
+- The same screen fixed a control defect rather than an architecture: the
+  private static EGNN had been consuming the complete same-graph edge list while
+  the attention arms' local heads saw only candidates inside `local_cutoff`. The
+  harness now accepts a matched cutoff for the EGNN arm together with
+  `--precompute-local-edges` and rejects a cutoff that would be inert. At 500
+  updates the EGNN reached `0.718055 eV` on complete edges versus
+  `0.740313 eV` on the matched 5.0-Angstrom candidates, so earlier QM9
+  EGNN-versus-attention numbers included a topology advantage of about
+  `0.022258 eV`. Both EGNN arms ran at 500 updates and are therefore not
+  comparable to the historical five-seed 2,000-update EGNN mean of
+  `0.408932 eV`; this revises how those numbers may be read and is not an
+  accuracy claim for either family.
 - Architecture-v3 was confirmed, implemented, and strict-CUDA screened on
   2026-07-25. It deliberately does not repeat the rejected
   bounded-content/persistent-`2e` architecture-v2 package. The opt-in v3

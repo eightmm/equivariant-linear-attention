@@ -392,6 +392,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--local-cutoff", type=float, default=2.5)
     parser.add_argument("--num-rbf", type=int, default=16)
+    parser.add_argument(
+        "--local-rbf-spacing",
+        choices=["squared", "distance"],
+        default="squared",
+        help=(
+            "place local Gaussian centers uniformly in the normalized squared "
+            "distance (incumbent) or uniformly in normalized radius"
+        ),
+    )
     parser.add_argument("--learn-local-radial-gate", action="store_true")
     parser.add_argument("--pairwise-local-content", action="store_true")
     parser.add_argument("--pairwise-residual-scale-init", type=float, default=0.1)
@@ -498,8 +507,8 @@ def _build_benchmark_model(
             "num_heads": 4,
             "linear_kernel_init": 0.05,
             "kernel_floor_mode": "fixed",
-            "local_cutoff": 2.5,
             "num_rbf": 16,
+            "local_rbf_spacing": "squared",
             "memory_count": 1,
             "memory_interaction": False,
             "memory_assignment_temperature": 1.0,
@@ -540,6 +549,16 @@ def _build_benchmark_model(
                 "factorized-attention controls cannot be set for the internal "
                 f"EGNN baseline: {names}"
             )
+        # The cutoff is the EGNN arm's candidate topology only when the radius
+        # candidates are precomputed; otherwise it receives the complete
+        # same-graph edge list and the cutoff would be silently inert.
+        if args.local_cutoff != 2.5 and not args.precompute_local_edges:
+            raise ValueError(
+                "local_cutoff selects the internal EGNN baseline's candidates "
+                "only together with --precompute-local-edges; without it the "
+                "baseline consumes the complete same-graph edge list and the "
+                "cutoff would be inert"
+            )
         baseline = (
             _DynamicEGNNBaseline
             if args.benchmark_model == "internal_dynamic_egnn_baseline"
@@ -570,6 +589,7 @@ def _build_benchmark_model(
         global_transport_mode=args.global_transport_mode,
         local_cutoff=args.local_cutoff,
         num_rbf=args.num_rbf,
+        local_rbf_spacing=args.local_rbf_spacing,
         learn_local_radial_gate=args.learn_local_radial_gate,
         use_pairwise_local_content=args.pairwise_local_content,
         pairwise_residual_scale_init=args.pairwise_residual_scale_init,
@@ -1885,6 +1905,11 @@ def _run_config(
                 else "same_graph_directed_complete_without_self"
             ),
             "precompute_local_edges": args.precompute_local_edges,
+            "local_cutoff": (
+                args.local_cutoff
+                if args.precompute_local_edges
+                else "not_applicable"
+            ),
             "distance_feature": "raw_squared_distance",
             "edge_gate": "learned_sigmoid",
             "aggregation": "sum",
@@ -2034,7 +2059,18 @@ def _run_config(
         "global_key_balancing": global_key_balancing,
         "local_head_counts": list(local_head_counts),
         "local_cutoff": args.local_cutoff,
+        "edge_topology": (
+            "precomputed_radius_candidates_with_self"
+            if args.precompute_local_edges
+            else "same_graph_directed_complete_candidates_with_self"
+        ),
         "num_rbf": args.num_rbf,
+        "local_rbf_spacing": args.local_rbf_spacing,
+        "local_rbf_center_variable": (
+            "normalized_radius"
+            if args.local_rbf_spacing == "distance"
+            else "normalized_squared_distance"
+        ),
         "learn_local_radial_gate": args.learn_local_radial_gate,
         "edge_conditioned_local_transport": (args.edge_conditioned_local_transport),
         "edge_conditioned_local_aggregation": (
