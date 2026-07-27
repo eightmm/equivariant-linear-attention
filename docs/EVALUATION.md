@@ -648,3 +648,42 @@ also means the split is not a pristine confirmatory holdout. A five-seed,
 10,000-step test comparison is a separate approval gate after architecture
 lock. No non-default route, memory count, radial trace, or floor mode is promoted
 without the registered experiment evidence.
+
+## Static Cartesian CTP-LGL outcome (completed 2026-07-27)
+
+The opt-in CTP packet added native Cartesian `2e x 1o -> 1o`,
+`2e x 0e -> 2e`, and `1o x 1o -> 2e` paths to the gated LGL local stage.
+Focused full-`O(3)`, translation, permutation, edge-order, batch, cutoff,
+compatibility, and gradient checks passed. On an isolated real-LBA batch its
+parameter, synchronized train-step, and peak-allocation ratios to the current
+candidate were `1.00157x`, `1.13421x`, and `1.15046x`, passing the frozen
+resource ceilings.
+
+The fixed seeds 41--43 official ID30 validation comparison used 35 epochs per
+arm and one shared 32,303,245-edge topology. Current candidate,
+persistent-`2e`-only, and CTP mean best RMSEs were
+`1.580164/1.601467/1.590217 pK`. CTP beat the persistent-only control in all
+three seeds by `0.011251 pK` on average, showing that the new interaction was
+active and useful relative to tensor storage alone. It nevertheless regressed
+the current candidate by `0.010053 pK` and won `0/3` paired seeds. The
+preregistered primary mean-gain and paired-win criteria failed, so CTP remains
+opt-in and no default or arbitrary-irrep claim is made. Test was not evaluated.
+See `docs/CTP_LGL_20260727.md`.
+
+## Sparse geometry-aware O(3)/SE(3) outcome (completed 2026-07-27)
+
+The optional geometry path reuses pair-conditioned local `1o/2e` moments in a
+sparse invariant attention score. The common path passed full O(3),
+translation, permutation, edge-order, cutoff, compatibility, and gradient
+checks. The SE(3)-only axial `2e x 2e -> l=1` lane passed proper-rotation
+checks and showed the expected different reflection parity.
+
+On the full official ID30 train/validation split at seed 41 and 20 fixed
+epochs, current/O(3)/SE(3) best validation RMSEs were
+`1.602722/1.606076/1.610371 pK`. The corresponding end-to-end median
+train-step ratios were `1.000/1.180/1.202x`, with peak-allocation ratios
+`1.000/1.157/1.164x`. The axial gate received a finite nonzero real-batch
+gradient, but its clipped L2 norm was only `4.45e-10`. Neither geometry arm
+improved validation accuracy, so both remain opt-in and defaults are
+unchanged. Test was not evaluated. See
+`docs/GEOMETRY_AWARE_SE3_20260727.md`.

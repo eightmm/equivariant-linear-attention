@@ -56,6 +56,13 @@ def build_regression_model(
     checkpoint_gated_local_mlp: bool = False,
     # Appended so existing positional calls keep their meaning.
     local_rbf_spacing: str = "squared",
+    use_cartesian_tensor_product_local_transport: bool = False,
+    use_static_tensor_carrier: bool = False,
+    cartesian_tensor_product_local_layers: tuple[int, ...] | None = None,
+    symmetry_group: str = "O3",
+    use_geometry_aware_local_attention: bool = False,
+    use_se3_axial_tensor_product: bool = False,
+    geometry_aware_local_layers: tuple[int, ...] | None = None,
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -99,6 +106,19 @@ def build_regression_model(
             quartic_kernel_init=quartic_kernel_init,
             quartic_kernel_max=quartic_kernel_max,
             checkpoint_gated_local_mlp=checkpoint_gated_local_mlp,
+            use_cartesian_tensor_product_local_transport=(
+                use_cartesian_tensor_product_local_transport
+            ),
+            use_static_tensor_carrier=use_static_tensor_carrier,
+            cartesian_tensor_product_local_layers=(
+                cartesian_tensor_product_local_layers
+            ),
+            symmetry_group=symmetry_group,
+            use_geometry_aware_local_attention=(
+                use_geometry_aware_local_attention
+            ),
+            use_se3_axial_tensor_product=use_se3_axial_tensor_product,
+            geometry_aware_local_layers=geometry_aware_local_layers,
             readout_mode=readout_mode,
             scalar_content_mode=scalar_content_mode,
             use_tensor_product_kernel=use_tensor_product_kernel,

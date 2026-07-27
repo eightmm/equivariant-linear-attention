@@ -94,6 +94,8 @@ def run_train_step_profile(
 ) -> dict[str, Any]:
     if model_name not in {
         "gated_static",
+        "persistent_2e_static",
+        "ctp_static",
         "spatial_static",
         "spatial_dynamic",
         "static_egnn",
@@ -118,7 +120,12 @@ def run_train_step_profile(
     )
     edge_index = None
     edge_hash = None
-    if model_name in {"gated_static", "static_egnn"}:
+    if model_name in {
+        "gated_static",
+        "persistent_2e_static",
+        "ctp_static",
+        "static_egnn",
+    }:
         edge_index = SCALING["seeded_exact_edge_index"](
             num_nodes,
             edge_multiplier=edge_multiplier,
@@ -239,6 +246,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--model",
         choices=[
             "gated_static",
+            "persistent_2e_static",
+            "ctp_static",
             "spatial_static",
             "spatial_dynamic",
             "static_egnn",

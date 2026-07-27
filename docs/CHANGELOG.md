@@ -10,6 +10,28 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.15 -> v0.16 (2026-07-27) — add selectable O(3)/SE(3) symmetry,
+  sparse local `0e/1o/2e` score refinement, static per-layer scheduling, and
+  an SE(3)-only axial `2e x 2e -> l=1` value. impact: the path remains
+  `O(E)` with no dense pair tensor and passes its symmetry/gradient contracts,
+  but seed-41 LBA RMSE regressed by `0.003354/0.007649 pK` for O(3)/SE(3), so
+  it remains opt-in.
+- [eval] v0.9 -> v0.10 (2026-07-27) — add real-LBA train-step profiling and a
+  matched 20-epoch candidate/O(3)/SE(3) ID30 validation screen. impact:
+  end-to-end latency rose `1.180/1.202x`, peak allocation rose
+  `1.157/1.164x`, and no accuracy gate passed; test stayed inaccessible.
+- [model] v0.14 -> v0.15 (2026-07-27) — add opt-in statically compiled native
+  Cartesian `2e x 1o -> 1o`, `2e x 0e -> 2e`, and `1o x 1o -> 2e` gated local
+  paths, a compact local-only tensor carrier, and per-local-stage CTP
+  scheduling. impact: O(3)/translation/permutation/gradient and real-LBA
+  resource gates passed, but the three-seed ID30 arm regressed the current
+  candidate by `0.010053 pK` on average with `0/3` wins, so the feature remains
+  opt-in and defaults are unchanged.
+- [eval] v0.8 -> v0.9 (2026-07-27) — add one-topology three-arm CTP LBA screen,
+  isolated-process resource merge, and fixed seeds 41--43 confirmation.
+  impact: CTP improved the persistent-`2e` control by `0.011251 pK` but failed
+  the preregistered current-candidate promotion rule; no test labels were
+  evaluated.
 - [eval] v0.7 -> v0.8 (2026-07-24) — add a test-inadmissible official
   ATOM3D-LBA ID30 train/validation loader, full early-stopped training runner,
   portable best/last checkpoints, correlation metrics, per-complex

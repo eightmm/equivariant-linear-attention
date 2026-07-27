@@ -129,6 +129,22 @@ topology, split, arm, finiteness, source, and no-test provenance checks; reused
 wall time remains charged to the packet budget. See
 `docs/LBA_MULTISEED_CONFIRMATION_20260727.md`.
 
+The static Cartesian tensor-product comparison uses:
+
+```bash
+uv run --locked python -u scripts/run_ctp_lba_confirmation.py \
+  artifacts/ctp-lgl-20260727/lba-confirmation-seeds41-43 \
+  --device cuda --budget-seconds 2800 \
+  --resource-profile \
+  artifacts/ctp-lgl-20260727/lba-resource-profile-isolated-final.json
+```
+
+It materializes and hashes the official ID30 topology once, then reuses it for
+the current candidate, persistent-`2e` control, and CTP arm at seeds 41--43.
+All arms receive 35 epochs at batch size 24, and the runner exposes no test
+option. The CTP arm passed the resource gate but failed the preregistered
+accuracy promotion; see `docs/CTP_LGL_20260727.md`.
+
 For memory-limited candidate/v3 training, add
 `--checkpoint-gated-local-mlp`. It recomputes the latter gated edge-MLP
 segment during backward and does not alter parameters or equations. On one
@@ -156,3 +172,21 @@ unclipped arm passed that exploratory screen, but no default change is allowed
 until the topology distance/tie contract is made cross-run deterministic and a
 new paired multi-seed confirmation passes. See
 `docs/LBA_GRADIENT_CLIPPING_20260727.md`.
+
+The geometry-aware symmetry comparison is:
+
+```bash
+uv run python -u scripts/train_lba_id30.py \
+  artifacts/geometry-aware-20260727/lba-screen-seed41 \
+  --device cuda --arms candidate geometry_o3 geometry_se3 \
+  --batch-size 24 --max-epochs 20 --min-epochs 20 --patience 20 \
+  --warmup-epochs 3 --model-seed 41 --order-seed 71 \
+  --budget-seconds 900
+```
+
+The two geometry arms use the same gated-plus-grouped candidate, shared input
+features/topology/batches, and geometry refinement only in local layer 0.
+`geometry_o3` retains full reflection covariance; `geometry_se3` adds the
+SE(3)-only axial tensor product. The completed run rejected both accuracy
+promotions and never exposed a test-evaluation option. See
+`docs/GEOMETRY_AWARE_SE3_20260727.md`.

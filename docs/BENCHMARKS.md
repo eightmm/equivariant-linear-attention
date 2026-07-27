@@ -666,3 +666,45 @@ default. The packet also found a one-edge topology-hash drift relative to the
 preceding LBA study. It does not confound the within-packet comparison, but the
 distance/tied-neighbour contract must be made cross-run deterministic before a
 multi-seed confirmation. See `docs/LBA_GRADIENT_CLIPPING_20260727.md`.
+
+## Static Cartesian CTP-LGL result (2026-07-27)
+
+The CTP packet compared the current scalar/vector candidate, a
+persistent-`2e`-only attribution control, and the same control with statically
+compiled local tensor products. Seeds 41--43 used the same 3,507 ID30 train
+complexes, 466 validation complexes, 35 epochs, batch size 24, and one shared
+32,303,245-edge topology. Test remained inaccessible.
+
+| arm | mean best validation RMSE (pK) | sample SD |
+|---|---:|---:|
+| current candidate | **1.580164** | 0.004610 |
+| persistent `2e` only | 1.601467 | 0.006722 |
+| persistent `2e` + CTP | 1.590217 | **0.001396** |
+
+CTP improved the persistent-only control in all three seeds by
+`0.010972/0.004127/0.018653 pK` (mean `0.011251`). It nevertheless lost to the
+current candidate in all three by `0.006693/0.008148/0.015318 pK` (mean
+regression `0.010053`), so the frozen `>=0.020 pK` mean-gain and `>=2/3` win
+criteria failed.
+
+On the isolated fresh-process real-batch profile (7,378 nodes, 153,029 edges),
+CTP/candidate parameter, median synchronized train-step, and peak-allocation
+ratios were `1.00157x`, `1.13421x`, and `1.15046x`; every `1.10/1.25/1.25`
+resource ceiling passed. The result supports the implemented mathematical and
+systems capability, not default promotion or general-irrep superiority. Full
+provenance is in `docs/CTP_LGL_20260727.md`.
+
+## Sparse geometry-aware O(3)/SE(3) result (2026-07-27)
+
+On a cached real LBA train batch with 7,378 nodes and 153,029 retained edges,
+the geometry O(3)/SE(3) parameter ratios to the current candidate were
+`1.00460/1.00479x`. Isolated synchronized train-step ratios were
+`1.443/1.480x`, and timed peak-allocation ratios were `1.154/1.163x`.
+The extra cost comes from one receiver sparse-softmax and attended reduction
+in local layer 0; no dense pair tensor or triangle enumeration is present.
+
+The complete 20-epoch ID30 training loop amortized the overhead to
+`1.180/1.202x` median step and `1.157/1.164x` peak allocation. Validation RMSE
+did not improve (`1.602722` current, `1.606076` O(3), `1.610371` SE(3)), so
+resource overhead cannot be justified as a new default. Full workload and
+symmetry details are in `docs/GEOMETRY_AWARE_SE3_20260727.md`.

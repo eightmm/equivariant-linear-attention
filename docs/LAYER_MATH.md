@@ -568,6 +568,60 @@ unchanged. Because the registered experiment tested gated-only and
 gated-plus-grouped but not grouped-only, its performance supports the combined
 package and does not identify either component as sufficient by itself.
 
+### Static Cartesian tensor-product local transport
+
+When persistent `2e` state is present, the opt-in CTP branch projects the
+node tensor once into head layout. For normalized edge displacement
+`d_ij=(x_j-x_i)/R_c`, define the symmetric-traceless edge quadrupole
+
+```text
+Q_ij = ST(d_ij outer d_ij).
+```
+
+The branch conditions its invariant gates on
+
+```text
+chi_ijh = [
+    <T_ih,T_jh>_F,
+    <T_ih,Q_ij>_F,
+    <T_jh,Q_ij>_F,
+    ||T_ih||_F^2,
+    ||T_jh||_F^2
+].
+```
+
+It reuses the incumbent edge latent and adds a channel-only projection of
+`chi`; learned Cartesian parameters are never introduced. Three bounded
+scalar gates multiply the native Cartesian bases
+
+```text
+b^v_ijh = T_jh d_ij,                  # 2e x 1o -> 1o
+b^T0_ijh = T_jh,                      # 2e x 0e -> 2e
+b^T1_ijh = ST(v_jh outer d_ij).       # 1o x 1o -> 2e
+```
+
+These values are added to the incumbent vector and tensor edge messages before
+the same smooth-cutoff receiver reduction:
+
+```text
+m_ih = sum_j f_c(u_ij) message_ijh / sqrt(1 + sum_j f_c(u_ij)).
+```
+
+For any `R in O(3)`, `v,d -> Rv,Rd` and `T,Q -> R T R^T`.
+Consequently every entry of `chi` is invariant, `T d` is polar `1o`, and both
+tensor bases transform as reflection-even `2e`. Relative displacement gives
+translation invariance; shared gates and receiver sums give edge-order and
+node-permutation consistency. The final gate projection is initialized to
+zero, which makes the first enabled forward exactly equal to the corresponding
+persistent-`2e` control.
+
+At fixed multiplicities, node projection is `O(N)` and the three contractions
+are `O(E)` without an `N x N` pair tensor or neighbor triplets. The admitted
+LBA specialization stores one compact `2e` tensor per head, carries it
+unchanged through the global stage, and enables the full CTP path only in the
+last local stage. This is not a general spherical-harmonic or arbitrary-`l`
+tensor-product engine.
+
 The opt-in pairwise-content repair leaves those equivariant moments unchanged
 and adds one invariant scalar message. Let `qbar_ih` and `kbar_jh` be the raw
 scalar query/key projections before positive-feature normalization, and let
@@ -772,13 +826,53 @@ can still collapse on identical or symmetric inputs. No learned Cartesian
 centers, learned coupling, hard top-k, persistent tensor memory, or higher
 angular-order claim is included.
 
+## Sparse geometry-aware O(3)/SE(3) refinement
+
+For a gated local layer, let `m^v_i`, `m^r_i`, and `m^T_i` be its incumbent
+cutoff-weighted, receiver-normalized vector, relative-vector, and
+symmetric-traceless aggregates. The opt-in refinement reuses them:
+
+```text
+v*_i = v_i + m^v_i + m^r_i,
+T*_i = m^T_i (+ T_i when a persistent tensor carrier exists).
+```
+
+Invariant scalar gates produce bounded `q1,k1` from `v*` and bounded `q2,k2`
+from `T*`. For retained nonself edges,
+
+```text
+ell_ijh =
+    a0_h b_pair(h_ijh)
+  + a1_h <q1_ih,k1_jh>
+  + a2_h <q2_ih,k2_jh>_F,
+alpha_ijh = receiver_softmax_j(5 tanh(ell_ijh/5), cutoff_ij).
+```
+
+All three score lanes are O(3)-invariant. The values form sparse scalar,
+sender-vector, relative-vector, and `2e` sums, so fixed-width storage and work
+are `O(E)`. The exact factorized global equations are unchanged.
+
+When the declared symmetry is only SE(3), an additional value is legal:
+
+```text
+a_ijh = vee(T*_jh Q_ij - Q_ij T*_jh),
+Q_ij = ST(d_ij d_ij^T).
+```
+
+This transforms as `Ra` for `det(R)=+1`, but picks up the axial parity under a
+reflection. It is therefore excluded from the O(3) path and must not be
+described as polar `1o` there.
+
 ## Equivariance
 
 For `R in O(3)` and translation `t`, centered coordinates satisfy
 `x'_i = R x_i`. Scalar contractions are unchanged, vectors transform as `Rv`,
 and rank-2 tensors transform as `R T R^T`. Graph sums and channel mixing commute
-with these transformations. Therefore every block is O(3)-equivariant and
-translation invariant; graph-wise sums also commute with node permutations.
+with these transformations. Therefore the default path is O(3)-equivariant
+and translation invariant; graph-wise sums also commute with node
+permutations. The optional axial tensor-product path contracts only SE(3):
+proper rotations and translations remain equivariant, while reflection
+covariance is intentionally not required.
 
 ## Numerical policy and complexity
 

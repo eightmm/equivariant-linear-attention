@@ -21,6 +21,7 @@ _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 _COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
 _LOCAL_RBF_SPACINGS = frozenset({"squared", "distance"})
 _READOUT_MODES = frozenset({"interaction", "mean", "sum"})
+_SYMMETRY_GROUPS = frozenset({"O3", "SE3"})
 
 
 @dataclass(frozen=True)
@@ -197,10 +198,32 @@ class EquivariantAttentionConfig:
     checkpoint_gated_local_mlp: bool = False
     # Appended so existing positional construction keeps its meaning.
     local_rbf_spacing: str = "squared"
+    use_cartesian_tensor_product_local_transport: bool = False
+    use_static_tensor_carrier: bool = False
+    cartesian_tensor_product_local_layers: tuple[int, ...] | None = None
+    symmetry_group: str = "O3"
+    use_geometry_aware_local_attention: bool = False
+    use_se3_axial_tensor_product: bool = False
+    geometry_aware_local_layers: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True)
+class _CartesianTensorProductPath:
+    name: str
+    input_irrep: str
+    geometry_irrep: str
+    output_irrep: str
+
+
+_CARTESIAN_TENSOR_PRODUCT_LOCAL_PATHS = (
+    _CartesianTensorProductPath("tensor_direction", "2e", "1o", "1o"),
+    _CartesianTensorProductPath("tensor_passthrough", "2e", "0e", "2e"),
+    _CartesianTensorProductPath("vector_direction", "1o", "1o", "2e"),
+)
 
 
 class EquivariantAttention(nn.Module):
-    """O(3)-equivariant local/global attention with exact factorized moments."""
+    """O(3)/SE(3)-equivariant attention with exact factorized global moments."""
 
     attention_kind = "factorized_moment"
     symmetry = "O3"
@@ -216,9 +239,28 @@ class EquivariantAttention(nn.Module):
                 stacklevel=2,
             )
         self.config = config
+        self.symmetry = config.symmetry_group
         self.hidden_irreps = CartesianIrreps.parse(config.hidden_irreps)
         self.output_irreps = CartesianIrreps.parse(config.output_irreps)
         local_head_counts = config.local_head_counts or (0,) * config.num_layers
+        tensor_product_local_layers = (
+            tuple(
+                layer_index
+                for layer_index, local_heads in enumerate(local_head_counts)
+                if local_heads
+            )
+            if config.cartesian_tensor_product_local_layers is None
+            else config.cartesian_tensor_product_local_layers
+        )
+        geometry_aware_local_layers = (
+            tuple(
+                layer_index
+                for layer_index, local_heads in enumerate(local_head_counts)
+                if local_heads
+            )
+            if config.geometry_aware_local_layers is None
+            else config.geometry_aware_local_layers
+        )
         if config.use_edge_conditioned_local_transport:
             if self.hidden_irreps.vectors != config.num_heads:
                 raise ValueError(
@@ -305,6 +347,19 @@ class EquivariantAttention(nn.Module):
                     quartic_kernel_init=config.quartic_kernel_init,
                     quartic_kernel_max=config.quartic_kernel_max,
                     checkpoint_gated_local_mlp=config.checkpoint_gated_local_mlp,
+                    use_cartesian_tensor_product_local_transport=(
+                        config.use_cartesian_tensor_product_local_transport
+                        and layer_index in tensor_product_local_layers
+                    ),
+                    use_geometry_aware_local_attention=(
+                        config.use_geometry_aware_local_attention
+                        and layer_index in geometry_aware_local_layers
+                    ),
+                    use_se3_axial_tensor_product=(
+                        config.use_se3_axial_tensor_product
+                        and layer_index in geometry_aware_local_layers
+                    ),
+                    use_static_tensor_carrier=config.use_static_tensor_carrier,
                     scalar_content_mode=config.scalar_content_mode,
                     use_tensor_product_kernel=config.use_tensor_product_kernel,
                     tensor_kernel_init=config.tensor_kernel_init,
@@ -829,6 +884,10 @@ class _EquivariantMomentLayer(nn.Module):
         quartic_kernel_init: float,
         quartic_kernel_max: float,
         checkpoint_gated_local_mlp: bool,
+        use_cartesian_tensor_product_local_transport: bool,
+        use_geometry_aware_local_attention: bool,
+        use_se3_axial_tensor_product: bool,
+        use_static_tensor_carrier: bool,
         scalar_content_mode: str,
         use_tensor_product_kernel: bool,
         tensor_kernel_init: float,
@@ -880,6 +939,7 @@ class _EquivariantMomentLayer(nn.Module):
         self.memory_assignment_scale = memory_assignment_scale
         self.memory_interaction_cutoff = memory_interaction_cutoff
         self.use_radial_trace = use_radial_trace
+        self.use_static_tensor_carrier = use_static_tensor_carrier
         self.scalar_content_mode = scalar_content_mode
         self.tensor_kernel_max = tensor_kernel_max
         self.angular_feature_rank = angular_feature_rank
@@ -910,10 +970,19 @@ class _EquivariantMomentLayer(nn.Module):
                 self.gated_local = _GatedEquivariantLocalTransport(
                     scalars=scalars,
                     vectors=vectors,
+                    tensors=tensors,
                     num_heads=local_head_count,
                     num_rbf=num_rbf,
                     eps=eps,
                     checkpoint_mlp=checkpoint_gated_local_mlp,
+                    use_cartesian_tensor_product_local_transport=(
+                        use_cartesian_tensor_product_local_transport
+                    ),
+                    use_geometry_aware_local_attention=(
+                        use_geometry_aware_local_attention
+                    ),
+                    use_se3_axial_tensor_product=use_se3_axial_tensor_product,
+                    residual_scale_init=residual_scale_init,
                 )
 
         self.norm = nn.LayerNorm(scalars)
@@ -995,16 +1064,28 @@ class _EquivariantMomentLayer(nn.Module):
         self.tensor_mix = nn.Parameter(torch.full((num_heads,), 0.1))
         self.vector_update = _ChannelMix(num_heads, vectors)
         self.persistent_tensor_to_head = (
-            _ChannelMix(tensors, num_heads) if tensors else None
+            _ChannelMix(tensors, num_heads)
+            if tensors and not use_static_tensor_carrier
+            else None
         )
         self.persistent_tensor_from_head = (
-            _ChannelMix(num_heads, tensors) if tensors else None
+            _ChannelMix(num_heads, tensors)
+            if tensors and not use_static_tensor_carrier
+            else None
         )
-        self.persistent_tensor_gate = nn.Linear(scalars, tensors) if tensors else None
+        self.persistent_tensor_gate = (
+            nn.Linear(scalars, tensors)
+            if tensors and not use_static_tensor_carrier
+            else None
+        )
         self.persistent_tensor_residual_scale = (
             nn.Parameter(torch.tensor(float(residual_scale_init))) if tensors else None
         )
-        invariant_dim = scalars + 6 * num_heads + tensors
+        invariant_dim = (
+            scalars
+            + 6 * num_heads
+            + (0 if use_static_tensor_carrier else tensors)
+        )
         self.use_grouped_invariant_normalization = use_grouped_invariant_normalization
         self.scalar_update_norm = nn.LayerNorm(invariant_dim)
         self.scalar_update = nn.Sequential(
@@ -1020,15 +1101,24 @@ class _EquivariantMomentLayer(nn.Module):
         )
         ffn_hidden = 2 * scalars
         self.ffn_norm = nn.LayerNorm(scalars)
-        self.ffn_in = nn.Linear(scalars + vectors + tensors, 2 * ffn_hidden)
+        self.ffn_in = nn.Linear(
+            scalars
+            + vectors
+            + (0 if use_static_tensor_carrier else tensors),
+            2 * ffn_hidden,
+        )
         self.ffn_out = nn.Linear(ffn_hidden, scalars)
         self.ffn_vector_gate = nn.Linear(scalars, vectors)
         self.ffn_vector_mix = _ChannelMix(vectors, vectors)
         self.persistent_tensor_ffn_gate = (
-            nn.Linear(scalars, tensors) if tensors else None
+            nn.Linear(scalars, tensors)
+            if tensors and not use_static_tensor_carrier
+            else None
         )
         self.persistent_tensor_ffn_mix = (
-            _ChannelMix(tensors, tensors) if tensors else None
+            _ChannelMix(tensors, tensors)
+            if tensors and not use_static_tensor_carrier
+            else None
         )
         self.ffn_scalar_residual_scale = nn.Parameter(
             torch.tensor(float(residual_scale_init))
@@ -1087,8 +1177,20 @@ class _EquivariantMomentLayer(nn.Module):
             self._normalize_non_scalars(vectors, persistent_tensor)
         )
         bounded_vectors = _bounded_irrep(normalized_vectors, self.eps)
-        bounded_persistent_tensor = _bounded_st_tensor(
-            normalized_persistent_tensor
+        static_carrier_active = (
+            self.use_static_tensor_carrier and self.local_head_count > 0
+        )
+        bounded_persistent_tensor = (
+            _bounded_st_tensor(normalized_persistent_tensor)
+            if not self.use_static_tensor_carrier or static_carrier_active
+            else normalized_persistent_tensor
+        )
+        persistent_tensor_heads = (
+            bounded_persistent_tensor
+            if static_carrier_active
+            else self.persistent_tensor_to_head(bounded_persistent_tensor)
+            if self.persistent_tensor_to_head is not None
+            else None
         )
         n_nodes = scalars.shape[0]
 
@@ -1118,6 +1220,7 @@ class _EquivariantMomentLayer(nn.Module):
                     bounded_vectors,
                     local_geometry,
                     num_nodes=n_nodes,
+                    persistent_tensor=persistent_tensor_heads,
                 )
             )
             moment_dtype = _moment_dtype(q1_kernel, raw_pos)
@@ -1229,6 +1332,7 @@ class _EquivariantMomentLayer(nn.Module):
                         bounded_vectors,
                         local_geometry,
                         num_nodes=n_nodes,
+                        persistent_tensor=persistent_tensor_heads,
                     )
                 elif self.edge_conditioned_local is not None:
                     if local_geometry is None:
@@ -1380,10 +1484,10 @@ class _EquivariantMomentLayer(nn.Module):
         scalar_message = scalar_message.reshape(n_nodes, self.scalars)
         moment_q1 = q1.to(dtype=moment_dtype)
         tensor_context = tensor
-        if self.persistent_tensor_to_head is not None:
-            tensor_context = tensor_context + self.persistent_tensor_to_head(
-                bounded_persistent_tensor
-            ).to(dtype=moment_dtype)
+        if persistent_tensor_heads is not None:
+            tensor_context = tensor_context + persistent_tensor_heads.to(
+                dtype=moment_dtype
+            )
         tensor_vector = _st_matrix_vector(tensor_context, moment_q1)
         query_base_dot = (moment_q1 * vector_base).sum(dim=-1)
         query_relative_dot = (moment_q1 * relative).sum(dim=-1)
@@ -1406,7 +1510,9 @@ class _EquivariantMomentLayer(nn.Module):
             radial_trace,
         ]
         persistent_invariants = (
-            _st_frobenius_square(bounded_persistent_tensor) if self.tensors else None
+            _st_frobenius_square(bounded_persistent_tensor)
+            if self.tensors and not self.use_static_tensor_carrier
+            else None
         )
         if self.use_grouped_invariant_normalization:
             scalar_message = _stable_group_norm(scalar_message)
@@ -1427,7 +1533,15 @@ class _EquivariantMomentLayer(nn.Module):
         scalars = scalars + self.scalar_residual_scale * scalar_delta
         bounded_delta = _bounded_irrep(vector_delta, self.eps).to(dtype=vectors.dtype)
         vectors = vectors + self.vector_residual_scale * bounded_delta
-        if self.persistent_tensor_from_head is not None:
+        if self.use_static_tensor_carrier:
+            if self.persistent_tensor_residual_scale is None:
+                raise RuntimeError("static persistent tensor update is incomplete")
+            if static_carrier_active:
+                persistent_tensor = persistent_tensor + (
+                    self.persistent_tensor_residual_scale
+                    * _bounded_st_tensor(tensor)
+                )
+        elif self.persistent_tensor_from_head is not None:
             if (
                 self.persistent_tensor_gate is None
                 or self.persistent_tensor_residual_scale is None
@@ -1528,7 +1642,7 @@ class _EquivariantMomentLayer(nn.Module):
                 persistent_tensor,
             )
         ffn_parts = [ffn_scalars, ffn_vectors.square().sum(dim=-1)]
-        if self.tensors:
+        if self.tensors and not self.use_static_tensor_carrier:
             ffn_parts.append(
                 _st_frobenius_square(_bounded_st_tensor(normalized_tensor)).to(
                     dtype=scalars.dtype
@@ -1666,6 +1780,165 @@ class _EdgeConditionedLocalTransport(nn.Module):
         return scalar_message, vector_base, relative, tensor, radial_trace
 
 
+class _SparseGeometryAwareLocalAttention(nn.Module):
+    """Sparse 0e/1o/2e score refinement with an optional SE(3) axial value."""
+
+    softclip_limit = 5.0
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        num_heads: int,
+        hidden_dim: int,
+        residual_scale_init: float,
+        eps: float,
+        use_se3_axial_tensor_product: bool,
+    ) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.eps = eps
+        self.edge_projection = nn.Linear(hidden_dim, head_dim + 4)
+        self.irrep_gates = nn.Linear(head_dim, 4)
+        self.score_mix = nn.Parameter(
+            torch.tensor([1.0, 0.5, 0.5]).repeat(num_heads, 1)
+        )
+        self.axial_gate = (
+            nn.Linear(hidden_dim, 1)
+            if use_se3_axial_tensor_product
+            else None
+        )
+        self.scalar_norm = nn.LayerNorm(head_dim)
+        self.residual_scale = nn.Parameter(
+            torch.full((num_heads,), float(residual_scale_init))
+        )
+
+    def forward(
+        self,
+        *,
+        scalar_heads: torch.Tensor,
+        vectors: torch.Tensor,
+        bootstrap_vector: torch.Tensor,
+        bootstrap_tensor: torch.Tensor,
+        persistent_tensor: torch.Tensor | None,
+        receiver: torch.Tensor,
+        sender: torch.Tensor,
+        edge_direction: torch.Tensor,
+        edge_tensor: torch.Tensor,
+        cutoff: torch.Tensor,
+        edge_latent: torch.Tensor,
+        num_nodes: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        dtype = _moment_dtype(
+            scalar_heads,
+            vectors,
+            edge_direction,
+            edge_tensor,
+        )
+        direction = edge_direction.to(dtype=dtype)
+        tensor_basis = edge_tensor.to(dtype=dtype)
+        cutoff = cutoff.to(dtype=dtype)
+        (
+            raw_pair_score,
+            scalar_value,
+            value_gates,
+        ) = torch.split(
+            self.edge_projection(edge_latent),
+            [1, scalar_heads.shape[-1], 3],
+            dim=-1,
+        )
+        vector_state = vectors.to(dtype=dtype) + bootstrap_vector.to(dtype=dtype)
+        tensor_state = bootstrap_tensor.to(dtype=dtype)
+        if persistent_tensor is not None:
+            tensor_state = tensor_state + persistent_tensor.to(dtype=dtype)
+        irrep_gates = torch.tanh(self.irrep_gates(scalar_heads)).to(dtype=dtype)
+        vector_query = _unit_ball(
+            vector_state
+            * irrep_gates[..., 0, None],
+            self.eps,
+        )
+        vector_key = _unit_ball(
+            vector_state
+            * irrep_gates[..., 1, None],
+            self.eps,
+        )
+        tensor_query = _bounded_st_tensor(
+            tensor_state
+            * irrep_gates[..., 2, None]
+        )
+        tensor_key = _bounded_st_tensor(
+            tensor_state
+            * irrep_gates[..., 3, None]
+        )
+        pair_score = raw_pair_score.squeeze(-1).to(dtype=dtype)
+        vector_score = (
+            vector_query[receiver] * vector_key[sender]
+        ).sum(dim=-1)
+        tensor_score = _st_frobenius_inner(
+            tensor_query[receiver],
+            tensor_key[sender],
+        )
+        score_components = torch.stack(
+            [pair_score, vector_score, tensor_score],
+            dim=-1,
+        )
+        score = (
+            score_components
+            * self.score_mix.to(dtype=dtype).unsqueeze(0)
+        ).sum(dim=-1)
+        attention = _receiver_softmax(
+            self._softclip(score),
+            receiver,
+            num_nodes=num_nodes,
+            mass=cutoff,
+        )
+
+        scalar_value = scalar_value.to(dtype=dtype)
+        value_gates = torch.tanh(value_gates).to(dtype=dtype)
+        sender_vector = vector_state[sender]
+        sender_tensor = tensor_state[sender]
+        edge_weight = attention.unsqueeze(-1) * cutoff[:, None, None]
+        vector_value = value_gates[..., 0, None] * sender_vector
+        if self.axial_gate is not None:
+            axial_value = _st_commutator_axial(sender_tensor, tensor_basis)
+            vector_value = vector_value + (
+                torch.tanh(self.axial_gate(edge_latent)).to(dtype=dtype)
+                * axial_value
+            )
+        scalar_message, vector_message, relative_message, tensor_message = (
+            _fused_index_sum(
+                receiver,
+                num_nodes,
+                edge_weight * scalar_value,
+                edge_weight * vector_value,
+                edge_weight
+                * value_gates[..., 1, None]
+                * direction,
+                edge_weight
+                * value_gates[..., 2, None]
+                * (sender_tensor + tensor_basis),
+            )
+        )
+        scalar_message = _stable_layer_norm(
+            self.scalar_norm,
+            scalar_message,
+        )
+        vector_message = _bounded_irrep(vector_message, self.eps)
+        relative_message = _bounded_irrep(relative_message, self.eps)
+        tensor_message = _bounded_st_tensor(tensor_message)
+        scale = self.residual_scale.to(dtype=dtype)[None, :, None]
+        return (
+            scale * scalar_message,
+            scale * vector_message,
+            scale * relative_message,
+            scale * tensor_message,
+        )
+
+    def _softclip(self, value: torch.Tensor) -> torch.Tensor:
+        limit = value.new_tensor(self.softclip_limit)
+        return limit * torch.tanh(value / limit)
+
+
 class _GatedEquivariantLocalTransport(nn.Module):
     """Same-feature nonlinear local transport with bounded-degree aggregation."""
 
@@ -1674,22 +1947,52 @@ class _GatedEquivariantLocalTransport(nn.Module):
         *,
         scalars: int,
         vectors: int,
+        tensors: int = 0,
         num_heads: int,
         num_rbf: int,
         eps: float = 1e-12,
         checkpoint_mlp: bool = False,
+        use_cartesian_tensor_product_local_transport: bool = False,
+        use_geometry_aware_local_attention: bool = False,
+        use_se3_axial_tensor_product: bool = False,
+        residual_scale_init: float = 0.1,
     ) -> None:
         super().__init__()
         if scalars % num_heads:
             raise ValueError("scalars must be divisible by num_heads")
         if vectors != num_heads:
             raise ValueError("gated local transport requires vectors == num_heads")
+        if not isinstance(use_cartesian_tensor_product_local_transport, bool):
+            raise TypeError(
+                "use_cartesian_tensor_product_local_transport must be a bool"
+            )
+        if use_cartesian_tensor_product_local_transport and tensors <= 0:
+            raise ValueError(
+                "Cartesian tensor-product local transport requires persistent 2e"
+            )
+        if not isinstance(use_geometry_aware_local_attention, bool):
+            raise TypeError("use_geometry_aware_local_attention must be a bool")
+        if not isinstance(use_se3_axial_tensor_product, bool):
+            raise TypeError("use_se3_axial_tensor_product must be a bool")
+        if (
+            use_se3_axial_tensor_product
+            and not use_geometry_aware_local_attention
+        ):
+            raise ValueError(
+                "SE(3) axial tensor product requires geometry-aware local attention"
+            )
         self.scalars = scalars
+        self.tensors = tensors
         self.num_heads = num_heads
         self.head_dim = scalars // num_heads
         self.num_rbf = num_rbf
         self.eps = eps
         self.checkpoint_mlp = checkpoint_mlp
+        self.tensor_product_paths = (
+            _CARTESIAN_TENSOR_PRODUCT_LOCAL_PATHS
+            if use_cartesian_tensor_product_local_transport
+            else ()
+        )
         hidden_dim = max(32, 2 * self.head_dim)
         edge_input_dim = 2 * self.head_dim + num_rbf + 5
         edge_output_dim = self.head_dim + 5
@@ -1702,6 +2005,33 @@ class _GatedEquivariantLocalTransport(nn.Module):
         )
         self.scalar_message_norm = nn.LayerNorm(self.head_dim)
         self.mass_projection = nn.Linear(2, scalars, bias=False)
+        self.tensor_product_gate: nn.Sequential | None = None
+        if use_cartesian_tensor_product_local_transport:
+            self.tensor_product_gate = nn.Sequential(
+                nn.Linear(5, hidden_dim, bias=False),
+                nn.SiLU(),
+                nn.Linear(
+                    hidden_dim,
+                    len(_CARTESIAN_TENSOR_PRODUCT_LOCAL_PATHS),
+                ),
+            )
+            output = self.tensor_product_gate[-1]
+            if not isinstance(output, nn.Linear):
+                raise RuntimeError("tensor-product gate layout is invalid")
+            nn.init.zeros_(output.weight)
+            nn.init.zeros_(output.bias)
+        self.geometry_attention = (
+            _SparseGeometryAwareLocalAttention(
+                head_dim=self.head_dim,
+                num_heads=num_heads,
+                hidden_dim=hidden_dim,
+                residual_scale_init=residual_scale_init,
+                eps=eps,
+                use_se3_axial_tensor_product=use_se3_axial_tensor_product,
+            )
+            if use_geometry_aware_local_attention
+            else None
+        )
 
     def forward(
         self,
@@ -1710,6 +2040,7 @@ class _GatedEquivariantLocalTransport(nn.Module):
         local_geometry: _LocalGeometryInput,
         *,
         num_nodes: int,
+        persistent_tensor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         receiver, sender, displacement, squared_distance, rbf = (
             _nonself_local_geometry(local_geometry)
@@ -1730,13 +2061,62 @@ class _GatedEquivariantLocalTransport(nn.Module):
             ],
             dim=-1,
         )
-        edge_output = self._factorized_edge_mlp(
+        tensor_features = _nonself_tensor_features(
+            local_geometry,
+            displacement,
+            dtype=dtype,
+        ).unsqueeze(1)
+        tensor_product_gates = None
+        edge_latent = None
+        tensor_invariants = None
+        receiver_tensor = None
+        sender_tensor = None
+        if self.tensor_product_gate is not None:
+            expected = (num_nodes, self.num_heads, 5)
+            if persistent_tensor is None or persistent_tensor.shape != expected:
+                raise ValueError(
+                    "persistent_tensor must have shape "
+                    f"({num_nodes}, {self.num_heads}, 5) for CTP local transport"
+                )
+            receiver_tensor = persistent_tensor[receiver].to(dtype=dtype)
+            sender_tensor = persistent_tensor[sender].to(dtype=dtype)
+            tensor_norm = _st_frobenius_square(
+                persistent_tensor.to(dtype=dtype)
+            )
+            tensor_invariants = torch.stack(
+                [
+                    _st_frobenius_inner(receiver_tensor, sender_tensor),
+                    _st_frobenius_inner(receiver_tensor, tensor_features),
+                    _st_frobenius_inner(sender_tensor, tensor_features),
+                    tensor_norm[receiver],
+                    tensor_norm[sender],
+                ],
+                dim=-1,
+            )
+        edge_result = self._factorized_edge_mlp(
             scalar_heads,
             receiver,
             sender,
             rbf.to(dtype=scalars.dtype),
             vector_invariants.to(dtype=scalars.dtype),
+            return_latent=(
+                self.tensor_product_gate is not None
+                or self.geometry_attention is not None
+            ),
         )
+        if isinstance(edge_result, tuple):
+            edge_output, edge_latent = edge_result
+            if self.tensor_product_gate is not None:
+                if tensor_invariants is None:
+                    raise RuntimeError("tensor-product invariants are missing")
+                tensor_product_gates = torch.tanh(
+                    self._shared_tensor_product_gate(
+                        edge_latent,
+                        tensor_invariants.to(dtype=scalars.dtype),
+                    )
+                ).to(dtype=dtype)
+        else:
+            edge_output = edge_result
         (
             scalar_edge,
             scalar_gate,
@@ -1756,6 +2136,30 @@ class _GatedEquivariantLocalTransport(nn.Module):
             dtype=dtype,
         )
         edge_weight = cutoff[:, None, None]
+        vector_edge_message = (
+            torch.tanh(receiver_gate).to(dtype=dtype) * receiver_vector
+            + torch.tanh(sender_gate).to(dtype=dtype) * sender_vector
+        )
+        tensor_edge_message = (
+            torch.tanh(tensor_gate).to(dtype=dtype) * tensor_features
+        )
+        if tensor_product_gates is not None:
+            if receiver_tensor is None or sender_tensor is None:
+                raise RuntimeError("tensor-product state projection is incomplete")
+            tensor_direction = _st_matrix_vector(sender_tensor, edge_direction)
+            vector_direction = _symmetric_traceless_cross_features(
+                sender_vector,
+                edge_direction,
+            )
+            vector_edge_message = (
+                vector_edge_message
+                + tensor_product_gates[..., 0, None] * tensor_direction
+            )
+            tensor_edge_message = (
+                tensor_edge_message
+                + tensor_product_gates[..., 1, None] * sender_tensor
+                + tensor_product_gates[..., 2, None] * vector_direction
+            )
         (
             scalar_message,
             vector_base,
@@ -1767,19 +2171,9 @@ class _GatedEquivariantLocalTransport(nn.Module):
             receiver,
             num_nodes,
             edge_weight * (scalar_edge * torch.sigmoid(scalar_gate)).to(dtype=dtype),
-            edge_weight
-            * (
-                torch.tanh(receiver_gate).to(dtype=dtype) * receiver_vector
-                + torch.tanh(sender_gate).to(dtype=dtype) * sender_vector
-            ),
+            edge_weight * vector_edge_message,
             edge_weight * torch.tanh(relative_gate).to(dtype=dtype) * edge_direction,
-            edge_weight
-            * torch.tanh(tensor_gate).to(dtype=dtype)
-            * _nonself_tensor_features(
-                local_geometry,
-                displacement,
-                dtype=dtype,
-            ).unsqueeze(1),
+            edge_weight * tensor_edge_message,
             cutoff.unsqueeze(-1),
             cutoff.square().unsqueeze(-1),
         )
@@ -1803,6 +2197,32 @@ class _GatedEquivariantLocalTransport(nn.Module):
             mass_features.to(dtype=scalars.dtype)
         ).reshape(num_nodes, self.num_heads, self.head_dim)
         scalar_message = scalar_message + mass_message.to(dtype=dtype)
+        if self.geometry_attention is not None:
+            if edge_latent is None:
+                raise RuntimeError("geometry-aware edge latent is missing")
+            (
+                geometry_scalar,
+                geometry_vector,
+                geometry_relative,
+                geometry_tensor,
+            ) = self.geometry_attention(
+                scalar_heads=scalar_heads,
+                vectors=vectors,
+                bootstrap_vector=vector_base + relative,
+                bootstrap_tensor=tensor,
+                persistent_tensor=persistent_tensor,
+                receiver=receiver,
+                sender=sender,
+                edge_direction=edge_direction,
+                edge_tensor=tensor_features,
+                cutoff=cutoff,
+                edge_latent=edge_latent,
+                num_nodes=num_nodes,
+            )
+            scalar_message = scalar_message + geometry_scalar
+            vector_base = vector_base + geometry_vector
+            relative = relative + geometry_relative
+            tensor = tensor + geometry_tensor
         radial_trace = scalar_message.new_zeros((num_nodes, self.num_heads))
         return scalar_message, vector_base, relative, tensor, radial_trace
 
@@ -1813,7 +2233,9 @@ class _GatedEquivariantLocalTransport(nn.Module):
         sender: torch.Tensor,
         rbf: torch.Tensor,
         vector_invariants: torch.Tensor,
-    ) -> torch.Tensor:
+        *,
+        return_latent: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         first_linear = self.edge_mlp[0]
         second_linear = self.edge_mlp[2]
         output_linear = self.edge_mlp[4]
@@ -1843,10 +2265,13 @@ class _GatedEquivariantLocalTransport(nn.Module):
         if first_linear.bias is not None:
             hidden = hidden + first_linear.bias
 
-        def finish_mlp(value: torch.Tensor) -> torch.Tensor:
+        def finish_mlp(
+            value: torch.Tensor,
+        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
             value = F.silu(value)
             value = F.silu(second_linear(value))
-            return output_linear(value)
+            output = output_linear(value)
+            return (output, value) if return_latent else output
 
         if self.checkpoint_mlp and self.training and torch.is_grad_enabled():
             return activation_checkpoint(
@@ -1855,6 +2280,32 @@ class _GatedEquivariantLocalTransport(nn.Module):
                 use_reentrant=False,
             )
         return finish_mlp(hidden)
+
+    def _shared_tensor_product_gate(
+        self,
+        edge_latent: torch.Tensor,
+        tensor_invariants: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.tensor_product_gate is None:
+            raise RuntimeError("tensor-product local transport is disabled")
+        tensor_projection = self.tensor_product_gate[0]
+        output_linear = self.tensor_product_gate[2]
+        if not isinstance(tensor_projection, nn.Linear) or not isinstance(
+            output_linear, nn.Linear
+        ):
+            raise RuntimeError("tensor-product gate layout is invalid")
+        hidden = edge_latent + tensor_projection(tensor_invariants)
+
+        def finish_gate(value: torch.Tensor) -> torch.Tensor:
+            return output_linear(F.silu(value))
+
+        if self.checkpoint_mlp and self.training and torch.is_grad_enabled():
+            return activation_checkpoint(
+                finish_gate,
+                hidden,
+                use_reentrant=False,
+            )
+        return finish_gate(hidden)
 
 
 class _LocalPairwiseContent(nn.Module):
@@ -2388,6 +2839,45 @@ def _edge_sum(
     )
     output = value.new_zeros((num_nodes, *value.shape[1:]))
     return output.index_add(0, receiver, expanded_weights * value)
+
+
+def _receiver_softmax(
+    logits: torch.Tensor,
+    receiver: torch.Tensor,
+    *,
+    num_nodes: int,
+    mass: torch.Tensor,
+) -> torch.Tensor:
+    if logits.ndim != 2:
+        raise ValueError("receiver softmax logits must have shape (E, H)")
+    if receiver.shape != (logits.shape[0],):
+        raise ValueError("receiver softmax index must have shape (E,)")
+    if mass.shape not in {(logits.shape[0],), logits.shape}:
+        raise ValueError("receiver softmax mass must have shape (E,) or (E, H)")
+    dtype = _moment_dtype(logits, mass)
+    logits = logits.to(dtype=dtype)
+    mass = mass.to(dtype=dtype)
+    if mass.ndim == 1:
+        mass = mass.unsqueeze(-1)
+    tiny = torch.finfo(dtype).tiny
+    weighted_logits = logits + mass.clamp_min(tiny).log()
+    index = receiver[:, None].expand_as(weighted_logits)
+    maxima = weighted_logits.new_full(
+        (num_nodes, weighted_logits.shape[1]),
+        -torch.inf,
+    )
+    maxima.scatter_reduce_(
+        0,
+        index,
+        weighted_logits,
+        reduce="amax",
+        include_self=True,
+    )
+    exponent = torch.exp(weighted_logits - maxima[receiver])
+    denominator = exponent.new_zeros(
+        (num_nodes, exponent.shape[1])
+    ).index_add(0, receiver, exponent)
+    return exponent / denominator[receiver].clamp_min(tiny)
 
 
 def _fused_index_sum(
@@ -3892,6 +4382,37 @@ def _st_matrix_vector(tensor: torch.Tensor, vector: torch.Tensor) -> torch.Tenso
     )
 
 
+def _st_commutator_axial(
+    left: torch.Tensor,
+    right: torch.Tensor,
+) -> torch.Tensor:
+    """Return the axial l=1 component of two symmetric-traceless tensors."""
+    dtype = _moment_dtype(left, right)
+    left_xx, left_yy, left_xy, left_xz, left_yz = left.to(
+        dtype=dtype
+    ).unbind(dim=-1)
+    right_xx, right_yy, right_xy, right_xz, right_yz = right.to(
+        dtype=dtype
+    ).unbind(dim=-1)
+    return torch.stack(
+        [
+            left_xz * right_xy
+            - right_xz * left_xy
+            + left_yz * (right_xx + 2.0 * right_yy)
+            - right_yz * (left_xx + 2.0 * left_yy),
+            right_xz * (2.0 * left_xx + left_yy)
+            + left_xy * right_yz
+            - left_xz * (2.0 * right_xx + right_yy)
+            - right_xy * left_yz,
+            left_xy * (right_xx - right_yy)
+            + right_xy * (left_yy - left_xx)
+            + left_yz * right_xz
+            - right_yz * left_xz,
+        ],
+        dim=-1,
+    )
+
+
 def _st_frobenius_square(value: torch.Tensor) -> torch.Tensor:
     value = value.to(dtype=_moment_dtype(value))
     xx, yy, xy, xz, yz = value.unbind(dim=-1)
@@ -3901,6 +4422,30 @@ def _st_frobenius_square(value: torch.Tensor) -> torch.Tensor:
         + yy.square()
         + zz.square()
         + 2.0 * (xy.square() + xz.square() + yz.square())
+    )
+
+
+def _st_frobenius_inner(
+    left: torch.Tensor,
+    right: torch.Tensor,
+) -> torch.Tensor:
+    dtype = _moment_dtype(left, right)
+    left = left.to(dtype=dtype)
+    right = right.to(dtype=dtype)
+    left_xx, left_yy, left_xy, left_xz, left_yz = left.unbind(dim=-1)
+    right_xx, right_yy, right_xy, right_xz, right_yz = right.unbind(dim=-1)
+    left_zz = -left_xx - left_yy
+    right_zz = -right_xx - right_yy
+    return (
+        left_xx * right_xx
+        + left_yy * right_yy
+        + left_zz * right_zz
+        + 2.0
+        * (
+            left_xy * right_xy
+            + left_xz * right_xz
+            + left_yz * right_yz
+        )
     )
 
 
@@ -4336,6 +4881,10 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_irrep_rms_normalization",
         "use_quartic_kernel",
         "checkpoint_gated_local_mlp",
+        "use_cartesian_tensor_product_local_transport",
+        "use_static_tensor_carrier",
+        "use_geometry_aware_local_attention",
+        "use_se3_axial_tensor_product",
         "use_tensor_product_kernel",
         "use_memory_interaction",
         "use_radial_trace",
@@ -4349,6 +4898,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
         choices = ", ".join(sorted(_GLOBAL_TRANSPORT_MODES))
         raise ValueError(f"global_transport_mode must be one of: {choices}")
+    if not isinstance(config.symmetry_group, str):
+        raise TypeError("symmetry_group must be a string")
+    if config.symmetry_group not in _SYMMETRY_GROUPS:
+        choices = ", ".join(sorted(_SYMMETRY_GROUPS))
+        raise ValueError(f"symmetry_group must be one of: {choices}")
     if not isinstance(config.coordinate_neighbor_policy, str):
         raise TypeError("coordinate_neighbor_policy must be a string")
     if config.coordinate_neighbor_policy not in _COORDINATE_NEIGHBOR_POLICIES:
@@ -4401,6 +4955,54 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             )
     if config.use_pairwise_local_content and not any(local_head_counts):
         raise ValueError("use_pairwise_local_content requires at least one local head")
+    if (
+        config.use_geometry_aware_local_attention
+        and not config.use_gated_local_transport
+    ):
+        raise ValueError(
+            "geometry-aware local attention requires gated local transport"
+        )
+    if (
+        config.use_se3_axial_tensor_product
+        and not config.use_geometry_aware_local_attention
+    ):
+        raise ValueError(
+            "axial tensor product requires geometry-aware local attention"
+        )
+    if (
+        config.use_se3_axial_tensor_product
+        and config.symmetry_group != "SE3"
+    ):
+        raise ValueError("axial tensor product requires symmetry_group='SE3'")
+    geometry_layers = config.geometry_aware_local_layers
+    if geometry_layers is not None:
+        if not isinstance(geometry_layers, tuple):
+            raise TypeError(
+                "geometry_aware_local_layers must be a tuple or None"
+            )
+        if not config.use_geometry_aware_local_attention:
+            raise ValueError(
+                "geometry_aware_local_layers requires geometry-aware local attention"
+            )
+        if not geometry_layers:
+            raise ValueError("geometry_aware_local_layers must not be empty")
+        if len(set(geometry_layers)) != len(geometry_layers):
+            raise ValueError(
+                "geometry_aware_local_layers must not contain duplicates"
+            )
+        for layer_index in geometry_layers:
+            if not isinstance(layer_index, int) or isinstance(layer_index, bool):
+                raise TypeError(
+                    "geometry_aware_local_layers must contain integers"
+                )
+            if not 0 <= layer_index < config.num_layers:
+                raise ValueError(
+                    "geometry_aware_local_layers contains an invalid index"
+                )
+            if local_head_counts[layer_index] == 0:
+                raise ValueError(
+                    "geometry_aware_local_layers must select local stages"
+                )
     if config.use_gated_local_transport:
         if not any(local_head_counts):
             raise ValueError("gated local transport requires at least one local head")
@@ -4429,6 +5031,44 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "checkpoint_gated_local_mlp requires gated local transport"
         )
+    if (
+        config.use_cartesian_tensor_product_local_transport
+        and not config.use_gated_local_transport
+    ):
+        raise ValueError(
+            "Cartesian tensor-product local transport requires gated local transport"
+        )
+    ctp_layers = config.cartesian_tensor_product_local_layers
+    if ctp_layers is not None:
+        if not isinstance(ctp_layers, tuple):
+            raise TypeError(
+                "cartesian_tensor_product_local_layers must be a tuple or None"
+            )
+        if not config.use_cartesian_tensor_product_local_transport:
+            raise ValueError(
+                "cartesian_tensor_product_local_layers requires CTP local transport"
+            )
+        if not ctp_layers:
+            raise ValueError(
+                "cartesian_tensor_product_local_layers must not be empty"
+            )
+        if len(set(ctp_layers)) != len(ctp_layers):
+            raise ValueError(
+                "cartesian_tensor_product_local_layers must not contain duplicates"
+            )
+        for layer_index in ctp_layers:
+            if not isinstance(layer_index, int) or isinstance(layer_index, bool):
+                raise TypeError(
+                    "cartesian_tensor_product_local_layers must contain integers"
+                )
+            if not 0 <= layer_index < config.num_layers:
+                raise ValueError(
+                    "cartesian_tensor_product_local_layers contains an invalid index"
+                )
+            if local_head_counts[layer_index] == 0:
+                raise ValueError(
+                    "cartesian_tensor_product_local_layers must select local stages"
+                )
     if config.use_edge_conditioned_local_transport:
         if not any(local_head_counts):
             raise ValueError(
@@ -4574,6 +5214,18 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError("hidden scalar channels must be divisible by num_heads")
     if config.use_tensor_product_kernel and hidden.tensors <= 0:
         raise ValueError("tensor-product kernel requires persistent 2e hidden channels")
+    if (
+        config.use_cartesian_tensor_product_local_transport
+        and hidden.tensors <= 0
+    ):
+        raise ValueError(
+            "Cartesian tensor-product local transport requires persistent 2e "
+            "hidden channels"
+        )
+    if config.use_static_tensor_carrier and hidden.tensors != config.num_heads:
+        raise ValueError(
+            "static tensor carrier requires hidden 2e channels == num_heads"
+        )
     if config.input_tensor_dim and hidden.tensors <= 0:
         raise ValueError("input_tensor_dim requires persistent hidden 2e channels")
     if (

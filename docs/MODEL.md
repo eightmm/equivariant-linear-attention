@@ -107,6 +107,41 @@ acts only over multiplicities, so the state transforms as `T -> R T R^T`.
 This is a Cartesian rank-2 implementation; it does not add `2o`, spherical
 harmonics, Clebsch--Gordan products, or arbitrary `l>2` input support.
 
+`use_cartesian_tensor_product_local_transport=True` adds three statically
+compiled native-Cartesian paths to gated local stages:
+
+```text
+2e x 1o -> 1o:  T_j d_ij
+2e x 0e -> 2e:  T_j
+1o x 1o -> 2e:  ST(v_j outer d_ij)
+```
+
+Five parity-even contractions of receiver/sender tensor state and the edge
+quadrupole condition invariant gates on these values. The output gate is
+zero-initialized, so enabling CTP begins as the exact persistent-`2e` control
+while the new path receives a learning signal. The LBA specialization uses
+`use_static_tensor_carrier=True`, requires one `2e` channel per head, and
+executes full CTP only in the final local stage. This is a static `l<=2`
+capability rather than a general Clebsch--Gordan backend. Its mathematical and
+resource contracts passed, but its three-seed LBA accuracy promotion failed;
+the public default remains off.
+
+`use_geometry_aware_local_attention=True` instead reuses the incumbent
+pair-conditioned local `1o/2e` moments to form bounded node query/key carriers.
+A sparse receiver softmax fuses invariant pair, vector-inner-product, and
+tensor-Frobenius scores, then transports scalar, polar-vector,
+relative-vector, and symmetric-traceless values on retained edges. It adds no
+dense pair state and remains `O(E)` at fixed width. `geometry_aware_local_layers`
+statically chooses which local stages execute the refinement.
+
+The default `symmetry_group="O3"` preserves reflection covariance.
+`symmetry_group="SE3"` together with
+`use_se3_axial_tensor_product=True` additionally permits
+`vee(TQ-QT)`, the axial `l=1` component of `2e x 2e`. This output is mixed into
+the vector carrier only under the proper-rotation-only contract. The matched
+20-epoch LBA screen found no promotion-level accuracy gain, so all new
+controls remain opt-in.
+
 `angular_feature_rank=2` means two learned polar-vector axes per head, not an
 `l=2` irrep. Their six-dimensional direct sum drives the linear and quadratic
 angular kernel. `use_quartic_kernel=True` separately adds the exact
@@ -201,9 +236,12 @@ rank-2 output remains symmetric traceless.
 
 ## Applicability
 
-The current contract is O(3), not chirality-sensitive SE(3). It is appropriate
-for properties that should be unchanged by reflection. Enantiomer-sensitive
-scalar prediction is outside the current model class.
+The default contract is O(3), appropriate when reflection should not change
+the target. An explicit SE(3) mode is available for chiral biomolecular
+settings where only proper rotations and translations should be identified.
+SE(3) mode permits parity-mixed internal vector features; it does not by itself
+guarantee that a scalar readout will learn enantiomer sensitivity, and the
+first LBA screen did not show an accuracy benefit.
 
 Any route with a global head does not enforce cluster decomposition or
 extensive size consistency. Mean graph readout is not an additive energy

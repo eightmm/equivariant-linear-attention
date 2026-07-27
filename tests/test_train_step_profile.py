@@ -3,10 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 import runpy
 
+import torch
+
 
 PROFILE = runpy.run_path(
     str(Path(__file__).parents[1] / "scripts" / "profile_train_step.py")
 )
+
+
+def test_ctp_profile_models_use_matched_static_lgl_harness() -> None:
+    build = PROFILE["SCALING"]["_build_train_step_model"]
+    control = build(
+        "persistent_2e_static",
+        device=torch.device("cpu"),
+        model_seed=20260727,
+    )
+    ctp = build(
+        "ctp_static",
+        device=torch.device("cpu"),
+        model_seed=20260727,
+    )
+
+    assert control.hidden_irreps.tensors == ctp.hidden_irreps.tensors == 4
+    assert control.config.local_head_counts == ctp.config.local_head_counts == (4, 0, 4)
+    assert control.config.use_static_tensor_carrier is True
+    assert ctp.config.use_static_tensor_carrier is True
+    assert control.config.use_cartesian_tensor_product_local_transport is False
+    assert ctp.config.use_cartesian_tensor_product_local_transport is True
 
 
 def test_tiny_cpu_profile_records_named_training_stages() -> None:

@@ -801,7 +801,7 @@ def _build_train_step_model(
             coordinate_updates=True,
             use_multiscale_spatial_kernel=True,
         )
-    elif name == "gated_static":
+    elif name in {"gated_static", "persistent_2e_static", "ctp_static"}:
         model = build_regression_model(
             node_dim=11,
             hidden_dim=64,
@@ -812,6 +812,12 @@ def _build_train_step_model(
             use_key_balancing=False,
             use_gated_local_transport=True,
             use_grouped_invariant_normalization=True,
+            hidden_tensor_dim=4 if name != "gated_static" else 0,
+            use_static_tensor_carrier=name != "gated_static",
+            use_cartesian_tensor_product_local_transport=name == "ctp_static",
+            cartesian_tensor_product_local_layers=(
+                (2,) if name == "ctp_static" else None
+            ),
         )
     elif name == "static_egnn":
         model = _StaticEGNNBaseline(

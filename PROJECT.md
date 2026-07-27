@@ -2,6 +2,39 @@
 
 ## Status
 
+- Sparse geometry-aware local attention with selectable `O(3)`/`SE(3)`
+  symmetry is implemented and **not promoted**. The useful EquiFlex transfer
+  is an opt-in sparse `0e/1o/2e` score refinement, with a mathematically
+  explicit axial `2e x 2e -> l=1` value admitted only under `SE3`; dense pair
+  state, triangle enumeration, and `N x N` attention remain excluded. A
+  matched seed-41, 20-epoch ATOM3D-LBA ID30 screen gave candidate/O(3)/SE(3)
+  validation RMSEs of `1.602722/1.606076/1.610371 pK`. End-to-end median
+  step ratios were `1.000/1.180/1.202x` and peak-allocation ratios were
+  `1.000/1.157/1.164x`. The axial gate received a finite nonzero gradient but
+  did not add measurable fitting or validation benefit. Public defaults remain
+  unchanged; see `docs/GEOMETRY_AWARE_SE3_20260727.md`.
+- The static Cartesian CTP-LGL packet is complete and is **not promoted**.
+  Mathematical/software contracts and the isolated real-batch resource gate
+  passed, but the fixed seeds 41--43 ATOM3D-LBA ID30 comparison rejected the
+  accuracy hypothesis. Candidate/persistent-`2e`/CTP mean best validation
+  RMSEs were `1.580164/1.601467/1.590217 pK`. CTP recovered
+  `0.011251 pK` on average from the persistent-tensor-only control, yet
+  regressed the current candidate by `0.010053 pK` and lost all three paired
+  seeds. Its parameter/step/peak ratios were
+  `1.00157/1.13421/1.15046x`, within the frozen ceilings. The code remains an
+  opt-in, statically compiled `0e+1o+2e` research capability; public defaults
+  and the arbitrary-irrep boundary are unchanged. Test labels were not
+  evaluated. See `docs/CTP_LGL_20260727.md`.
+- Static-compiled CTP-LGL extension confirmed on 2026-07-27 after the user
+  selected the combined design: a configurable irrep specification at model
+  construction, but a fixed and optimized tensor-product execution graph at
+  runtime. The first implementation packet is deliberately narrower than
+  arbitrary irreps. It keeps the existing Cartesian `0e/1o/2e` backend,
+  retains the exact fixed-rank `O(N)` global transport, and adds an opt-in
+  persistent-`2e` local tensor-product branch to LGL. No dependency, public
+  default, coordinate policy, or incumbent checkpoint schema change is
+  authorized. The frozen contract is in
+  `Static-Compiled Irreps and CTP-LGL Extension` below.
 - A frozen seed-44 ATOM3D-LBA clipping screen found that the remaining
   optimization issue is not local-message explosion. At 20 matched epochs,
   clip-1 / clip-10 / unclipped last validation RMSEs were
@@ -721,6 +754,223 @@
   and the derived kernel upper bound remain representable in float32.
   Scale-first local/memory geometry controls retain separately tested support
   for positive subnormal values.
+
+## Static-Compiled Irreps and CTP-LGL Extension
+
+- Decision state: confirmed by the user's 2026-07-27 post-draft instruction to
+  proceed. The user's architectural direction is to combine a generalizable
+  irrep contract with statically compiled execution rather than build a
+  runtime-dynamic irrep interpreter or replace this project with a separate
+  Equiformer family.
+- Phase-1 representation scope remains full-`O(3)` Cartesian
+  `0e + polar-1o + symmetric-traceless-2e`. The existing parser continues to
+  reject `0o`, `1e`, `2o`, and `l > 2` in this packet. A parity-complete
+  `IrrepsLayout` and optional general-CG/eSCN backend are later model-class
+  decisions, admitted only if the phase-1 tensor-product path is useful on
+  real data. No `e3nn`, spherical-harmonic, or other dependency is added.
+- "Static compiled" means that the enabled tensor-product paths, input/output
+  degrees, parities, multiplicities, and tensor storage slices are resolved
+  once in `__init__`. Forward execution contains no input-dependent irrep
+  discovery or architecture routing. The internal path description may be
+  reusable by a future general irrep parser, but phase 1 implements only the
+  three paths below with native Cartesian operations.
+- The public model remains `EquivariantAttention`. The new opt-in switch is
+  `use_cartesian_tensor_product_local_transport=False`. It is valid only with
+  gated local transport and at least one persistent `2e` hidden channel.
+  Disabled construction must retain the incumbent parameters, outputs, state
+  dictionary, RNG consumption, and checkpoints exactly. The current defaults
+  therefore remain `hidden_tensor_dim=0` and CTP off.
+- The first LBA candidate uses
+  `64x0e + 4x1o + 4x2e`, four heads, the existing `(4,0,4)` LGL route,
+  6-Angstrom local cutoff, static coordinates, squared-distance RBFs, gated
+  local transport, and grouped invariant normalization. The global kernel,
+  global moment summaries, readout, feature schema, topology, optimizer, and
+  training policy are held fixed.
+- The admitted efficient execution uses `use_static_tensor_carrier=True` with
+  `C2 == num_heads`. It stores the compact `2e` state directly in head layout,
+  updates and consumes it only in local stages, carries it unchanged across
+  the middle global stage, and reuses the incumbent moment tensor as its
+  bounded residual update. The generic persistent-tensor FFN/mixing path
+  remains available when this opt-in is false. Full CTP is statically scheduled
+  only in the final local refinement (`cartesian_tensor_product_local_layers =
+  (2,)`); the first local stage seeds the carrier with the incumbent tensor
+  message. The CTP gate reuses the incumbent edge latent and adds only the five
+  tensor invariants before its separate zero-initialized output projection.
+- Persistent tensor state is projected from its `C2` channels to the active
+  local heads once per node before sender/receiver edge indexing. With
+  `d_ij=(r_j-r_i)/R_c` and
+  `Q_ij=ST(d_ij outer d_ij)`, the separate CTP gate branch receives the
+  incumbent invariant edge features plus
+
+  ```text
+  chi_ij = [
+      <T_i,T_j>_F,
+      <T_i,Q_ij>_F,
+      <T_j,Q_ij>_F,
+      ||T_i||_F^2,
+      ||T_j||_F^2,
+  ].
+  ```
+
+  The five terms are parity-even invariants. They do not directly become
+  equivariant values or Cartesian learned parameters.
+- The statically admitted equivariant bases are exactly
+
+  ```text
+  2e x 1o -> 1o:  T_j d_ij
+  2e x 0e -> 2e:  T_j
+  1o x 1o -> 2e:  ST(v_j outer d_ij)
+  ```
+
+  The CTP branch emits invariant bounded gates for these bases and adds them
+  to the incumbent vector/tensor local messages. It uses the incumbent
+  cutoff and soft receiver normalization
+  `sum_j f_c message / sqrt(1 + sum_j f_c)`. A separate final gate projection
+  is zero initialized, so the enabled CTP model initially equals its
+  persistent-`2e`-only control while the new projection receives gradient.
+  The incumbent local MLP is not widened by the five tensor invariants.
+- The first packet does not add tensor-conditioned scalar content,
+  cross-product/Levi-Civita paths, parity-odd state, higher `l`, dynamic
+  coordinates, a tensor term in the global attention kernel, or new
+  ligand/pocket features. These are separate ablations rather than hidden
+  components of the CTP claim.
+- For `R in O(3)`, the contract is
+  `v,d -> Rv,Rd`, `T,Q -> R T R^T,R Q R^T`. Consequently
+  `<T,Q>_F` is `0e`, `Td` is `1o`, and `ST(v outer d)` is `2e`.
+  Relative coordinates preserve translation behavior; shared edge functions
+  and receiver sums preserve node permutation and edge-order behavior; the
+  existing same-graph validation preserves batch isolation. Reflections are
+  required, not only proper rotations.
+- At fixed channels and paths, node projections cost `O(N)`, local
+  contractions and aggregation cost `O(E)`, and the global route remains
+  fixed-rank `O(N)`. The packet may not materialize an `N x N` tensor or
+  enumerate neighbor triplets. Candidate parameters must be at most `1.10x`,
+  synchronized real-LBA train-step latency at most `1.25x`, and peak CUDA
+  allocation at most `1.25x` the current gated-plus-grouped LBA candidate.
+- The implementation is rejected before training unless all of the following
+  hold: the `{+x,-x}` versus `{+y,-y}` quadrupole witness collides under the
+  incumbent and separates under CTP; changing only sender `T_j` changes an
+  admitted message; new parameters receive finite nonzero gradients; and
+  float64 rotation, reflection, translation, node permutation, edge-order,
+  batch-isolation, cutoff, and coordinate-gradient contracts pass.
+- Real-data attribution uses three arms with identical raw features and
+  training information: the current `64x0e+4x1o` candidate,
+  `64x0e+4x1o+4x2e` with persistent tensors but CTP off, and the same
+  persistent-tensor model with CTP on. QM9 is only a bounded regression smoke.
+  The deciding task is validation-only ATOM3D-LBA ID30; test remains
+  structurally inaccessible. Before a cross-run or multi-seed claim, the
+  recorded one-edge topology reproducibility defect must be repaired or every
+  arm must consume one serialized, hashed candidate list.
+- After the implementation/resource gates, a fixed seed-44 screen may advance
+  only if CTP improves validation RMSE over both controls without a regression
+  larger than `0.05 pK`. Confirmation uses seeds 41--43, fixed 35 epochs and
+  identical batches. Architectural promotion requires mean improvement of at
+  least `0.020 pK` over the current candidate, positive mean improvement over
+  the persistent-`2e`-only control, at least two of three paired wins, worst
+  paired regression no larger than `0.050 pK`, and the resource ceilings
+  above. These thresholds are fixed before outcome inspection.
+- The conditional seeds 41--43 confirmation keeps 35 epochs and the frozen
+  optimizer/schedule but uses batch size 24 for every arm so the full
+  three-arm comparison remains inside the approved compute envelope. One
+  process materializes and hashes the topology once; all nine arm/seed runs
+  consume that same in-memory candidate list.
+- The approved execution envelope is the existing locked environment and
+  cached QM9/LBA data, no network or dependency changes, one local GPU,
+  validation only, and at most 3,600 cumulative GPU-wall seconds. Run
+  artifacts remain under ignored
+  `artifacts/`; results, including rejection or null results, are appended to
+  `docs/EXPERIMENTS.jsonl`. Automatic GitHub Actions remain disabled.
+
+## Sparse Geometry-Aware O(3)/SE(3) Local Attention
+
+- Decision state: confirmed by the user's 2026-07-27 instruction after review
+  of the supplied EquiFlex architecture deck. The useful transfer is the order
+  of computation--pair-conditioned transport first creates geometric
+  `1o/2e` moments, then the same local block uses them in a refined score--rather
+  than EquiFlex's dense pair tensor, triangle update, or quadratic global
+  attention.
+- The public class remains `EquivariantAttention`. Three appended,
+  backward-compatible configuration controls are admitted:
+  `symmetry_group="O3"`,
+  `use_geometry_aware_local_attention=False`, and
+  `use_se3_axial_tensor_product=False`, with the optional static schedule
+  `geometry_aware_local_layers=None`. The geometry-aware path requires gated
+  local transport. `None` resolves to every local stage; the initial LBA
+  resource/accuracy screen uses only the first local stage `(0,)` so its
+  geometry reaches the middle global stage without paying for a duplicate
+  final-stage refinement. The axial path additionally requires the
+  geometry-aware path and `symmetry_group="SE3"`. Disabled construction must
+  preserve the incumbent state schema, outputs, and common seeded parameters.
+- For each nonself retained edge `i <- j`, the incumbent factorized edge MLP
+  supplies a hidden pair latent `h_ijh`. Its existing pair-conditioned,
+  cutoff-weighted and degree-normalized aggregation supplies the bootstrap
+  states without a second edge MLP or an extra softmax:
+
+  ```text
+  v_boot_ih = m_vector_ih + m_relative_ih,
+  T_boot_ih = m_tensor_ih.
+  ```
+
+  Empty neighborhoods produce exact zero moments. Self edges remain excluded,
+  and no dense pair state is created.
+- Channel gates of the invariant node state form bounded query/key versions of
+  the current-plus-bootstrap polar vectors and, when present, the
+  persistent-plus-bootstrap symmetric-traceless tensors. The refined sparse
+  score is
+
+  ```text
+  ell_ijh =
+      a0_h b_pair(h_ijh)
+    + a1_h <q1_ih,k1_jh>
+    + a2_h <q2_ih,k2_jh>_F,
+  alpha_geom_ijh =
+      softmax_j(softclip(ell_ijh) + log f_c(u_ij)).
+  ```
+
+  The three score lanes are invariant under full `O(3)`. Geometry-attended
+  scalar, sender-vector, relative-vector, and symmetric-traceless values are
+  added as a small learned residual to the incumbent gated local messages.
+  This creates and consumes `2e` inside one local block without requiring a
+  persistent hidden tensor.
+- In `O3` mode all vector values are polar and every tensor value is
+  reflection-even. In optional `SE3` mode, the extra value basis is
+
+  ```text
+  a_ijh = vee(T_boot_jh Q_ij - Q_ij T_boot_jh),
+  Q_ij = ST(d_ij outer d_ij).
+  ```
+
+  This is the `l=1` component of `2 x 2`: it transforms as a vector for proper
+  rotations but as an axial `1e` object under reflection. The implementation
+  may mix it into the vector carrier only when the declared contract is
+  `SE3`. It must not be called polar `1o` under the `O3` contract. Proper
+  rotations, translations, node permutations, edge order, and batch
+  isolation remain required in both modes; reflection covariance is required
+  only in `O3` mode.
+- Q/K normalization is implemented with the incumbent bounded vector and true
+  symmetric-traceless Frobenius maps. `softclip(x)=L tanh(x/L)` has a fixed,
+  documented finite `L`; receiver softmax is evaluated stably on sparse edges.
+  No reflected structure is used as generic augmentation for chiral
+  biomolecules.
+- At fixed channels, the incumbent aggregation plus refined sparse attention
+  cost `O(E)` and store only
+  fixed-width edge/node intermediates. The existing global factorized moment
+  route remains exactly `O(N)` and unchanged. Dense `p_ij`, dense triangle
+  updates, pairwise global distance bias, flow matching, physics losses, and
+  inference guidance are non-goals of this packet.
+- RED verification must cover disabled compatibility, receiver normalization,
+  an equal-distance angular witness, finite nonzero new-path gradients,
+  float64 full-`O(3)` behavior for the common path, float64 proper-rotation
+  behavior plus a reflection-separation witness for the axial path,
+  translation, permutation, edge order, batch isolation, and construction
+  errors. The public builder and cached LBA runner must expose the new options
+  without changing existing defaults.
+- The smallest real-data check is validation-only cached ATOM3D-LBA ID30 with
+  identical features, topology, seed, batches, optimizer, and update budget
+  for current, geometry-`O3`, and geometry-`SE3` arms. It is a rejection
+  screen, not a test or superiority result. Record parameters, synchronized
+  train-step latency, peak allocation, training/validation metric, and whether
+  the axial parameters receive gradient. No held-out test label is accessed.
 
 ## Local/Global Architecture
 

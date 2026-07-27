@@ -20,6 +20,13 @@
 | `local_head_counts` | `None` | `None` means all-global; otherwise a length-`num_layers` tuple with each entry in `[0, num_heads]` |
 | `global_transport_mode` | `learned` | `learned`, exact graph-mean `uniform`, or attention-residual `none` |
 | `use_multiscale_spatial_kernel` | false | opt-in ten-feature/head spatial kernel; requires all-global learned transport and no memory interaction |
+| `use_cartesian_tensor_product_local_transport` | false | opt-in native Cartesian `2e x 1o -> 1o`, `2e x 0e -> 2e`, and `1o x 1o -> 2e` local paths; requires gated local transport and persistent `2e` |
+| `use_static_tensor_carrier` | false | compact local-only `2e` carrier; requires hidden `2e` multiplicity equal to `num_heads` |
+| `cartesian_tensor_product_local_layers` | `None` | tuple of local-stage indices; `None` selects every local stage when CTP is enabled |
+| `symmetry_group` | `"O3"` | `"O3"` or proper-rotation-only `"SE3"` |
+| `use_geometry_aware_local_attention` | false | sparse `0e/1o/2e` local score refinement; requires gated local transport |
+| `use_se3_axial_tensor_product` | false | optional axial `2e x 2e -> l=1` value; requires geometry attention and `symmetry_group="SE3"` |
+| `geometry_aware_local_layers` | `None` | tuple of local-stage indices; `None` selects every local stage when geometry attention is enabled |
 | `local_cutoff` | 2.5 | positive raw-coordinate local cutoff |
 | `num_rbf` | 16 | positive number of local Gaussian RBFs |
 | `learn_local_radial_gate` | false | frozen radial gate for registered routing studies |
@@ -71,6 +78,19 @@ initialization and `c/N_g` can otherwise round them to zero and invalidate the
 strictly positive denominator contract. This does not apply to the scale-first
 local cutoff and memory geometry controls, whose subnormal behavior has
 separate finite-value and gradient tests.
+
+The static CTP fields do not make the parser arbitrary-irrep capable. The
+current backend accepts scalar `0e`, polar-vector `1o`, and reflection-even
+symmetric-traceless `2e` only. Parity-odd irreps and `l>2` remain rejected.
+`use_static_tensor_carrier=True` is an execution specialization for
+`C2 == num_heads`; it carries the compact tensor state unchanged through
+global-only stages and updates it in local stages.
+
+The geometry-aware fields are also statically compiled. `O3` retains
+reflection covariance. `SE3` permits the axial `l=1` component of
+`2e x 2e`, whose parity differs from the polar vector carrier under reflection.
+The LBA runner exposes `geometry_o3` and `geometry_se3` research arms using
+only local layer 0; neither is a promoted default.
 
 ## Training probe
 

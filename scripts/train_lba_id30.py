@@ -47,6 +47,12 @@ LOCAL_CUTOFF_ANGSTROM = 6.0
 INTRA_K = 16
 CROSS_K = 16
 DEFAULT_ARMS = ("candidate", "incumbent", "egnn")
+EXPERIMENTAL_ARMS = (
+    "persistent_2e",
+    "ctp",
+    "geometry_o3",
+    "geometry_se3",
+)
 V3_VARIANTS = {
     "irrep_norm": {
         "use_irrep_rms_normalization": True,
@@ -89,7 +95,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--arms",
         nargs="+",
-        choices=(*DEFAULT_ARMS, "v3"),
+        choices=(*DEFAULT_ARMS, *EXPERIMENTAL_ARMS, "v3"),
         default=list(DEFAULT_ARMS),
     )
     parser.add_argument(
@@ -176,9 +182,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _primary_arm(arms: Sequence[str]) -> str:
+    for arm in (
+        "geometry_se3",
+        "geometry_o3",
+        "ctp",
+        "v3",
+        "candidate",
+        "persistent_2e",
+        "incumbent",
+        "egnn",
+    ):
+        if arm in arms:
+            return arm
+    raise ValueError("at least one recognized arm is required")
+
+
 def _plan(args: argparse.Namespace) -> dict[str, object]:
     limited = args.train_limit is not None or args.val_limit is not None
-    primary_arm = "v3" if "v3" in args.arms else "candidate"
+    primary_arm = _primary_arm(args.arms)
     return {
         "schema_version": 1,
         "run_id": RUN_ID,
@@ -201,9 +223,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "0.02 pK relative to the matched incumbent LGL"
         ),
         "same_harness_baselines": [
-            *([] if primary_arm == "candidate" else ["candidate"]),
-            "incumbent",
-            "egnn",
+            *(arm for arm in args.arms if arm != primary_arm),
             "train-target mean",
         ],
         "published_reference": {
@@ -221,6 +241,21 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "candidate_checkpoint_gated_local_mlp": (
                 args.checkpoint_gated_local_mlp
             ),
+            "persistent_tensor_channels": 4,
+            "ctp_static_paths": [
+                "2e x 1o -> 1o",
+                "2e x 0e -> 2e",
+                "1o x 1o -> 2e",
+            ],
+            "geometry_attention": {
+                "sparse_refinement": True,
+                "reuses_incumbent_local_moments": True,
+                "score_irreps": ["0e", "1o", "2e"],
+                "dense_pair_tensor": False,
+                "geometry_o3_symmetry": "O3",
+                "geometry_se3_symmetry": "SE3",
+                "geometry_se3_axial_path": "2e x 2e -> l=1",
+            },
             "v3_variant": args.v3_variant,
             "v3_interventions": V3_VARIANTS[args.v3_variant],
             "coordinate_updates": False,
@@ -382,9 +417,53 @@ def main(argv: Sequence[str] | None = None) -> int:
             checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
-    match_target_parameters = (
-        v3_parameters if "v3" in args.arms else candidate_parameters
+    persistent_2e_parameters = _parameter_count(
+        _build_model(
+            "persistent_2e",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
     )
+    ctp_parameters = _parameter_count(
+        _build_model(
+            "ctp",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    geometry_o3_parameters = _parameter_count(
+        _build_model(
+            "geometry_o3",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    geometry_se3_parameters = _parameter_count(
+        _build_model(
+            "geometry_se3",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    parameter_counts = {
+        "candidate": candidate_parameters,
+        "incumbent": incumbent_parameters,
+        "persistent_2e": persistent_2e_parameters,
+        "ctp": ctp_parameters,
+        "v3": v3_parameters,
+        "geometry_o3": geometry_o3_parameters,
+        "geometry_se3": geometry_se3_parameters,
+    }
+    primary_arm = _primary_arm(args.arms)
+    match_target_parameters = parameter_counts[primary_arm]
     egnn_width = _matched_egnn_width(match_target_parameters)
     egnn_parameters = _parameter_count(
         _build_model(
@@ -406,10 +485,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "candidate_parameters": candidate_parameters,
         "incumbent_parameters": incumbent_parameters,
         "v3_parameters": v3_parameters,
+        "persistent_2e_parameters": persistent_2e_parameters,
+        "ctp_parameters": ctp_parameters,
+        "geometry_o3_parameters": geometry_o3_parameters,
+        "geometry_se3_parameters": geometry_se3_parameters,
         "candidate_to_incumbent_parameter_ratio": (
             candidate_parameters / incumbent_parameters
         ),
         "v3_to_candidate_parameter_ratio": v3_parameters / candidate_parameters,
+        "ctp_to_persistent_2e_parameter_ratio": (
+            ctp_parameters / persistent_2e_parameters
+        ),
+        "ctp_to_candidate_parameter_ratio": ctp_parameters / candidate_parameters,
+        "geometry_o3_to_candidate_parameter_ratio": (
+            geometry_o3_parameters / candidate_parameters
+        ),
+        "geometry_se3_to_candidate_parameter_ratio": (
+            geometry_se3_parameters / candidate_parameters
+        ),
         "matched_egnn_width": egnn_width,
         "egnn_parameters": egnn_parameters,
         "egnn_to_match_target_parameter_ratio": (
@@ -494,9 +587,28 @@ def _build_model(
             hidden_dim=egnn_width,
             num_layers=NUM_LAYERS,
         )
-    if arm not in {"candidate", "incumbent", "v3"}:
+    attention_arms = {
+        "candidate",
+        "incumbent",
+        "persistent_2e",
+        "ctp",
+        "v3",
+        "geometry_o3",
+        "geometry_se3",
+    }
+    if arm not in attention_arms:
         raise ValueError(f"unknown arm: {arm}")
     v3_options = V3_VARIANTS[v3_variant] if arm == "v3" else {}
+    gated_arms = {
+        "candidate",
+        "persistent_2e",
+        "ctp",
+        "v3",
+        "geometry_o3",
+        "geometry_se3",
+    }
+    persistent_tensor_arms = {"persistent_2e", "ctp"}
+    geometry_arms = {"geometry_o3", "geometry_se3"}
     return build_regression_model(
         node_dim=ATOM3D_LBA_NODE_DIM,
         hidden_dim=HIDDEN_DIM,
@@ -505,10 +617,18 @@ def _build_model(
         local_head_counts=LOCAL_HEAD_COUNTS,
         local_cutoff=LOCAL_CUTOFF_ANGSTROM,
         use_key_balancing=False,
-        use_gated_local_transport=arm in {"candidate", "v3"},
-        use_grouped_invariant_normalization=arm in {"candidate", "v3"},
+        use_gated_local_transport=arm in gated_arms,
+        use_grouped_invariant_normalization=arm in gated_arms,
+        hidden_tensor_dim=4 if arm in persistent_tensor_arms else 0,
+        use_static_tensor_carrier=arm in persistent_tensor_arms,
+        use_cartesian_tensor_product_local_transport=arm == "ctp",
+        cartesian_tensor_product_local_layers=(2,) if arm == "ctp" else None,
+        symmetry_group="SE3" if arm == "geometry_se3" else "O3",
+        use_geometry_aware_local_attention=arm in geometry_arms,
+        use_se3_axial_tensor_product=arm == "geometry_se3",
+        geometry_aware_local_layers=(0,) if arm in geometry_arms else None,
         checkpoint_gated_local_mlp=(
-            checkpoint_gated_local_mlp if arm in {"candidate", "v3"} else False
+            checkpoint_gated_local_mlp if arm in gated_arms else False
         ),
         **v3_options,
     )
@@ -995,7 +1115,12 @@ def _comparison(records: object) -> dict[str, object]:
         if isinstance(record, Mapping)
         and isinstance(record.get("best_validation"), Mapping)
     }
-    primary_arm = "v3" if "v3" in by_arm else "candidate"
+    if not by_arm:
+        return {
+            "published_atom3d_gnn_rmse_pK": PUBLISHED_ATOM3D_GNN_RMSE_PK,
+            "published_reference_is_same_harness": False,
+        }
+    primary_arm = _primary_arm(tuple(by_arm))
     candidate = by_arm.get(primary_arm)
     comparison: dict[str, object] = {
         "published_atom3d_gnn_rmse_pK": PUBLISHED_ATOM3D_GNN_RMSE_PK,
@@ -1009,7 +1134,16 @@ def _comparison(records: object) -> dict[str, object]:
     comparison[f"{primary_arm}_below_published_gnn_reference"] = (
         candidate_rmse < PUBLISHED_ATOM3D_GNN_RMSE_PK
     )
-    for baseline in ("candidate", "incumbent", "egnn"):
+    for baseline in (
+        "candidate",
+        "persistent_2e",
+        "incumbent",
+        "egnn",
+        "v3",
+        "ctp",
+        "geometry_o3",
+        "geometry_se3",
+    ):
         if baseline == primary_arm:
             continue
         record = by_arm.get(baseline)
@@ -1021,14 +1155,18 @@ def _comparison(records: object) -> dict[str, object]:
         comparison[f"{primary_arm}_minus_{baseline}_rmse_pK"] = delta
         comparison[f"{primary_arm}_beats_{baseline}"] = delta < 0.0
     incumbent_delta = comparison.get(f"{primary_arm}_minus_incumbent_rmse_pK")
-    if isinstance(incumbent_delta, float):
-        comparison["registered_primary_improvement_passed"] = (
-            incumbent_delta <= -0.02
-        )
+    if primary_arm == "ctp":
+        current_delta = comparison.get("ctp_minus_candidate_rmse_pK")
+        persistent_delta = comparison.get("ctp_minus_persistent_2e_rmse_pK")
+        if isinstance(current_delta, float) and isinstance(persistent_delta, float):
+            passed = current_delta <= -0.02 and persistent_delta < 0.0
+            comparison["registered_primary_improvement_passed"] = passed
+            comparison["registered_ctp_improvement_passed"] = passed
+    elif isinstance(incumbent_delta, float):
+        passed = incumbent_delta <= -0.02
+        comparison["registered_primary_improvement_passed"] = passed
         if primary_arm == "candidate":
-            comparison["registered_candidate_improvement_passed"] = (
-                incumbent_delta <= -0.02
-            )
+            comparison["registered_candidate_improvement_passed"] = passed
     return comparison
 
 

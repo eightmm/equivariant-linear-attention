@@ -86,6 +86,34 @@ translation, batching, and node-permutation behavior. This opt-in path supports
 only reflection-even `2e`; it is not a general spherical-harmonic or arbitrary
 `l>2` implementation.
 
+The opt-in static Cartesian tensor-product local path additionally lets a
+gated local stage execute `2e x 1o -> 1o`, `2e x 0e -> 2e`, and
+`1o x 1o -> 2e` contractions:
+
+```python
+model = EquivariantAttention(
+    EquivariantAttentionConfig(
+        node_dim=node_dim,
+        hidden_irreps="64x0e + 4x1o + 4x2e",
+        num_heads=4,
+        local_head_counts=(4, 0, 4),
+        use_gated_local_transport=True,
+        use_grouped_invariant_normalization=True,
+        use_cartesian_tensor_product_local_transport=True,
+        use_static_tensor_carrier=True,
+        cartesian_tensor_product_local_layers=(2,),
+    )
+)
+```
+
+The path is statically selected at construction, uses no spherical-harmonic
+dependency, and preserves the fixed-rank `O(N)` global block plus `O(E)` local
+transport. On the three-seed ATOM3D-LBA ID30 validation study it improved the
+persistent-`2e`-only control by `0.011251 pK` on average, but regressed the
+current scalar/vector candidate by `0.010053 pK` and lost all three paired
+seeds. It therefore remains a research capability and is not a promoted
+default. See the [CTP-LGL report](docs/CTP_LGL_20260727.md).
+
 Setting `coordinate_updates=True` adds bounded, graph-centroid-preserving
 updates between successive blocks and returns `out["node_positions"]`. Each
 step is at most 0.25 Angstrom, and every later local/global geometry calculation
@@ -143,6 +171,32 @@ candidate-versus-incumbent validation interval crosses zero and all arms clip
 over 99% of updates, so the switches remain opt-in. See the
 [full LBA report](docs/LBA_ID30_VALIDATION_20260724.md).
 
+For chiral biomolecular work, the local operator can be constructed under an
+explicit proper-rotation-only contract:
+
+```python
+model = EquivariantAttention(
+    EquivariantAttentionConfig(
+        node_dim=node_dim,
+        hidden_irreps="64x0e + 4x1o",
+        num_heads=4,
+        local_head_counts=(4, 0, 4),
+        use_gated_local_transport=True,
+        use_grouped_invariant_normalization=True,
+        symmetry_group="SE3",
+        use_geometry_aware_local_attention=True,
+        use_se3_axial_tensor_product=True,
+        geometry_aware_local_layers=(0,),
+    )
+)
+```
+
+The sparse refinement fuses pair, `1o`, and `2e` scores without a dense pair
+tensor; the SE(3)-only lane additionally mixes the axial `l=1` component of
+`2e x 2e`. Full O(3) remains the default. A matched LBA validation screen found
+the feature active but did not find an accuracy gain, so it remains opt-in.
+See the [O(3)/SE(3) report](docs/GEOMETRY_AWARE_SE3_20260727.md).
+
 Architecture v3 adds opt-in exact quartic angular features, a second learned
 `1o` axis per head, invariant non-scalar RMS normalization, and public
 equivariant inputs:
@@ -170,8 +224,9 @@ out = model(
 The two-axis option is two copies of `1o`, not a general `l=2` irrep. The
 quartic term and compressed quadratic summaries remain exact and fixed width,
 so global scaling is still `O(N)` without an `N x N` tensor. The implementation
-and CPU contracts are complete; v3 QM9/CUDA and conditional LBA evidence is
-pending because CUDA was unavailable at the recorded run boundary. See the
+and CPU contracts are complete. The later strict-CUDA QM9 screen did not
+promote any v3 arm, so these switches remain opt-in and no conditional LBA
+comparison was admitted. See the
 [v3 capability comparison](docs/ARCHITECTURE_V3_20260725.md) and
 [exact equations](docs/LAYER_MATH.md#optional-architecture-v3-angular-features).
 
@@ -214,8 +269,9 @@ and is excluded from any linear-time preprocessing claim.
 
 ## Mathematical contract
 
-- O(3) equivariant, including reflections; translation invariant and
-  permutation consistent.
+- O(3) equivariant by default, including reflections; optional SE(3)-only
+  axial local values are explicit and never enabled silently. Both contracts
+  are translation invariant and permutation consistent.
 - Persistent `0e` scalars and polar `1o` vectors; transient `2e` moments by
   default, with opt-in persistent reflection-even `2e` hidden channels.
 - `node_feats` contains invariant scalar (`0e`) channels only; coordinates are
@@ -254,9 +310,9 @@ and is excluded from any linear-time preprocessing claim.
   float32 or float64 and are never downcast through model precision.
 - Integer, nonnegative, contiguous graph IDs starting at zero.
 
-Scalar outputs are O(3)-invariant and therefore cannot distinguish
-isolated mirror pairs. Chirality-sensitive prediction requires a future,
-explicitly tested parity-complete extension.
+Default-O(3) scalar outputs cannot distinguish isolated mirror pairs. SE(3)
+mode removes that enforced reflection invariance, but enantiomer
+discrimination remains task- and data-dependent rather than guaranteed.
 
 See [the model contract](docs/MODEL.md) and [the derivation](docs/LAYER_MATH.md).
 

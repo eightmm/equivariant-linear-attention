@@ -121,6 +121,67 @@ def test_plan_records_checkpointed_candidate_memory_mode() -> None:
     assert all(layer.gated_local is None for layer in incumbent.layers)
 
 
+def test_ctp_lba_arms_share_persistent_2e_control_and_select_ctp_primary() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba-ctp",
+            "--arms",
+            "candidate",
+            "persistent_2e",
+            "ctp",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+    current = symbols["_build_model"]("candidate", None)
+    control = symbols["_build_model"]("persistent_2e", None)
+    ctp = symbols["_build_model"]("ctp", None)
+
+    assert plan["primary_arm"] == "ctp"
+    assert current.hidden_irreps.tensors == 0
+    assert control.hidden_irreps.tensors == ctp.hidden_irreps.tensors == 4
+    assert control.config.use_static_tensor_carrier is True
+    assert ctp.config.use_static_tensor_carrier is True
+    assert control.config.use_cartesian_tensor_product_local_transport is False
+    assert ctp.config.use_cartesian_tensor_product_local_transport is True
+    assert ctp.config.cartesian_tensor_product_local_layers == (2,)
+    assert ctp.layers[0].gated_local.tensor_product_gate is None
+    assert ctp.layers[2].gated_local.tensor_product_gate is not None
+    assert ctp.config.coordinate_updates is False
+
+
+def test_geometry_lba_arms_select_o3_or_se3_without_persistent_tensors() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba-geometry",
+            "--arms",
+            "candidate",
+            "geometry_o3",
+            "geometry_se3",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+    o3 = symbols["_build_model"]("geometry_o3", None)
+    se3 = symbols["_build_model"]("geometry_se3", None)
+
+    assert plan["primary_arm"] == "geometry_se3"
+    assert o3.hidden_irreps.tensors == se3.hidden_irreps.tensors == 0
+    assert o3.symmetry == "O3"
+    assert se3.symmetry == "SE3"
+    assert o3.config.use_geometry_aware_local_attention is True
+    assert se3.config.use_geometry_aware_local_attention is True
+    assert o3.config.use_se3_axial_tensor_product is False
+    assert se3.config.use_se3_axial_tensor_product is True
+    assert se3.config.geometry_aware_local_layers == (0,)
+    assert se3.layers[0].gated_local.geometry_attention is not None
+    assert se3.layers[2].gated_local.geometry_attention is None
+
+
 def test_plan_records_explicit_no_clipping_policy() -> None:
     symbols = _symbols()
     args = symbols["parse_args"](
