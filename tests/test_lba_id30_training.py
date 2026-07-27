@@ -49,6 +49,43 @@ def test_plan_uses_official_validation_and_has_no_test_switch() -> None:
     assert not hasattr(args, "evaluate_test")
 
 
+def test_plan_records_explicit_model_and_order_seeds() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba",
+            "--model-seed",
+            "41",
+            "--order-seed",
+            "1041",
+            "--dry-run",
+        ]
+    )
+
+    plan = symbols["_plan"](args)
+
+    assert plan["model_seed"] == 41
+    assert plan["order_seed"] == 1041
+
+
+def test_explicit_model_seed_controls_initialization() -> None:
+    symbols = _symbols()
+    build_model = symbols["_build_model"]
+
+    first = build_model("candidate", None, model_seed=41)
+    repeated = build_model("candidate", None, model_seed=41)
+    different = build_model("candidate", None, model_seed=42)
+
+    assert all(
+        torch.equal(first.state_dict()[key], repeated.state_dict()[key])
+        for key in first.state_dict()
+    )
+    assert any(
+        not torch.equal(first.state_dict()[key], different.state_dict()[key])
+        for key in first.state_dict()
+    )
+
+
 def test_learning_rate_warms_up_and_cosine_decays() -> None:
     learning_rate = _symbols()["_learning_rate"]
 

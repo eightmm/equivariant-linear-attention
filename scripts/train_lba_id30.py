@@ -91,6 +91,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--min-lr-ratio", type=float, default=0.05)
+    parser.add_argument("--model-seed", type=int, default=MODEL_SEED)
+    parser.add_argument("--order-seed", type=int, default=ORDER_SEED)
     parser.add_argument(
         "--amp-dtype",
         choices=("none", "bfloat16"),
@@ -115,6 +117,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("learning rate must be positive and weight decay nonnegative")
     if args.grad_clip <= 0.0:
         parser.error("--grad-clip must be positive")
+    if args.model_seed < 0 or args.order_seed < 0:
+        parser.error("--model-seed and --order-seed must be nonnegative")
     if not 0.0 <= args.min_lr_ratio <= 1.0:
         parser.error("--min-lr-ratio must lie in [0, 1]")
     if args.budget_seconds <= 0.0:
@@ -199,8 +203,8 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "checkpoint_metric": "validation_rmse_pK",
         },
         "batch_size": args.batch_size,
-        "model_seed": MODEL_SEED,
-        "order_seed": ORDER_SEED,
+        "model_seed": args.model_seed,
+        "order_seed": args.order_seed,
         "determinism": "strict",
         "amp_dtype": args.amp_dtype,
         "budget_seconds": args.budget_seconds,
@@ -225,7 +229,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Refusing Hub access makes the no-new-download boundary executable.
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
-    reproducibility = configure_reproducibility(seed=MODEL_SEED, mode="strict")
+    reproducibility = configure_reproducibility(
+        seed=args.model_seed,
+        mode="strict",
+    )
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
@@ -290,18 +297,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     candidate_parameters = _parameter_count(
-        _build_model("candidate", None, args.v3_variant)
+        _build_model(
+            "candidate",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+        )
     )
     incumbent_parameters = _parameter_count(
-        _build_model("incumbent", None, args.v3_variant)
+        _build_model(
+            "incumbent",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+        )
     )
-    v3_parameters = _parameter_count(_build_model("v3", None, args.v3_variant))
+    v3_parameters = _parameter_count(
+        _build_model(
+            "v3",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+        )
+    )
     match_target_parameters = (
         v3_parameters if "v3" in args.arms else candidate_parameters
     )
     egnn_width = _matched_egnn_width(match_target_parameters)
     egnn_parameters = _parameter_count(
-        _build_model("egnn", egnn_width, args.v3_variant)
+        _build_model(
+            "egnn",
+            egnn_width,
+            args.v3_variant,
+            model_seed=args.model_seed,
+        )
     )
     result["dataset_summary"].update(
         {
@@ -338,7 +367,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             continue
         arm_budget = remaining / remaining_arms
-        model = _build_model(arm, egnn_width, args.v3_variant)
+        model = _build_model(
+            arm,
+            egnn_width,
+            args.v3_variant,
+            model_seed=args.model_seed,
+        )
         arm_result = _train_arm(
             arm=arm,
             model=model,
@@ -378,8 +412,10 @@ def _build_model(
     arm: str,
     egnn_width: int | None,
     v3_variant: str = "combined",
+    *,
+    model_seed: int = MODEL_SEED,
 ) -> torch.nn.Module:
-    torch.manual_seed(MODEL_SEED)
+    torch.manual_seed(model_seed)
     if arm == "egnn":
         if egnn_width is None:
             raise ValueError("egnn_width is required for the EGNN arm")
@@ -464,7 +500,9 @@ def _train_arm(
             break
         order = torch.randperm(
             len(train_samples),
-            generator=torch.Generator().manual_seed(ORDER_SEED + epoch - 1),
+            generator=torch.Generator().manual_seed(
+                args.order_seed + epoch - 1
+            ),
         ).tolist()
         epoch_losses: list[float] = []
         model.train()
