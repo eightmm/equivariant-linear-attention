@@ -65,6 +65,7 @@ def build_regression_model(
     geometry_aware_local_layers: tuple[int, ...] | None = None,
     use_whitened_global_read: bool = False,
     whitened_global_ridge: float = 0.1,
+    whitened_global_rank_gate: bool = False,
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -123,6 +124,7 @@ def build_regression_model(
             geometry_aware_local_layers=geometry_aware_local_layers,
             use_whitened_global_read=use_whitened_global_read,
             whitened_global_ridge=whitened_global_ridge,
+            whitened_global_rank_gate=whitened_global_rank_gate,
             readout_mode=readout_mode,
             scalar_content_mode=scalar_content_mode,
             use_tensor_product_kernel=use_tensor_product_kernel,

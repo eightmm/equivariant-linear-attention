@@ -208,6 +208,7 @@ class EquivariantAttentionConfig:
     geometry_aware_local_layers: tuple[int, ...] | None = None
     use_whitened_global_read: bool = False
     whitened_global_ridge: float = 0.1
+    whitened_global_rank_gate: bool = False
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,7 @@ class EquivariantAttention(nn.Module):
                         and local_head_counts[layer_index] < config.num_heads
                     ),
                     whitened_global_ridge=config.whitened_global_ridge,
+                    whitened_global_rank_gate=config.whitened_global_rank_gate,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -910,6 +912,7 @@ class _EquivariantMomentLayer(nn.Module):
         eps: float,
         use_whitened_global_read: bool = False,
         whitened_global_ridge: float = 0.1,
+        whitened_global_rank_gate: bool = False,
     ) -> None:
         super().__init__()
         self.scalars = scalars
@@ -1075,6 +1078,7 @@ class _EquivariantMomentLayer(nn.Module):
         # Zero initialized and RNG free, so an enabled model starts as the exact
         # incumbent function while both mixes still receive gradient.
         self.whitened_global_ridge = float(whitened_global_ridge)
+        self.whitened_global_rank_gate = whitened_global_rank_gate
         self.whitened_scalar_mix: nn.Parameter | None = None
         self.whitened_vector_mix: nn.Parameter | None = None
         if use_whitened_global_read:
@@ -1502,6 +1506,7 @@ class _EquivariantMomentLayer(nn.Module):
                                 if self.whitened_vector_mix is None
                                 else self.whitened_vector_mix[global_heads]
                             ),
+                            whitened_rank_gate=self.whitened_global_rank_gate,
                         )
                     )
 
@@ -2640,6 +2645,7 @@ def _global_moment_messages(
     whitened_ridge: float | None = None,
     whitened_scalar_mix: torch.Tensor | None = None,
     whitened_vector_mix: torch.Tensor | None = None,
+    whitened_rank_gate: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if whitened_ridge is not None and (
         whitened_scalar_mix is None or whitened_vector_mix is None
@@ -2777,6 +2783,7 @@ def _global_moment_messages(
             alignment_dot_scale=alignment_dot_scale,
             kernel_floor=kernel_floor,
             ridge=whitened_ridge,
+            rank_reliability_gate=whitened_rank_gate,
         )
         scalar_mix = whitened_scalar_mix.to(dtype=moment_dtype)[None, :, None]
         vector_mix = whitened_vector_mix.to(dtype=moment_dtype)[None, :, None]
@@ -4455,6 +4462,7 @@ def _whitened_global_read(
     alignment_dot_scale: torch.Tensor,
     kernel_floor: float,
     ridge: float,
+    rank_reliability_gate: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Read ``phi_i^T (G + ridge I)^-1 S`` instead of the pooled ``phi_i^T S``.
 
@@ -4545,6 +4553,15 @@ def _whitened_global_read(
             coefficients,
         )
         read = _unpad_by_graph(padded_read, layout)
+    if rank_reliability_gate:
+        # A graph with n key samples cannot identify more than n directions of
+        # an F-dimensional Gram matrix.  The conservative degrees-of-freedom
+        # fraction below disables the auxiliary read when n <= F and approaches
+        # one on the large graphs for which whitening is statistically stable.
+        reliability = (
+            (counts - float(features)).clamp_min(0.0) / counts
+        )[batch]
+        read = read * reliability[:, None, None]
     offset = scalar_value.shape[-1]
     return read[..., :offset], read[..., offset:]
 
@@ -5240,6 +5257,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "coordinate_updates",
         "use_multiscale_spatial_kernel",
         "use_whitened_global_read",
+        "whitened_global_rank_gate",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
@@ -5305,6 +5323,10 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             )
     if config.use_whitened_global_read:
         _validate_whitened_global_read(config)
+    elif config.whitened_global_rank_gate:
+        raise ValueError(
+            "whitened_global_rank_gate requires use_whitened_global_read"
+        )
     if config.use_pairwise_local_content and not any(local_head_counts):
         raise ValueError("use_pairwise_local_content requires at least one local head")
     if (

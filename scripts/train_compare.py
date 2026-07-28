@@ -418,6 +418,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grouped-invariant-normalization", action="store_true")
     parser.add_argument("--whitened-global-read", action="store_true")
     parser.add_argument("--whitened-global-ridge", type=float, default=0.1)
+    parser.add_argument(
+        "--whitened-global-rank-gate",
+        action="store_true",
+        help=(
+            "scale the auxiliary whitened read by max(0, n-F)/n per graph, "
+            "where F is the kernel-feature dimension"
+        ),
+    )
     parser.add_argument("--irrep-rms-normalization", action="store_true")
     parser.add_argument(
         "--angular-feature-rank",
@@ -532,6 +540,7 @@ def _build_benchmark_model(
             "grouped_invariant_normalization": False,
             "whitened_global_read": False,
             "whitened_global_ridge": 0.1,
+            "whitened_global_rank_gate": False,
             "irrep_rms_normalization": False,
             "angular_feature_rank": 1,
             "quartic_kernel": False,
@@ -611,6 +620,7 @@ def _build_benchmark_model(
         use_grouped_invariant_normalization=(args.grouped_invariant_normalization),
         use_whitened_global_read=args.whitened_global_read,
         whitened_global_ridge=args.whitened_global_ridge,
+        whitened_global_rank_gate=args.whitened_global_rank_gate,
         use_irrep_rms_normalization=args.irrep_rms_normalization,
         angular_feature_rank=args.angular_feature_rank,
         use_quartic_kernel=args.quartic_kernel,
@@ -2129,6 +2139,7 @@ def _run_config(
         "grouped_invariant_normalization": (args.grouped_invariant_normalization),
         "whitened_global_read": args.whitened_global_read,
         "whitened_global_ridge": args.whitened_global_ridge,
+        "whitened_global_rank_gate": args.whitened_global_rank_gate,
         "irrep_rms_normalization": args.irrep_rms_normalization,
         "checkpoint_gated_local_mlp": args.checkpoint_gated_local_mlp,
         "precompute_local_edges": args.precompute_local_edges,

@@ -105,6 +105,7 @@ def _call_read(
     *,
     ridge: float = _RIDGE,
     kernel_floor: float = 1.0,
+    rank_reliability_gate: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     batch = inputs["batch"]
     num_graphs = int(batch.max()) + 1
@@ -123,7 +124,53 @@ def _call_read(
         alignment_dot_scale=inputs["alignment_scale"],
         kernel_floor=kernel_floor,
         ridge=ridge,
+        rank_reliability_gate=rank_reliability_gate,
     )
+
+
+def test_rank_reliability_gate_disables_underdetermined_graphs() -> None:
+    inputs = _read_inputs(nodes=9, heads=1, values=3)
+    scalar, vector = _call_read(inputs, rank_reliability_gate=True)
+
+    assert torch.equal(scalar, torch.zeros_like(scalar))
+    assert torch.equal(vector, torch.zeros_like(vector))
+
+
+def test_rank_reliability_gate_uses_the_graphwise_degrees_of_freedom_fraction() -> None:
+    generator = torch.Generator().manual_seed(23)
+    nodes = 40
+    inputs = {
+        "query_scalar": torch.rand(
+            (nodes, 1, 2), generator=generator, dtype=torch.float64
+        ),
+        "key_scalar": torch.rand(
+            (nodes, 1, 2), generator=generator, dtype=torch.float64
+        ),
+        "query_vector": torch.randn(
+            (nodes, 1, 3), generator=generator, dtype=torch.float64
+        ),
+        "key_vector": torch.randn(
+            (nodes, 1, 3), generator=generator, dtype=torch.float64
+        ),
+        "kernel_scale": torch.tensor([0.2], dtype=torch.float64),
+        "alignment_scale": torch.tensor([0.1], dtype=torch.float64),
+        "scalar_value": torch.randn(
+            (nodes, 1, 3), generator=generator, dtype=torch.float64
+        ),
+        "vector_value": torch.randn(
+            (nodes, 1, 3), generator=generator, dtype=torch.float64
+        ),
+        "batch": torch.zeros(nodes, dtype=torch.long),
+    }
+    scalar, vector = _call_read(inputs)
+    gated_scalar, gated_vector = _call_read(
+        inputs, rank_reliability_gate=True
+    )
+    feature_count = inputs["query_scalar"].shape[-1] + 1 + 3 + 6
+    expected = (nodes - feature_count) / nodes
+
+    torch.testing.assert_close(gated_scalar, expected * scalar)
+    torch.testing.assert_close(gated_vector, expected * vector)
 
 
 def _dense_kernel(
