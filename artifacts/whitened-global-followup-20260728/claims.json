@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "claim-qm9-safety",
+      "text": "The 2F rank-gated whitened path satisfies the registered 500-update QM9 safety condition against a schema-matched frozen-mix control.",
+      "permitted_inference": "On the fixed seed-42 QM9 gap validation smoke, the rank-gated active path is finite and has absolute MAE delta no larger than 0.020 eV.",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": [
+        "computed"
+      ],
+      "dependencies": [
+        "qm9-seed42-shared-split"
+      ],
+      "falsifier": "A correctly paired rerun of the registered smoke has nonfinite output, reads test labels, or exceeds 0.020 eV absolute MAE delta.",
+      "uncertainty": "One seed, one target, 500 updates, and validation-only; no general QM9 accuracy benefit is inferred.",
+      "next_action": "Keep the rank gate opt-in and require a new protocol for any broader small-graph claim."
+    },
+    {
+      "id": "claim-lba-rejection",
+      "text": "The schema-matched ridge-0.1 rank-gated whitened path does not satisfy the registered ATOM3D-LBA ID30 promotion criteria.",
+      "permitted_inference": "Across fixed seeds 41--43 in this validation harness, mean paired last-epoch RMSE improvement is below 0.020 pK and fewer than two seeds improve.",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": [
+        "computed"
+      ],
+      "dependencies": [
+        "lba-id30-shared-topology"
+      ],
+      "falsifier": "A protocol-compatible, full-state/schema-matched rerun reaches at least 0.020 pK mean improvement, at least two wins, and every remaining registered criterion.",
+      "uncertainty": "Three model/order seeds and same-validation evidence only; no test, cold-target, pose, or published-baseline conclusion.",
+      "next_action": "Do not promote whitening; test a materially different architecture under a new preregistration."
+    },
+    {
+      "id": "claim-no-default-change",
+      "text": "This run authorizes no whitening default change and no conditional clipping or scalar/vector lane ablation.",
+      "permitted_inference": "The public whitening and rank-gate defaults remain disabled because the required LBA primary failed.",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": [
+        "computed"
+      ],
+      "dependencies": [
+        "conditional-followup-rule"
+      ],
+      "falsifier": "The recorded LBA decision passes or the preregistered conditional rule is shown not to require an LBA pass.",
+      "uncertainty": "This is a decision under the frozen protocol, not a proof that every whitening formulation is ineffective.",
+      "next_action": "Preserve the negative result and leave both options off by default."
+    }
+  ]
+}

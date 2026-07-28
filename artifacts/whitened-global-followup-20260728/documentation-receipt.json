@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-28T14:52:00+09:00",
+  "decision": "reject_whitened_global_read_promotion",
+  "defaults": {
+    "use_whitened_global_read": false,
+    "whitened_global_rank_gate": false,
+    "source_path": "src/equivariant_attention/moment.py",
+    "source_revision": "36b4fa63b704e83a73170e2b5a8d0bdb24a656d7",
+    "source_sha256": "e2ebc389b3ea0fe18c5a7de88a7c1b813a336ddddd2e39ea2483a0945d9aa27a"
+  },
+  "documents": [
+    {
+      "path": "PROJECT.md",
+      "sha256": "0cc44f448a8bf071acb5c914dfc4f14158849f791052e54a78b88112ee42c9c6"
+    },
+    {
+      "path": "docs/CHANGELOG.md",
+      "sha256": "561cd870137a9ac2bc7670a6d7a6ef180860fdb1a3cff0ed73c940505810687a"
+    },
+    {
+      "path": "docs/EXPERIMENTS.jsonl",
+      "sha256": "b35deae188c78f098c4c972673a08dc6f76a23ed51ffd357cf07ed0542503d9e"
+    },
+    {
+      "path": "docs/TRAINING.md",
+      "sha256": "73694a8407350dfb1c671036ca85cd0ec321cd9bf4d94dfe48a41d70dc018eff"
+    },
+    {
+      "path": "docs/WHITENED_GLOBAL_READ_20260727.md",
+      "sha256": "0ce0b45afbcd8acb7a30133f3443d82b9cdca648dc308f2bb89a53d65ae46e47"
+    }
+  ],
+  "claims_preserved": [
+    "The schema-matched QM9 safety condition passed.",
+    "The three-seed LBA accuracy promotion condition failed.",
+    "No architecture default changed.",
+    "Conditional clipping and scalar/vector ablations were not executed."
+  ]
+}

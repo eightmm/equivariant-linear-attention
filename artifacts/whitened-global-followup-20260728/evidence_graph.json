@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {
+      "id": "claim-qm9-safety",
+      "type": "claim",
+      "label": "Bounded QM9 safety"
+    },
+    {
+      "id": "claim-lba-rejection",
+      "type": "claim",
+      "label": "LBA promotion rejected"
+    },
+    {
+      "id": "claim-no-default-change",
+      "type": "claim",
+      "label": "No default or conditional follow-up"
+    },
+    {
+      "id": "execution-qm9-rank-safety",
+      "type": "execution",
+      "label": "Strict CUDA QM9 schema-matched safety run"
+    },
+    {
+      "id": "artifact-qm9-summary",
+      "type": "artifact",
+      "label": "QM9 safety summary 37bee694"
+    },
+    {
+      "id": "execution-lba-rank-confirmation",
+      "type": "execution",
+      "label": "Strict CUDA LBA seeds 41--43 confirmation"
+    },
+    {
+      "id": "artifact-lba-summary",
+      "type": "artifact",
+      "label": "LBA confirmation summary 9ece52a5"
+    },
+    {
+      "id": "artifact-conditional-followups",
+      "type": "artifact",
+      "label": "Conditional non-execution record dadd3fbd"
+    },
+    {
+      "id": "dataset-qm9-seed42",
+      "type": "dataset",
+      "label": "QM9 seeded random-row train/validation split"
+    },
+    {
+      "id": "dataset-lba-id30",
+      "type": "dataset",
+      "label": "ATOM3D-LBA official ID30 train/validation split and frozen topology"
+    }
+  ],
+  "edges": [
+    {
+      "source": "dataset-qm9-seed42",
+      "target": "execution-qm9-rank-safety",
+      "relation": "depends_on",
+      "independence_group": "qm9-seed42-shared-split"
+    },
+    {
+      "source": "execution-qm9-rank-safety",
+      "target": "artifact-qm9-summary",
+      "relation": "derived_from",
+      "independence_group": "qm9-seed42-shared-split"
+    },
+    {
+      "source": "artifact-qm9-summary",
+      "target": "claim-qm9-safety",
+      "relation": "supports",
+      "independence_group": "qm9-seed42-shared-split"
+    },
+    {
+      "source": "dataset-lba-id30",
+      "target": "execution-lba-rank-confirmation",
+      "relation": "depends_on",
+      "independence_group": "lba-id30-shared-topology"
+    },
+    {
+      "source": "execution-lba-rank-confirmation",
+      "target": "artifact-lba-summary",
+      "relation": "derived_from",
+      "independence_group": "lba-id30-shared-topology"
+    },
+    {
+      "source": "artifact-lba-summary",
+      "target": "claim-lba-rejection",
+      "relation": "supports",
+      "independence_group": "lba-id30-shared-topology"
+    },
+    {
+      "source": "artifact-lba-summary",
+      "target": "artifact-conditional-followups",
+      "relation": "derived_from",
+      "independence_group": "conditional-followup-rule"
+    },
+    {
+      "source": "artifact-conditional-followups",
+      "target": "claim-no-default-change",
+      "relation": "supports",
+      "independence_group": "conditional-followup-rule"
+    }
+  ]
+}

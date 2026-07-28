@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "decision": "not_executed",
+  "condition": "Run clipping interaction and scalar/vector lane ablations if and only if both the QM9 safety smoke and the LBA three-seed confirmation pass.",
+  "qm9_safety_passed": true,
+  "lba_confirmation_passed": false,
+  "reason": "The schema-matched rank-gated ridge-0.1 arm improved only one of three seeds and had mean paired last-epoch RMSE improvement -0.0012430589493228617 pK, below the preregistered +0.020 pK threshold.",
+  "not_run": [
+    "gradient-clipping interaction factorial",
+    "scalar-only whitened lane ablation",
+    "vector-only whitened lane ablation"
+  ],
+  "evidence": {
+    "qm9": "qm9-rank-safety/summary.json",
+    "lba": "lba-rank-confirmation/summary.json"
+  },
+  "test_evaluated": false
+}

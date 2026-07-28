@@ -1,0 +1,46 @@
+{
+  "covered_artifacts": [
+    {
+      "path": "qm9-rank-safety/summary.json",
+      "sha256": "37bee6948170f533cbf967ed0c43bf23a7b7c15e933c74923077065ea63d56d7"
+    },
+    {
+      "path": "lba-rank-confirmation/summary.json",
+      "sha256": "9ece52a55b69dc147296755121b649d591a0c3be5e32dcd216480de3bdb275eb"
+    },
+    {
+      "path": "conditional-followups.json",
+      "sha256": "dadd3fbd9fbe6980a677603f054ccbbc8557aed58474666a09faf46d1d6b52f1"
+    },
+    {
+      "path": "report.md",
+      "sha256": "1145de34979064cc61183ddd7b78d3d426cc664b05e29976a813aaefff689c3f"
+    }
+  ],
+  "covered_claim_ids": [
+    "claim-lba-rejection",
+    "claim-no-default-change",
+    "claim-qm9-safety"
+  ],
+  "findings": [],
+  "fingerprint": "0630268c09f63300c3af82bc84469618b7cfafa316bf6e4cd6e20a26880b2ce3",
+  "independent": true,
+  "limitations": [
+    "This was a record, source, and method review only; no training, tests, checkpoints, or performance runs were executed.",
+    "Inspection was intentionally limited to the two summary JSON files, conditional-followups.json, report.md, and the rank-gate, frozen-mix, schema-control, and decision functions named by the packet.",
+    "The QM9 result is one seed, one target, 500 updates, and a warm random-row validation split. Because every recorded molecule is below the 2F threshold, it verifies exact bypass safety rather than behavior of an active whitened solve on small graphs.",
+    "The LBA result uses three model/order seeds and one official ID30 validation harness with last-epoch selection. It provides no test-set, cold-ligand, cold-target, pose-robustness, calibration, applicability-domain, or published-baseline conclusion.",
+    "The four reviewed artifacts and all six inspected source files matched the packet-declared SHA-256 values, but producer-entered no-test and non-execution metadata were not independently observed outside the allowed records."
+  ],
+  "packet_fingerprint": "8790adae345cc3d284d152c36cff2fe6872b7e9136581a2e2fdf4b318837acd4",
+  "review_id": "review-8790adae345cc3d284d1",
+  "review_modes": [
+    "method",
+    "record",
+    "source"
+  ],
+  "review_task_id": "review-task-8790adae345cc3d284d1",
+  "reviewer": "Codex independent scientific reviewer /root/ctp_record_review",
+  "schema_version": 1,
+  "status": "passed"
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "git_commit": "36b4fa63b704e83a73170e2b5a8d0bdb24a656d7",
+  "git_dirty": false,
+  "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "lockfile": {
+    "path": "uv.lock",
+    "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2"
+  },
+  "files": [
+    {
+      "path": "scripts/train_compare.py",
+      "sha256": "6d8afdd8a38e1792268d1232135af5328229038448739073f3ba4ea148d8f1a4"
+    },
+    {
+      "path": "scripts/run_whitened_qm9_smoke.py",
+      "sha256": "d10f297b0e17d48f83f7db9201bb970c3a1f861d98d4064a015ad9f68dd6b21d"
+    },
+    {
+      "path": "scripts/run_whitened_confirmation.py",
+      "sha256": "4ff4a23c10d232ab3cf105a6819f4925a973b0f1f02a22ffc3cc5e40149b02f0"
+    },
+    {
+      "path": "scripts/train_lba_id30.py",
+      "sha256": "327b5886d066b9cb01856d9a7f0931ee6ed953cc6b4f26f7871c3efd17abecc8"
+    },
+    {
+      "path": "src/equivariant_attention/moment.py",
+      "sha256": "e2ebc389b3ea0fe18c5a7de88a7c1b813a336ddddd2e39ea2483a0945d9aa27a"
+    },
+    {
+      "path": "src/equivariant_attention/training.py",
+      "sha256": "a11149ced927b94191d0c46dd56c50c4bed1ec223ca3f56ad29111d848105159"
+    }
+  ],
+  "immutability": "The executions recorded their clean full Git commit. The commit, lockfile hash, and per-file hashes identify the exact source without relying on the later documentation worktree."
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "review_task_id": "review-task-8790adae345cc3d284d1",
+  "packet_fingerprint": "8790adae345cc3d284d152c36cff2fe6872b7e9136581a2e2fdf4b318837acd4",
+  "status": "passed",
+  "independent": true,
+  "reviewer": "Codex independent scientific reviewer /root/ctp_record_review",
+  "review_modes": [
+    "method",
+    "record",
+    "source"
+  ],
+  "reviewed_claim_ids": [
+    "claim-lba-rejection",
+    "claim-no-default-change",
+    "claim-qm9-safety"
+  ],
+  "reviewed_artifacts": [
+    {
+      "path": "qm9-rank-safety/summary.json",
+      "sha256": "37bee6948170f533cbf967ed0c43bf23a7b7c15e933c74923077065ea63d56d7"
+    },
+    {
+      "path": "lba-rank-confirmation/summary.json",
+      "sha256": "9ece52a55b69dc147296755121b649d591a0c3be5e32dcd216480de3bdb275eb"
+    },
+    {
+      "path": "conditional-followups.json",
+      "sha256": "dadd3fbd9fbe6980a677603f054ccbbc8557aed58474666a09faf46d1d6b52f1"
+    },
+    {
+      "path": "report.md",
+      "sha256": "1145de34979064cc61183ddd7b78d3d426cc664b05e29976a813aaefff689c3f"
+    }
+  ],
+  "claim_assessments": [
+    {
+      "claim_id": "claim-qm9-safety",
+      "assessment": "supported_with_bounded_interpretation",
+      "message": "Both records completed 500 strict-FP32 updates on identical data and split hashes, with identical full initial-state, state-schema, paired-base, parameter-count, trainable-parameter-count, and final-state hashes. Validation MAE and RMSE are exactly equal at 0.6406513190 eV and 0.8343833076 eV; the independently recalculated absolute MAE delta is 0, latency ratio is 1.0132991280, peak-allocation ratio is 1.0, and both records state test_evaluated=false. The source gate uses F=scalar feature width+1+3+6 and skips the auxiliary solve unless some graph has more than 2F nodes. The recorded QM9 maximum is 29 nodes versus F=26, so this supports safety of the registered all-small-graph bypass, not active whitening accuracy on QM9."
+    },
+    {
+      "claim_id": "claim-lba-rejection",
+      "assessment": "supported",
+      "message": "The source decision function compares paired last-epoch RMSE and requires full initial-state equality for the schema-control lane. The six records have equal within-seed initial-state and paired-base hashes, equal 168823-parameter schemas, 4400 matched updates, finite metrics, and test_evaluated=false. Recalculation gives paired improvements +0.0130614770, -0.0124213597, and -0.0043692941 pK; mean -0.0012430589 pK, sample SD 0.0130258877 pK, one win, and worst regression 0.0124213597 pK. The +0.020 pK mean and two-win gates therefore fail exactly as reported."
+    },
+    {
+      "claim_id": "claim-no-default-change",
+      "assessment": "supported",
+      "message": "The LBA decision records passed=false, default_change_authorized=false, and next_stage_authorized=false. conditional-followups.json implements the frozen conjunction, records QM9=true and LBA=false, lists all three follow-ups as not run, and states test_evaluated=false. The report's no-promotion, no-default-change, and conditional non-execution statements are consistent with those records and remain appropriately limited to this whitening formulation and validation harness."
+    }
+  ],
+  "findings": [],
+  "limitations": [
+    "This was a record, source, and method review only; no training, tests, checkpoints, or performance runs were executed.",
+    "Inspection was intentionally limited to the two summary JSON files, conditional-followups.json, report.md, and the rank-gate, frozen-mix, schema-control, and decision functions named by the packet.",
+    "The QM9 result is one seed, one target, 500 updates, and a warm random-row validation split. Because every recorded molecule is below the 2F threshold, it verifies exact bypass safety rather than behavior of an active whitened solve on small graphs.",
+    "The LBA result uses three model/order seeds and one official ID30 validation harness with last-epoch selection. It provides no test-set, cold-ligand, cold-target, pose-robustness, calibration, applicability-domain, or published-baseline conclusion.",
+    "The four reviewed artifacts and all six inspected source files matched the packet-declared SHA-256 values, but producer-entered no-test and non-execution metadata were not independently observed outside the allowed records."
+  ]
+}

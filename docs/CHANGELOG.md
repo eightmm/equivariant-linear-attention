@@ -10,6 +10,20 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [eval] v0.14 -> v0.15 (2026-07-28) — add a full-state/schema-matched
+  frozen-mix control for whitened-read training and rerun the bounded QM9
+  safety smoke plus official ID30 seeds 41--43 confirmation. impact: exposes
+  that zero-initialized forward equivalence did not imply an identical clipped
+  training trajectory, repairs that comparison, passes QM9 with zero MAE delta,
+  and rejects LBA promotion at mean paired effect `-0.001243 pK` with one of
+  three wins. Defaults stay off; conditional clipping and lane ablations are
+  closed without execution.
+- [model] v0.17 -> v0.18 (2026-07-28) — add the opt-in finite-sample whitening
+  reliability `max(0, n_g - 2F) / n_g` and skip the auxiliary branch entirely
+  for batches with no graph above `2F` nodes. impact: keeps the exact incumbent
+  computation, latency, memory, and 500-update QM9 metric on underdetermined
+  small graphs while preserving the verified whitening path on large graphs;
+  this is a safety/efficiency repair, not an accuracy promotion.
 - [eval] v0.13 -> v0.14 (2026-07-28) — narrow two contract claims that an
   independent Codex review found overstated, and add a regression test for each.
   impact: the whitened lane's large-shrinkage limit is documented as the

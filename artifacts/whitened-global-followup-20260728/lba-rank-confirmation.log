@@ -1,0 +1,455 @@
+Using the latest cached version of the dataset since vector-institute/atom3d-lba couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'default' at data/atom3d_lba/vector-institute___atom3d-lba/default/0.0.0/f93dd2d150a47c270f624620f84e07451a158705 (last modified on Thu Jul 23 15:18:49 2026).
+Using the latest cached version of the dataset since vector-institute/atom3d-lba couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'default' at data/atom3d_lba/vector-institute___atom3d-lba/default/0.0.0/f93dd2d150a47c270f624620f84e07451a158705 (last modified on Thu Jul 23 15:18:49 2026).
+built train topology 250/3507
+built train topology 500/3507
+built train topology 750/3507
+built train topology 1000/3507
+built train topology 1250/3507
+built train topology 1500/3507
+built train topology 1750/3507
+built train topology 2000/3507
+built train topology 2250/3507
+built train topology 2500/3507
+built train topology 2750/3507
+built train topology 3000/3507
+built train topology 3250/3507
+built train topology 3500/3507
+built train topology 3507/3507
+built val topology 250/466
+built val topology 466/466
+seed=41 arm=whitened_rank_frozen status=completed last_rmse=1.599205 steps=4400
+seed=41 arm=whitened_rank_ridge_0p1 status=completed last_rmse=1.586143 steps=4400
+seed=42 arm=whitened_rank_frozen status=completed last_rmse=1.602016 steps=4400
+seed=42 arm=whitened_rank_ridge_0p1 status=completed last_rmse=1.614437 steps=4400
+seed=43 arm=whitened_rank_frozen status=completed last_rmse=1.611601 steps=4400
+seed=43 arm=whitened_rank_ridge_0p1 status=completed last_rmse=1.615970 steps=4400
+{
+  "default_change_authorized": false,
+  "evidence_grade": "paired_three_seed_same_validation_harness",
+  "exact_ridge_resolved": false,
+  "lba_confirmation_passed": false,
+  "next_stage_authorized": false,
+  "passed": false,
+  "primary": {
+    "criteria": {
+      "all_arms_completed_without_test_access": true,
+      "finite_metrics": true,
+      "full_initial_state_matches": true,
+      "improving_seeds_at_least_2": false,
+      "latency_ratio_at_most_1.25": true,
+      "matched_update_counts": true,
+      "mean_improvement_at_least_0.02_pK": false,
+      "paired_base_initialization": true,
+      "peak_memory_ratio_at_most_1.25": true,
+      "worst_regression_at_most_0.05_pK": true
+    },
+    "improving_seed_count": 1,
+    "maximum_peak_memory_ratio": 1.0,
+    "maximum_step_latency_ratio": 0.9980235389367306,
+    "mean_best_checkpoint_improvement_pK": -0.0008921144295161998,
+    "mean_improvement_pK": -0.0012430589493228617,
+    "passed": false,
+    "per_seed": {
+      "41": {
+        "baseline_best_validation_rmse_pK": 1.5957479329023274,
+        "baseline_gradient_monitor": {
+          "clip_fraction": 0.985909090909091,
+          "clipped_step_count": 4338,
+          "effective_grad_scale_last": 0.41279626860794794,
+          "effective_grad_scale_mean": 0.1681471037073888,
+          "effective_grad_scale_min": 0.01816421952801882,
+          "effective_grad_scale_sum": 739.8472563125107,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1609.8888525224836,
+          "gradient_monitor_path_squared_norm_share_global_sum": 519.1977145788238,
+          "gradient_monitor_path_squared_norm_share_input_sum": 864.1587493522336,
+          "gradient_monitor_path_squared_norm_share_local_sum": 662.8270636548152,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 743.9276291047056,
+          "gradient_monitor_pre_clip_norm_square_sum": 983888.57645805,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.36588383011874626,
+            "global": 0.11799948058609633,
+            "input": 0.19639971576187126,
+            "local": 0.15064251446700347,
+            "readout": 0.16907446116016037
+          },
+          "pre_clip_grad_norm_ffn_last": 1.5165447880786536,
+          "pre_clip_grad_norm_ffn_max": 38.602528911431115,
+          "pre_clip_grad_norm_ffn_sum": 33973.69644758749,
+          "pre_clip_grad_norm_global_last": 0.8951543695244166,
+          "pre_clip_grad_norm_global_max": 20.699275714883573,
+          "pre_clip_grad_norm_global_sum": 18092.21142463666,
+          "pre_clip_grad_norm_gt_10_count": 2061,
+          "pre_clip_grad_norm_gt_1_count": 4338,
+          "pre_clip_grad_norm_gt_20_count": 761,
+          "pre_clip_grad_norm_gt_50_count": 6,
+          "pre_clip_grad_norm_gt_5_count": 3210,
+          "pre_clip_grad_norm_input_last": 1.120942299427903,
+          "pre_clip_grad_norm_input_max": 26.14707921430975,
+          "pre_clip_grad_norm_input_sum": 22835.645468513125,
+          "pre_clip_grad_norm_last": 2.4225025177001953,
+          "pre_clip_grad_norm_local_last": 1.0471426169009783,
+          "pre_clip_grad_norm_local_max": 23.936722165094796,
+          "pre_clip_grad_norm_local_sum": 20236.040397818146,
+          "pre_clip_grad_norm_max": 55.053287506103516,
+          "pre_clip_grad_norm_mean": 11.842001317939298,
+          "pre_clip_grad_norm_readout_last": 0.643652883313052,
+          "pre_clip_grad_norm_readout_max": 20.278951106507822,
+          "pre_clip_grad_norm_readout_sum": 9562.405559544924,
+          "pre_clip_grad_norm_std": 9.13115791616957,
+          "pre_clip_grad_norm_sum": 52104.80579893291,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.985909090909091,
+            "10": 0.4684090909090909,
+            "20": 0.17295454545454544,
+            "5": 0.7295454545454545,
+            "50": 0.0013636363636363637
+          }
+        },
+        "baseline_last_validation_rmse_pK": 1.599204878436863,
+        "best_rmse_improvement_pK": 0.009976200865237317,
+        "full_initial_state_matches": true,
+        "last_rmse_improvement_pK": 0.01306147698313831,
+        "paired_base_initialization_matches": true,
+        "peak_memory_ratio": 1.0,
+        "step_latency_ratio": 0.9750130371084597,
+        "whitened_best_validation_rmse_pK": 1.58577173203709,
+        "whitened_gradient_monitor": {
+          "clip_fraction": 0.985909090909091,
+          "clipped_step_count": 4338,
+          "effective_grad_scale_last": 0.21851945823189203,
+          "effective_grad_scale_mean": 0.1718419889463199,
+          "effective_grad_scale_min": 0.018697610809328007,
+          "effective_grad_scale_sum": 756.1047513638076,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1591.166406922768,
+          "gradient_monitor_path_squared_norm_share_global_sum": 508.31914819341927,
+          "gradient_monitor_path_squared_norm_share_input_sum": 853.7359058289446,
+          "gradient_monitor_path_squared_norm_share_local_sum": 689.7162430446184,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 757.0623064901141,
+          "gradient_monitor_pre_clip_norm_square_sum": 936201.5618654625,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.3616287288460836,
+            "global": 0.11552707913486801,
+            "input": 0.1940308876883965,
+            "local": 0.15675369160104963,
+            "readout": 0.17205961511138956
+          },
+          "pre_clip_grad_norm_ffn_last": 2.8762193058764964,
+          "pre_clip_grad_norm_ffn_max": 37.27517805993535,
+          "pre_clip_grad_norm_ffn_sum": 32837.49900236288,
+          "pre_clip_grad_norm_global_last": 1.6204258238725315,
+          "pre_clip_grad_norm_global_max": 19.224424839060234,
+          "pre_clip_grad_norm_global_sum": 17375.693494472634,
+          "pre_clip_grad_norm_gt_10_count": 2011,
+          "pre_clip_grad_norm_gt_1_count": 4338,
+          "pre_clip_grad_norm_gt_20_count": 729,
+          "pre_clip_grad_norm_gt_50_count": 3,
+          "pre_clip_grad_norm_gt_5_count": 3166,
+          "pre_clip_grad_norm_input_last": 2.198454851211866,
+          "pre_clip_grad_norm_input_max": 25.23977668291884,
+          "pre_clip_grad_norm_input_sum": 22186.515683957263,
+          "pre_clip_grad_norm_last": 4.57625150680542,
+          "pre_clip_grad_norm_local_last": 2.221791209742417,
+          "pre_clip_grad_norm_local_max": 22.418561211209482,
+          "pre_clip_grad_norm_local_sum": 20280.34053560386,
+          "pre_clip_grad_norm_max": 53.48276901245117,
+          "pre_clip_grad_norm_mean": 11.541857985705137,
+          "pre_clip_grad_norm_readout_last": 0.5235474652507135,
+          "pre_clip_grad_norm_readout_max": 20.278550707389936,
+          "pre_clip_grad_norm_readout_sum": 9831.892900466612,
+          "pre_clip_grad_norm_std": 8.919562572232177,
+          "pre_clip_grad_norm_sum": 50784.175137102604,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.985909090909091,
+            "10": 0.45704545454545453,
+            "20": 0.16568181818181818,
+            "5": 0.7195454545454546,
+            "50": 0.0006818181818181819
+          }
+        },
+        "whitened_last_validation_rmse_pK": 1.5861434014537248,
+        "whitened_mix_magnitude": {
+          "per_layer_scalar_absmax": [
+            0.10840719193220139
+          ],
+          "per_layer_vector_absmax": [
+            0.11614563316106796
+          ],
+          "scalar_absmax": 0.10840719193220139,
+          "vector_absmax": 0.11614563316106796
+        }
+      },
+      "42": {
+        "baseline_best_validation_rmse_pK": 1.6020158580005115,
+        "baseline_gradient_monitor": {
+          "clip_fraction": 0.9856818181818182,
+          "clipped_step_count": 4337,
+          "effective_grad_scale_last": 0.07643720692082365,
+          "effective_grad_scale_mean": 0.15798284181684558,
+          "effective_grad_scale_min": 0.011742436492860893,
+          "effective_grad_scale_sum": 695.1245039941206,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1170.8896594922635,
+          "gradient_monitor_path_squared_norm_share_global_sum": 1307.3781373420861,
+          "gradient_monitor_path_squared_norm_share_input_sum": 1084.5489190408477,
+          "gradient_monitor_path_squared_norm_share_local_sum": 155.25001066744144,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 681.9332852855645,
+          "gradient_monitor_pre_clip_norm_square_sum": 1184850.504820054,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.2661112862482417,
+            "global": 0.29713139485047413,
+            "input": 0.24648839069110176,
+            "local": 0.03528409333350942,
+            "readout": 0.154984837564901
+          },
+          "pre_clip_grad_norm_ffn_last": 4.617801406324914,
+          "pre_clip_grad_norm_ffn_max": 51.188712971254105,
+          "pre_clip_grad_norm_ffn_sum": 31105.67068126974,
+          "pre_clip_grad_norm_global_last": 4.709547298583763,
+          "pre_clip_grad_norm_global_max": 49.49170890262119,
+          "pre_clip_grad_norm_global_sum": 32992.5515089034,
+          "pre_clip_grad_norm_gt_10_count": 2233,
+          "pre_clip_grad_norm_gt_1_count": 4337,
+          "pre_clip_grad_norm_gt_20_count": 933,
+          "pre_clip_grad_norm_gt_50_count": 18,
+          "pre_clip_grad_norm_gt_5_count": 3328,
+          "pre_clip_grad_norm_input_last": 8.765781458373942,
+          "pre_clip_grad_norm_input_max": 43.943524991526814,
+          "pre_clip_grad_norm_input_sum": 27406.47855948289,
+          "pre_clip_grad_norm_last": 13.082633972167969,
+          "pre_clip_grad_norm_local_last": 3.7668828005507478,
+          "pre_clip_grad_norm_local_max": 11.994303513106422,
+          "pre_clip_grad_norm_local_sum": 9921.704414634298,
+          "pre_clip_grad_norm_max": 85.16120147705078,
+          "pre_clip_grad_norm_mean": 12.928524638004601,
+          "pre_clip_grad_norm_readout_last": 6.051697065629972,
+          "pre_clip_grad_norm_readout_max": 30.10724748963983,
+          "pre_clip_grad_norm_readout_sum": 10970.914035931024,
+          "pre_clip_grad_norm_std": 10.106307749392423,
+          "pre_clip_grad_norm_sum": 56885.508407220244,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.9856818181818182,
+            "10": 0.5075,
+            "20": 0.21204545454545454,
+            "5": 0.7563636363636363,
+            "50": 0.004090909090909091
+          }
+        },
+        "baseline_last_validation_rmse_pK": 1.6020158580005115,
+        "best_rmse_improvement_pK": -0.011699126640724922,
+        "full_initial_state_matches": true,
+        "last_rmse_improvement_pK": -0.0124213597090288,
+        "paired_base_initialization_matches": true,
+        "peak_memory_ratio": 1.0,
+        "step_latency_ratio": 0.993906417164786,
+        "whitened_best_validation_rmse_pK": 1.6137149846412364,
+        "whitened_gradient_monitor": {
+          "clip_fraction": 0.985909090909091,
+          "clipped_step_count": 4338,
+          "effective_grad_scale_last": 0.07272189093450185,
+          "effective_grad_scale_mean": 0.16519623062088584,
+          "effective_grad_scale_min": 0.013942398466540403,
+          "effective_grad_scale_sum": 726.8634147318977,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1206.4259581559056,
+          "gradient_monitor_path_squared_norm_share_global_sum": 1164.6935897351614,
+          "gradient_monitor_path_squared_norm_share_input_sum": 1095.780829225023,
+          "gradient_monitor_path_squared_norm_share_local_sum": 221.56725300774423,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 711.5323828847113,
+          "gradient_monitor_pre_clip_norm_square_sum": 1054010.1899279023,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.27418771776270584,
+            "global": 0.26470308857617303,
+            "input": 0.24904109755114157,
+            "local": 0.050356193865396415,
+            "readout": 0.16171190520107076
+          },
+          "pre_clip_grad_norm_ffn_last": 5.044641322698301,
+          "pre_clip_grad_norm_ffn_max": 42.07917932858211,
+          "pre_clip_grad_norm_ffn_sum": 29664.11839682629,
+          "pre_clip_grad_norm_global_last": 5.608671403693825,
+          "pre_clip_grad_norm_global_max": 40.7599888395442,
+          "pre_clip_grad_norm_global_sum": 29184.95244602423,
+          "pre_clip_grad_norm_gt_10_count": 2064,
+          "pre_clip_grad_norm_gt_1_count": 4338,
+          "pre_clip_grad_norm_gt_20_count": 821,
+          "pre_clip_grad_norm_gt_50_count": 19,
+          "pre_clip_grad_norm_gt_5_count": 3235,
+          "pre_clip_grad_norm_input_last": 8.337549779811434,
+          "pre_clip_grad_norm_input_max": 38.837490101435456,
+          "pre_clip_grad_norm_input_sum": 26106.116219870793,
+          "pre_clip_grad_norm_last": 13.751017570495605,
+          "pre_clip_grad_norm_local_last": 4.376542938903642,
+          "pre_clip_grad_norm_local_max": 13.206592150238238,
+          "pre_clip_grad_norm_local_sum": 10863.04567778226,
+          "pre_clip_grad_norm_max": 71.72367095947266,
+          "pre_clip_grad_norm_mean": 12.111704195930876,
+          "pre_clip_grad_norm_readout_last": 6.596666685809555,
+          "pre_clip_grad_norm_readout_max": 30.107242971670672,
+          "pre_clip_grad_norm_readout_sum": 10687.816426217958,
+          "pre_clip_grad_norm_std": 9.636098375817364,
+          "pre_clip_grad_norm_sum": 53291.49846209586,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.985909090909091,
+            "10": 0.4690909090909091,
+            "20": 0.18659090909090909,
+            "5": 0.7352272727272727,
+            "50": 0.004318181818181818
+          }
+        },
+        "whitened_last_validation_rmse_pK": 1.6144372177095403,
+        "whitened_mix_magnitude": {
+          "per_layer_scalar_absmax": [
+            0.08960743248462677
+          ],
+          "per_layer_vector_absmax": [
+            0.3436368703842163
+          ],
+          "scalar_absmax": 0.08960743248462677,
+          "vector_absmax": 0.3436368703842163
+        }
+      },
+      "43": {
+        "baseline_best_validation_rmse_pK": 1.5970703761939147,
+        "baseline_gradient_monitor": {
+          "clip_fraction": 0.9831818181818182,
+          "clipped_step_count": 4326,
+          "effective_grad_scale_last": 0.028086984537394152,
+          "effective_grad_scale_mean": 0.16577604929248851,
+          "effective_grad_scale_min": 0.013798478958561821,
+          "effective_grad_scale_sum": 729.4146168869495,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1478.96010815685,
+          "gradient_monitor_path_squared_norm_share_global_sum": 577.9449894397474,
+          "gradient_monitor_path_squared_norm_share_input_sum": 1041.6705331020476,
+          "gradient_monitor_path_squared_norm_share_local_sum": 565.6293020146644,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 735.7950685250061,
+          "gradient_monitor_pre_clip_norm_square_sum": 1010812.1018257926,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.33612729730837504,
+            "global": 0.13135113396357895,
+            "input": 0.23674330297773807,
+            "local": 0.12855211409424191,
+            "readout": 0.16722615193750137
+          },
+          "pre_clip_grad_norm_ffn_last": 23.519530429332498,
+          "pre_clip_grad_norm_ffn_max": 45.68151822673665,
+          "pre_clip_grad_norm_ffn_sum": 32746.460125341506,
+          "pre_clip_grad_norm_global_last": 15.280064138597583,
+          "pre_clip_grad_norm_global_max": 26.42570013118642,
+          "pre_clip_grad_norm_global_sum": 19555.165738092935,
+          "pre_clip_grad_norm_gt_10_count": 2073,
+          "pre_clip_grad_norm_gt_1_count": 4326,
+          "pre_clip_grad_norm_gt_20_count": 758,
+          "pre_clip_grad_norm_gt_50_count": 15,
+          "pre_clip_grad_norm_gt_5_count": 3278,
+          "pre_clip_grad_norm_input_last": 16.450542804256145,
+          "pre_clip_grad_norm_input_max": 54.13206103469722,
+          "pre_clip_grad_norm_input_sum": 25613.52096585402,
+          "pre_clip_grad_norm_last": 35.60367965698242,
+          "pre_clip_grad_norm_local_last": 13.850836579455848,
+          "pre_clip_grad_norm_local_max": 25.662350455216938,
+          "pre_clip_grad_norm_local_sum": 18748.090019947995,
+          "pre_clip_grad_norm_max": 72.47175598144531,
+          "pre_clip_grad_norm_mean": 11.959567093415695,
+          "pre_clip_grad_norm_readout_last": 4.3020084246614765,
+          "pre_clip_grad_norm_readout_max": 15.234981531662765,
+          "pre_clip_grad_norm_readout_sum": 10102.97494129162,
+          "pre_clip_grad_norm_std": 9.31121786235904,
+          "pre_clip_grad_norm_sum": 52622.09521102905,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.9831818181818182,
+            "10": 0.47113636363636363,
+            "20": 0.17227272727272727,
+            "5": 0.745,
+            "50": 0.003409090909090909
+          }
+        },
+        "baseline_last_validation_rmse_pK": 1.6116005817820556,
+        "best_rmse_improvement_pK": -0.0009534175130609945,
+        "full_initial_state_matches": true,
+        "last_rmse_improvement_pK": -0.004369294122078093,
+        "paired_base_initialization_matches": true,
+        "peak_memory_ratio": 1.0,
+        "step_latency_ratio": 0.9980235389367306,
+        "whitened_best_validation_rmse_pK": 1.5980237937069757,
+        "whitened_gradient_monitor": {
+          "clip_fraction": 0.9827272727272728,
+          "clipped_step_count": 4324,
+          "effective_grad_scale_last": 0.025011449332885537,
+          "effective_grad_scale_mean": 0.16545823077242602,
+          "effective_grad_scale_min": 0.013734204909911193,
+          "effective_grad_scale_sum": 728.0162153986745,
+          "gradient_monitor_path_squared_norm_share_ffn_sum": 1510.0461670516813,
+          "gradient_monitor_path_squared_norm_share_global_sum": 593.3159717380571,
+          "gradient_monitor_path_squared_norm_share_input_sum": 989.8805674216599,
+          "gradient_monitor_path_squared_norm_share_local_sum": 587.0934485468053,
+          "gradient_monitor_path_squared_norm_share_readout_sum": 719.6638480726139,
+          "gradient_monitor_pre_clip_norm_square_sum": 1004686.4911523048,
+          "pathwise_squared_norm_share_mean": {
+            "ffn": 0.34319231069356393,
+            "global": 0.1348445390313766,
+            "input": 0.22497285623219543,
+            "local": 0.13343032921518302,
+            "readout": 0.1635599654710486
+          },
+          "pre_clip_grad_norm_ffn_last": 26.285579317003396,
+          "pre_clip_grad_norm_ffn_max": 55.71721322066983,
+          "pre_clip_grad_norm_ffn_sum": 33022.880775295074,
+          "pre_clip_grad_norm_global_last": 17.085016865804224,
+          "pre_clip_grad_norm_global_max": 30.464516888986395,
+          "pre_clip_grad_norm_global_sum": 19746.892342789437,
+          "pre_clip_grad_norm_gt_10_count": 2091,
+          "pre_clip_grad_norm_gt_1_count": 4324,
+          "pre_clip_grad_norm_gt_20_count": 772,
+          "pre_clip_grad_norm_gt_50_count": 11,
+          "pre_clip_grad_norm_gt_5_count": 3271,
+          "pre_clip_grad_norm_input_last": 17.96853136184704,
+          "pre_clip_grad_norm_input_max": 38.03742265721842,
+          "pre_clip_grad_norm_input_sum": 24797.17816320183,
+          "pre_clip_grad_norm_last": 39.981689453125,
+          "pre_clip_grad_norm_local_last": 16.562987092315826,
+          "pre_clip_grad_norm_local_max": 25.3296263366857,
+          "pre_clip_grad_norm_local_sum": 19128.47110745059,
+          "pre_clip_grad_norm_max": 72.8109130859375,
+          "pre_clip_grad_norm_mean": 11.955079718206756,
+          "pre_clip_grad_norm_readout_last": 4.3017794206144675,
+          "pre_clip_grad_norm_readout_max": 15.234971117198624,
+          "pre_clip_grad_norm_readout_sum": 10009.354397829024,
+          "pre_clip_grad_norm_std": 9.241964500557907,
+          "pre_clip_grad_norm_sum": 52602.35076010972,
+          "step_count": 4400,
+          "threshold_exceedance_fraction": {
+            "1": 0.9827272727272728,
+            "10": 0.4752272727272727,
+            "20": 0.17545454545454545,
+            "5": 0.7434090909090909,
+            "50": 0.0025
+          }
+        },
+        "whitened_last_validation_rmse_pK": 1.6159698759041337,
+        "whitened_mix_magnitude": {
+          "per_layer_scalar_absmax": [
+            0.11190858483314514
+          ],
+          "per_layer_vector_absmax": [
+            0.19755537807941437
+          ],
+          "scalar_absmax": 0.11190858483314514,
+          "vector_absmax": 0.19755537807941437
+        }
+      }
+    },
+    "ridge": 0.1,
+    "sample_std_improvement_pK": 0.013025887733142933,
+    "worst_paired_regression_pK": 0.0124213597090288
+  },
+  "qm9_safety_passed": true,
+  "schema_matched_control": true,
+  "secondary": null,
+  "secondary_can_rescue_primary": false,
+  "selected_ridge": null
+}

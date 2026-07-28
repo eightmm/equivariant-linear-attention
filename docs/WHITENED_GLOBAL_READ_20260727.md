@@ -268,11 +268,10 @@ Four things about this result should temper it:
   `0.01` wins on best RMSE and MAE, and their Pearson correlations are equal to
   four digits. One seed cannot rank them; the confirmation packet should not
   silently treat `0.1` as established.
-- **The lane was used, and mostly through the vector route.** Best-checkpoint gate
-  magnitudes were `0.031--0.053` scalar and `0.160--0.324` vector, so the model
-  leaned on the whitened `1o` transport several times harder than on the whitened
-  scalar transport. Clipping was unchanged at `0.9855` in every arm, so this is
-  not an optimization-stability effect.
+- **The lane was used, with a larger vector gate.** Best-checkpoint gate
+  magnitudes were `0.031--0.053` scalar and `0.160--0.324` vector. This proves
+  activity but not causal benefit. Equal clip fractions also do not establish
+  equal optimization: pre-clip norms and effective clip scales differ.
 
 The baseline is not comparable to earlier LBA numbers. The seed-44 candidate here
 reached `1.638053` on the repaired topology, while the clipping packet's seed-44
@@ -283,7 +282,7 @@ Primary output:
 `artifacts/whitened-ridge-screen-20260728/seed44/summary.json`, SHA-256
 `c74bd7a42f10527b3cb35070791c268c431f11c7d3879cfe3e52ecdb1d6c6178`.
 
-## Preregistered screen (executed for step 2; steps 1 and 3 pending)
+## Original preregistered screen
 
 Thresholds fixed before any outcome is inspected. Following the CTP precedent,
 QM9 is a bounded regression smoke and ATOM3D-LBA ID30 is the deciding task.
@@ -315,6 +314,99 @@ Every arm consumes the frozen topology
 (`docs/TOPOLOGY_CONTRACT_20260727.md`). Failures and nulls are recorded as
 authoritative results.
 
+The original step-3 design was superseded before execution after the QM9 run
+showed that raw-candidate and whitened arms do not share the same numerical
+training graph even at zero mix. The schema-matched repair and its completed
+result are recorded below.
+
+## Schema-matched safety repair and three-seed result (2026-07-28)
+
+The registered follow-up found and repaired an evaluation confound before
+interpreting the LBA confirmation.
+
+### What failed first
+
+The original two-arm QM9 safety smoke failed: ridge-0.1 whitening reached
+`0.696559 eV` validation MAE versus `0.640651 eV` for the raw candidate, a
+`+0.055908 eV` regression against the `0.020 eV` bound. Post-outcome ridge
+diagnostics did not repair it: ridge `0.5/1.0` reached
+`0.726088/0.686130 eV`.
+
+A rank-based graph gate was then tested. The first form
+`max(0, n-F)/n` remained unsafe (`0.687010 eV`). Tightening the covariance
+aspect-ratio requirement to two samples per feature made the learned mixes stay
+exactly zero on QM9, yet the result was still `0.720716 eV`. This exposed the
+confound: zero mix preserves the mathematical forward function, but evaluating
+the extra whitening branch changes the autograd graph and floating-point
+gradient accumulation order. Under `~91%` QM9 clipping, those small changes
+produce a different deterministic training trajectory. Therefore the old
+raw-candidate comparison and its seed-44 LBA gain cannot isolate whitening
+causally.
+
+### Repair
+
+Two changes make the comparison and small-graph behavior explicit:
+
+1. The optional finite-sample reliability gate is
+   `rho_g = max(0, n_g - 2F) / n_g`, where `F` is the actual kernel-feature
+   dimension. It is invariant to node permutation and O(3), adds only graphwise
+   scalar work, retains linear node complexity, and approaches one on large
+   biomolecular graphs.
+2. If every graph in a batch has `n_g <= 2F`, the model skips the whitening
+   branch rather than computing a zero contribution. The small-graph path is
+   therefore the incumbent computation, not merely an algebraically equal
+   branch.
+
+For scientific comparisons, the control now has the identical whitening
+modules, full initial state, ridge, rank gate, forward graph, and optimizer
+schema. Gradient hooks hold only the eight scalar/vector mix parameters at zero.
+The active arm differs only by allowing those gradients to update.
+
+The corrected strict-CUDA QM9 safety run gave both arms exactly
+`0.6406513190 eV` MAE and `0.8343833076 eV` RMSE after 500 updates. Step latency
+ratio was `1.013299`, peak allocation ratio `1.0`, both full final-state hashes
+matched, and the test split was not evaluated.
+
+### ATOM3D-LBA ID30 confirmation
+
+The deciding run used seeds 41--43, 20 epochs and 4,400 updates per arm, batch
+16, strict FP32 CUDA, one `32,302,952`-edge candidate list with frozen hash
+`57f40fb1...`, and the official train/validation split (`3,507/466`). Each pair
+started from the same full state.
+
+| seed | frozen control last RMSE | active last RMSE | paired improvement | control best | active best |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 41 | 1.599205 | 1.586143 | +0.013061 | 1.595748 | 1.585772 |
+| 42 | 1.602016 | 1.614437 | -0.012421 | 1.602016 | 1.613715 |
+| 43 | 1.611601 | 1.615970 | -0.004369 | 1.597070 | 1.598024 |
+
+Mean last-epoch improvement was `-0.001243 pK` with sample standard deviation
+`0.013026 pK`; only one of three seeds improved. Mean best-checkpoint effect was
+`-0.000892 pK`. Thus the registered `+0.020 pK`, two-win accuracy gate failed.
+All completion, finiteness, full-initial-state, update-count, topology,
+worst-regression, latency, memory, and no-test criteria passed. Active/control
+maximum step-latency and peak-allocation ratios were `0.998024` and `1.0`.
+
+Clipping remained `0.9827--0.9859` in every arm. Learned vector mix magnitude
+was largest on seed 42 (`0.343637`), precisely the seed that regressed most.
+Gate magnitude is therefore evidence that a lane is active, not evidence that
+the lane caused an accuracy gain. The prior seed-44 wording that the gain came
+mostly through the vector route is withdrawn.
+
+The result rejects promotion. `use_whitened_global_read` and
+`whitened_global_rank_gate` remain off by default. Because the LBA primary
+failed, the preregistered clipping interaction and scalar-only/vector-only
+ablations were not executed.
+
+Primary artifacts:
+
+- `artifacts/whitened-global-followup-20260728/qm9-rank-safety/summary.json`
+  (`37bee694...`)
+- `artifacts/whitened-global-followup-20260728/lba-rank-confirmation/summary.json`
+  (`9ece52a5...`)
+- `artifacts/whitened-global-followup-20260728/conditional-followups.json`
+  (`dadd3fbd...`)
+
 ## Reproduction
 
 ```bash
@@ -333,4 +425,15 @@ uv run python -u scripts/run_whitened_ridge_screen.py \
   artifacts/whitened-ridge-screen-20260728/seed44 --device cuda \
   --batch-size 16 --epochs 20 --warmup-epochs 5 \
   --model-seed 44 --order-seed 44 --budget-seconds 2400
+
+uv run --locked python -u scripts/run_whitened_qm9_smoke.py \
+  artifacts/whitened-global-followup-20260728/qm9-rank-safety \
+  --device cuda --steps 500 --rank-gated-schema-control
+
+uv run --locked python -u scripts/run_whitened_confirmation.py \
+  artifacts/whitened-global-followup-20260728/lba-rank-confirmation \
+  --device cuda --batch-size 16 --epochs 20 --warmup-epochs 5 \
+  --rank-gated-schema-control \
+  --qm9-safety-summary \
+  artifacts/whitened-global-followup-20260728/qm9-rank-safety/summary.json
 ```

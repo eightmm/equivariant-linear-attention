@@ -37,6 +37,10 @@ The registered architecture flags are:
 --angular-feature-rank {1,2}
 --quartic-kernel
 --checkpoint-gated-local-mlp
+--whitened-global-read
+--whitened-global-ridge FLOAT
+--whitened-global-rank-gate
+--freeze-whitened-global-mix
 --evaluate-test
 ```
 
@@ -71,6 +75,35 @@ attributed to the equivariant backbone: the two-step CPU v3 smoke was dominated
 by the readout path, while local/global path norms were orders of magnitude
 smaller. Any clipping-policy experiment must therefore use the same threshold
 for every compared arm and report validation behavior as well as clip counts.
+
+Whitened-read accuracy comparisons must additionally use a schema-matched
+control. Zero-initialized mixes preserve the forward function but do not
+guarantee the same floating-point training trajectory: adding the auxiliary
+autograd branch moved a strict 500-update QM9 run from `0.640651` to
+`0.720716 eV` even when the mix stayed exactly zero. Use
+`--freeze-whitened-global-mix` only with `--whitened-global-read`; it retains
+the same parameters and autograd path while hooks keep the scalar/vector mix
+gradients zero. `--whitened-global-rank-gate` applies
+`max(0, n_g - 2F) / n_g` and skips the auxiliary branch for an all-small batch.
+
+The completed safety and LBA confirmation commands are:
+
+```bash
+uv run --locked python -u scripts/run_whitened_qm9_smoke.py \
+  artifacts/whitened-global-followup-20260728/qm9-rank-safety \
+  --device cuda --steps 500 --rank-gated-schema-control
+
+uv run --locked python -u scripts/run_whitened_confirmation.py \
+  artifacts/whitened-global-followup-20260728/lba-rank-confirmation \
+  --device cuda --batch-size 16 --epochs 20 --warmup-epochs 5 \
+  --rank-gated-schema-control \
+  --qm9-safety-summary \
+  artifacts/whitened-global-followup-20260728/qm9-rank-safety/summary.json
+```
+
+The QM9 safety gate passed with zero metric delta. The LBA seeds 41--43 gate
+failed (mean paired last-epoch effect `-0.001243 pK`, one of three wins), so no
+default changed and no conditional clipping/lane ablation was run.
 
 The bounded ATOM3D-LBA capacity check is a separate train-only runner:
 

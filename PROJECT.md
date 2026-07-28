@@ -2,6 +2,27 @@
 
 ## Status
 
+- The 2026-07-28 follow-up **rejects promotion of the whitened global read**.
+  The original QM9 comparison first failed (`0.696559` versus `0.640651 eV`)
+  and exposed a more important evaluation confound: merely adding the
+  zero-mix whitening autograd branch changed the deterministic, heavily clipped
+  training trajectory (`0.720716 eV`) even though the mathematical forward
+  function was unchanged. All subsequent comparisons therefore use an
+  identical full model schema and whitening graph, with the control holding the
+  eight mix gradients at zero. A finite-sample gate
+  `rho_g = max(0, n_g - 2F) / n_g` plus an all-small-batch fast path now keeps
+  the lane exactly dormant when the graph does not have at least two key
+  samples per kernel feature. The corrected QM9 safety smoke was bitwise
+  metric-equivalent at `0.640651 eV` with `1.0133x` step latency and `1.0000x`
+  peak allocation. On the deciding official ATOM3D-LBA ID30 confirmation,
+  schema-matched ridge-0.1 paired improvements for seeds 41--43 were
+  `+0.013061/-0.012421/-0.004369 pK`; mean
+  `-0.001243 +/- 0.013026 pK`, one of three wins, and mean best-checkpoint
+  effect `-0.000892 pK`. The accuracy gate failed, defaults remain off, and the
+  preregistered clipping and scalar/vector ablations were not run. The result
+  also invalidates the prior causal reading that a larger learned vector mix
+  implied that the one-seed gain came from the vector route. See
+  `docs/WHITENED_GLOBAL_READ_20260727.md`.
 - The 2026-07-28 seed-44 ATOM3D-LBA ID30 ridge screen gave the whitened global
   read the **first positive one-seed accuracy evidence any global-path
   intervention has earned in this project**, and it falsified the packet's own
@@ -15,9 +36,11 @@
   selected arm's best epoch was the last one, so part of the last-epoch gap is a
   difference in when each arm degrades (best-checkpoint improvement is
   `0.039961 pK`); `ridge=0.1` and `0.01` are not separable at one seed, since
-  `0.01` wins on best RMSE and MAE; and the gain came mostly through the whitened
-  `1o` vector route, whose learned gate reached `0.160--0.324` against
-  `0.031--0.053` for the scalar route. Clipping stayed at `0.9855` in every arm.
+  `0.01` wins on best RMSE and MAE; and the whitened `1o` vector gate reached
+  `0.160--0.324` against `0.031--0.053` for the scalar route. Those magnitudes
+  establish activity, not causal benefit; the later schema-matched multi-seed
+  rejection makes that distinction decisive. Clipping frequency stayed at
+  `0.9855` in every arm, but pre-clip norms and effective scales differed.
   Nothing is promoted and no default changed. See
   `docs/WHITENED_GLOBAL_READ_20260727.md`.
 - The whitened (ridge-regression) global read is implemented as an opt-in lane and
@@ -954,7 +977,10 @@
   remaining untested axis. Training and promotion require separate compute
   approval.
 - The public switch is `use_whitened_global_read=False` with the dimensionless
-  `whitened_global_ridge=0.1`. The lane computes
+  `whitened_global_ridge=0.1`; the optional
+  `whitened_global_rank_gate=False` applies
+  `rho_g = max(0, n_g - 2F) / n_g` and skips the auxiliary graph entirely when
+  no graph in a batch has more than `2F` nodes. The lane computes
   `o_i = phi_i^T (G + lambda I)^-1 S` with `G` the graph-mean Gram matrix of the
   key feature map, `S` its mean cross moment with the `0e`/`1o` values, and
   `lambda = ridge * tr(G)/F`. The large-shrinkage limit of this expression is
@@ -970,9 +996,13 @@
   feature vector to be orthogonal, which the incumbent's asymmetric `1x`/`2x`
   compression is not. `tr(G)` is invariant under the same action.
 - The lane is added through per-head zero-initialized scalar and vector mixes, so
-  an enabled model is the exact incumbent function at initialization, consumes no
-  extra RNG, keeps every incumbent weight draw, and adds `2 * num_heads`
-  parameters on stages with at least one global head. It rewrites only the
+  an enabled model is the exact incumbent **forward function** at initialization,
+  consumes no extra RNG, keeps every incumbent weight draw, and adds
+  `2 * num_heads` parameters on stages with at least one global head. This does
+  not imply an identical training trajectory: the extra autograd branch changes
+  gradient accumulation order enough to diverge under the current high-clipping
+  regime. Scientific comparisons therefore require the schema-matched frozen-mix
+  control implemented by the runners. It rewrites only the
   `0e`/`1o` value lanes; relative-position and `2e` moment reconstruction stay on
   the incumbent normalized read.
 - Construction rejects key balancing, `kernel_floor_mode="inverse_graph_size"`,
@@ -1006,12 +1036,14 @@
   interpretable only if it distinguishes an inert lane from an active but
   unhelpful one. Only a ridge that improves last-epoch validation RMSE inside the
   resource ceilings advances, and the screen alone authorizes no default change.
-- That screen was executed on 2026-07-28 and passed with `ridge=0.1` selected, so
-  the next authorized step is the seeds 41--43 confirmation. It must carry both
-  `ridge=0.1` and `ridge=0.01`, because one seed could not separate them, and it
-  must report best-checkpoint alongside fixed-budget metrics, because the selected
-  arm had not peaked at 20 epochs. Promotion additionally requires the QM9 safety
-  smoke, which has not run. No default may change before that conjunction holds.
+- The seed-44 screen passed, but the subsequent QM9 run exposed the
+  raw-candidate/schema confound before confirmation. The repaired protocol used
+  a full-state-identical frozen-mix control and the `2F` finite-sample gate. Its
+  QM9 safety smoke passed with zero MAE delta; the 20-epoch seeds 41--43 LBA
+  confirmation failed with mean last-epoch improvement `-0.001243 pK`, one of
+  three paired wins, and mean best-checkpoint effect `-0.000892 pK`. The lane
+  remains opt-in, no ridge is selected, no default changes, and the conditional
+  clipping/lane ablations are closed without execution.
 
 ## Deterministic Sparse Topology Contract
 

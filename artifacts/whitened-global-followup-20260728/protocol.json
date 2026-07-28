@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "whitened-global-followup-20260728",
+  "decision": "Decide whether the ridge-0.1 whitened global read is safe on QM9 and reproducibly improves ATOM3D-LBA ID30 enough to justify conditional mechanism and optimizer follow-ups.",
+  "population": {
+    "qm9": "QM9 gap, seeded random-row validation split, small equilibrium molecules",
+    "lba": "ATOM3D LBA official ID30 train/validation, bound protein-pocket/ligand crystal complexes"
+  },
+  "evidence_cutoff": "2026-07-28T04:34:26Z",
+  "non_goals": [
+    "No test-label access",
+    "No cold-target, cold-ligand, prospective-screening, or published-model superiority claim",
+    "No post-hoc ridge selection",
+    "No default change from a one-seed or safety-only result"
+  ],
+  "claims": [
+    {
+      "id": "C-WGR-1",
+      "type": "operational safety",
+      "claim": "Ridge 0.1 remains finite on QM9 and changes fixed-budget validation MAE by at most 0.020 eV.",
+      "required_support": "Paired seed-42 500-update strict-CUDA candidate and whitened records with matched split, base initialization, and closed test.",
+      "falsifier": "Nonfinite execution, absolute validation-MAE delta above 0.020 eV, split/init mismatch, or test access.",
+      "permitted_inference": "QM9 numerical safety under this harness only"
+    },
+    {
+      "id": "C-WGR-2",
+      "type": "comparative predictive",
+      "claim": "Ridge 0.1 improves mean paired fixed-budget LBA ID30 validation RMSE by at least 0.020 pK across seeds 41--43.",
+      "required_support": "Mean improvement >=0.020 pK, at least 2/3 wins, worst regression <=0.050 pK, latency and peak ratios <=1.25, frozen topology, matched updates, and no test access.",
+      "falsifier": "Any registered criterion fails.",
+      "permitted_inference": "Same-harness ID30 validation improvement; not external generalization"
+    },
+    {
+      "id": "C-WGR-3",
+      "type": "mechanistic exploratory",
+      "claim": "If C-WGR-1 and C-WGR-2 pass, clipping interaction and scalar/vector ablations identify whether the gain is optimization-mediated and which value lane is necessary.",
+      "required_support": "Predeclared paired follow-up arms with gradient-scale diagnostics and lane isolation.",
+      "falsifier": "Primary confirmation fails, conditional runs are incomplete, or lane/optimizer effects are inconsistent.",
+      "permitted_inference": "Mechanism hypothesis inside the same training harness"
+    }
+  ],
+  "execution_order": [
+    "Commit runner source and tests",
+    "CPU and bounded real-data CUDA smoke",
+    "QM9 safety smoke",
+    "LBA three-seed confirmation",
+    "Conditional clipping interaction",
+    "Conditional scalar/vector ablation",
+    "Documentation, provenance, independent review, commit, and push"
+  ],
+  "risks": [
+    "Repeated use of the same LBA validation split creates adaptive selection bias.",
+    "Seeds quantify training variability but are not independent biological samples.",
+    "Near-universal clipping can mediate architecture effects through effective update scale.",
+    "Bound-pose features limit deployment interpretation.",
+    "Long GPU runs must bind to an immutable source commit."
+  ]
+}
