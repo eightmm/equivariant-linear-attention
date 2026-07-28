@@ -4,8 +4,9 @@
 The whitened lane replaces the metric of the global read rather than its kernel
 weights: it evaluates `phi_i^T (G + lambda I)^-1 S` with
 `lambda = ridge * tr(G)/F`, so `ridge` is the single hyperparameter and the
-incumbent pooled read is its large-shrinkage limit. A bounded probe on real
-cached data showed the mechanism is active and monotone in `ridge`
+large-shrinkage limit is a scaled unnormalized kernel numerator, not the
+query-normalized incumbent read. A bounded probe on real cached data showed the
+mechanism is active and monotone in `ridge`
 (`docs/WHITENED_GLOBAL_READ_20260727.md`), but no accuracy evidence existed.
 
 This runner executes the registered screen in one process: it loads the official

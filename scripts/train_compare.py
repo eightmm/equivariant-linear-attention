@@ -254,6 +254,7 @@ def main() -> None:
             if tensor_scales
             else {"status": "not_applicable"}
         )
+        metrics["whitened_global_read"] = _whitened_mix_magnitude(model)
     else:
         coordinate_updates = args.benchmark_model == "internal_dynamic_egnn_baseline"
         metrics["baseline_details"] = {
@@ -415,6 +416,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--gated-local-transport", action="store_true")
     parser.add_argument("--grouped-invariant-normalization", action="store_true")
+    parser.add_argument("--whitened-global-read", action="store_true")
+    parser.add_argument("--whitened-global-ridge", type=float, default=0.1)
     parser.add_argument("--irrep-rms-normalization", action="store_true")
     parser.add_argument(
         "--angular-feature-rank",
@@ -478,6 +481,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.hidden_dim is None:
         args.hidden_dim = 91 if args.benchmark_model in _EGNN_BENCHMARK_MODELS else 64
+    if (
+        not torch.isfinite(torch.tensor(args.whitened_global_ridge))
+        or args.whitened_global_ridge <= 0.0
+    ):
+        parser.error("--whitened-global-ridge must be finite and positive")
     return args
 
 
@@ -522,6 +530,8 @@ def _build_benchmark_model(
             "edge_conditioned_local_sqrt_degree": False,
             "gated_local_transport": False,
             "grouped_invariant_normalization": False,
+            "whitened_global_read": False,
+            "whitened_global_ridge": 0.1,
             "irrep_rms_normalization": False,
             "angular_feature_rank": 1,
             "quartic_kernel": False,
@@ -599,6 +609,8 @@ def _build_benchmark_model(
         ),
         use_gated_local_transport=args.gated_local_transport,
         use_grouped_invariant_normalization=(args.grouped_invariant_normalization),
+        use_whitened_global_read=args.whitened_global_read,
+        whitened_global_ridge=args.whitened_global_ridge,
         use_irrep_rms_normalization=args.irrep_rms_normalization,
         angular_feature_rank=args.angular_feature_rank,
         use_quartic_kernel=args.quartic_kernel,
@@ -682,6 +694,25 @@ def _finite_parameter_summary(
         f"{name}.min": float(value.min().cpu()),
         f"{name}.mean": float(value.mean().cpu()),
         f"{name}.max": float(value.max().cpu()),
+    }
+
+
+def _whitened_mix_magnitude(model: torch.nn.Module) -> dict[str, object]:
+    scalar: list[float] = []
+    vector: list[float] = []
+    for layer in getattr(model, "layers", []):
+        scalar_mix = getattr(layer, "whitened_scalar_mix", None)
+        vector_mix = getattr(layer, "whitened_vector_mix", None)
+        if scalar_mix is None or vector_mix is None:
+            continue
+        scalar.append(float(scalar_mix.detach().abs().max().cpu()))
+        vector.append(float(vector_mix.detach().abs().max().cpu()))
+    return {
+        "enabled": bool(scalar or vector),
+        "per_layer_scalar_absmax": scalar,
+        "per_layer_vector_absmax": vector,
+        "scalar_absmax": max(scalar) if scalar else 0.0,
+        "vector_absmax": max(vector) if vector else 0.0,
     }
 
 
@@ -934,6 +965,8 @@ def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
             ".query_vector_extra_gate.",
             ".key_vector_extra_gate.",
             ".raw_quartic_kernel",
+            ".whitened_scalar_mix",
+            ".whitened_vector_mix",
         ),
     )
 
@@ -2094,6 +2127,8 @@ def _run_config(
             else "not_applicable"
         ),
         "grouped_invariant_normalization": (args.grouped_invariant_normalization),
+        "whitened_global_read": args.whitened_global_read,
+        "whitened_global_ridge": args.whitened_global_ridge,
         "irrep_rms_normalization": args.irrep_rms_normalization,
         "checkpoint_gated_local_mlp": args.checkpoint_gated_local_mlp,
         "precompute_local_edges": args.precompute_local_edges,

@@ -58,6 +58,50 @@ def test_run_config_records_single_architecture() -> None:
     assert config["global_attention_formula"] == "factorized_learned_kernel"
 
 
+def test_whitened_global_read_is_recorded_and_shares_the_paired_base() -> None:
+    symbols = _script_symbols()
+    baseline_args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--no-key-balancing",
+            "--gated-local-transport",
+            "--grouped-invariant-normalization",
+        ]
+    )
+    whitened_args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--no-key-balancing",
+            "--gated-local-transport",
+            "--grouped-invariant-normalization",
+            "--whitened-global-read",
+            "--whitened-global-ridge",
+            "0.1",
+        ]
+    )
+
+    config = symbols["_run_config"](
+        whitened_args,
+        split_seed=42,
+        model_seed=43,
+    )
+    torch.manual_seed(43)
+    baseline = symbols["_build_benchmark_model"](baseline_args, node_dim=11)
+    torch.manual_seed(43)
+    whitened = symbols["_build_benchmark_model"](whitened_args, node_dim=11)
+
+    assert config["whitened_global_read"] is True
+    assert config["whitened_global_ridge"] == pytest.approx(0.1)
+    assert any(
+        layer.whitened_scalar_mix is not None for layer in whitened.layers
+    )
+    assert symbols["_paired_base_state_hashes"](
+        baseline
+    ) == symbols["_paired_base_state_hashes"](whitened)
+
+
 def test_determinism_mode_is_explicit_and_recorded_in_run_config() -> None:
     symbols = _script_symbols()
     default_args = symbols["parse_args"]([])
