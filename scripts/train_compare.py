@@ -95,6 +95,10 @@ def main() -> None:
     model = _build_benchmark_model(args, node_dim=node_dim).to(device=device)
     initial_state_hashes = _model_state_hashes(model)
     paired_base_initial_state_hashes = _paired_base_state_hashes(model)
+    frozen_whitened_mix_count = _freeze_whitened_mix_gradients(
+        model,
+        enabled=args.freeze_whitened_global_mix,
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -180,6 +184,7 @@ def main() -> None:
             for parameter in model.parameters()
             if parameter.requires_grad
         ),
+        "frozen_whitened_mix_parameter_count": frozen_whitened_mix_count,
         "gradient_clipping": _gradient_clipping_summary(
             gradient_monitor, grad_clip=args.grad_clip
         ),
@@ -419,6 +424,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--whitened-global-read", action="store_true")
     parser.add_argument("--whitened-global-ridge", type=float, default=0.1)
     parser.add_argument(
+        "--freeze-whitened-global-mix",
+        action="store_true",
+        help=(
+            "keep whitened mix parameters at zero through gradient hooks while "
+            "retaining the same model schema and forward/autograd graph"
+        ),
+    )
+    parser.add_argument(
         "--whitened-global-rank-gate",
         action="store_true",
         help=(
@@ -494,6 +507,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         or args.whitened_global_ridge <= 0.0
     ):
         parser.error("--whitened-global-ridge must be finite and positive")
+    if args.freeze_whitened_global_mix and not args.whitened_global_read:
+        parser.error(
+            "--freeze-whitened-global-mix requires --whitened-global-read"
+        )
     return args
 
 
@@ -540,6 +557,7 @@ def _build_benchmark_model(
             "grouped_invariant_normalization": False,
             "whitened_global_read": False,
             "whitened_global_ridge": 0.1,
+            "freeze_whitened_global_mix": False,
             "whitened_global_rank_gate": False,
             "irrep_rms_normalization": False,
             "angular_feature_rank": 1,
@@ -979,6 +997,29 @@ def _paired_base_state_hashes(model: torch.nn.Module) -> dict[str, str]:
             ".whitened_vector_mix",
         ),
     )
+
+
+def _freeze_whitened_mix_gradients(
+    model: torch.nn.Module,
+    *,
+    enabled: bool,
+) -> int:
+    """Hold auxiliary mix parameters at zero without changing graph or schema."""
+    if not enabled:
+        return 0
+    count = 0
+    for name, parameter in model.named_parameters():
+        if not name.endswith(
+            (".whitened_scalar_mix", ".whitened_vector_mix")
+        ):
+            continue
+        if bool(torch.count_nonzero(parameter.detach())):
+            raise ValueError("frozen whitened mix must start at zero")
+        parameter.register_hook(torch.zeros_like)
+        count += parameter.numel()
+    if count == 0:
+        raise ValueError("no whitened mix parameters were found to freeze")
+    return count
 
 
 def _state_hashes(
@@ -2139,6 +2180,7 @@ def _run_config(
         "grouped_invariant_normalization": (args.grouped_invariant_normalization),
         "whitened_global_read": args.whitened_global_read,
         "whitened_global_ridge": args.whitened_global_ridge,
+        "freeze_whitened_global_mix": args.freeze_whitened_global_mix,
         "whitened_global_rank_gate": args.whitened_global_rank_gate,
         "irrep_rms_normalization": args.irrep_rms_normalization,
         "checkpoint_gated_local_mlp": args.checkpoint_gated_local_mlp,

@@ -102,6 +102,40 @@ def test_whitened_global_read_is_recorded_and_shares_the_paired_base() -> None:
     ) == symbols["_paired_base_state_hashes"](whitened)
 
 
+def test_whitened_control_zeros_mix_gradients_without_changing_schema() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--routing",
+            "lgl",
+            "--no-key-balancing",
+            "--whitened-global-read",
+            "--freeze-whitened-global-mix",
+        ]
+    )
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+    state_before = tuple(model.state_dict())
+    count = symbols["_freeze_whitened_mix_gradients"](model, enabled=True)
+    node_feats = torch.randn(12, 11)
+    pos = torch.randn(12, 3)
+    batch = torch.tensor([0] * 6 + [1] * 6)
+
+    model(node_feats, pos, batch)["graph_scalars"].sum().backward()
+
+    mixes = [
+        parameter
+        for name, parameter in model.named_parameters()
+        if name.endswith((".whitened_scalar_mix", ".whitened_vector_mix"))
+    ]
+    assert count == sum(parameter.numel() for parameter in mixes)
+    assert tuple(model.state_dict()) == state_before
+    assert all(
+        parameter.grad is not None
+        and torch.equal(parameter.grad, torch.zeros_like(parameter.grad))
+        for parameter in mixes
+    )
+
+
 def test_determinism_mode_is_explicit_and_recorded_in_run_config() -> None:
     symbols = _script_symbols()
     default_args = symbols["parse_args"]([])
