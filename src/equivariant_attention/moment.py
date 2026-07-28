@@ -1461,6 +1461,17 @@ class _EquivariantMomentLayer(nn.Module):
                                 torch.finfo(memory_router_latent.dtype).tiny
                             )
                         )
+                    whitened_ridge: float | None = None
+                    if self.whitened_scalar_mix is not None:
+                        feature_count = q0.shape[-1] + 1 + 3 + 6
+                        batch_has_reliable_gram = (
+                            not self.whitened_global_rank_gate
+                            or bool(
+                                torch.any(graph_counts > 2 * feature_count).item()
+                            )
+                        )
+                        if batch_has_reliable_gram:
+                            whitened_ridge = self.whitened_global_ridge
                     message_groups.append(
                         _global_moment_messages(
                             q0[:, global_heads],
@@ -1491,11 +1502,7 @@ class _EquivariantMomentLayer(nn.Module):
                             use_radial_trace=self.use_radial_trace,
                             global_transport_mode=self.global_transport_mode,
                             spatial_features=spatial_features,
-                            whitened_ridge=(
-                                self.whitened_global_ridge
-                                if self.whitened_scalar_mix is not None
-                                else None
-                            ),
+                            whitened_ridge=whitened_ridge,
                             whitened_scalar_mix=(
                                 None
                                 if self.whitened_scalar_mix is None

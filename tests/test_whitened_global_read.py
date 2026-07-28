@@ -173,6 +173,28 @@ def test_rank_reliability_gate_uses_the_graphwise_degrees_of_freedom_fraction() 
     torch.testing.assert_close(gated_vector, expected * vector)
 
 
+def test_rank_gate_skips_the_auxiliary_graph_on_all_small_batches() -> None:
+    torch.manual_seed(31)
+    incumbent = _model(whitened=False)
+    torch.manual_seed(31)
+    gated = _model(whitened=True, whitened_global_rank_gate=True)
+    with torch.no_grad():
+        for layer in gated.layers:
+            if layer.whitened_scalar_mix is not None:
+                layer.whitened_scalar_mix.fill_(0.7)
+                layer.whitened_vector_mix.fill_(0.6)
+    generator = torch.Generator().manual_seed(9)
+    node_feats = torch.randn((24, 6), generator=generator, dtype=torch.float64)
+    pos = torch.randn((24, 3), generator=generator, dtype=torch.float64)
+    batch = torch.tensor([0] * 12 + [1] * 12)
+
+    expected = incumbent(node_feats, pos, batch)
+    observed = gated(node_feats, pos, batch)
+
+    for name in expected:
+        torch.testing.assert_close(observed[name], expected[name], rtol=0.0, atol=0.0)
+
+
 def _dense_kernel(
     inputs: dict[str, torch.Tensor], *, kernel_floor: float = 1.0
 ) -> torch.Tensor:
