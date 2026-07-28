@@ -25,6 +25,7 @@ from equivariant_attention.pdbbind import (
     ATOM3D_LBA_REVISION,
     load_atom3d_lba_split_samples,
     segment_balanced_knn_edge_index,
+    topology_sha256,
 )
 from equivariant_attention.reproducibility import configure_reproducibility
 from equivariant_attention.training import (
@@ -1222,13 +1223,7 @@ def _sample_identity_hash(samples: Sequence[GraphSample]) -> str:
 
 
 def _topology_hash(samples: Sequence[GraphSample]) -> str:
-    digest = hashlib.sha256()
-    for sample in samples:
-        if sample.edge_index is None:
-            raise ValueError("topology hash requires precomputed edges")
-        digest.update(sample.sample_id.encode("utf-8"))
-        digest.update(sample.edge_index.contiguous().numpy().tobytes())
-    return digest.hexdigest()
+    return topology_sha256(samples)
 
 
 def _target_range(samples: Sequence[GraphSample]) -> list[float]:

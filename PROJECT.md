@@ -2,6 +2,24 @@
 
 ## Status
 
+- The recorded cross-run topology reproducibility defect is repaired and the
+  candidate-list contract is frozen. `torch.cdist` defaults to the
+  matrix-multiplication Euclidean identity above 25 points; in float32 its error
+  grows with coordinate magnitude (up to `0.25 Angstrom` at a `300 Angstrom`
+  offset) and its bytes change with the BLAS thread count. That made the LBA
+  topology neither translation invariant nor reproducible, which is the
+  mechanism behind the 32,303,245 versus 32,303,244 edge drift.
+  `segment_balanced_knn_edge_index` now retains an edge exactly when the float64
+  squared displacement is below the squared cutoff, keeps every exact tie at the
+  kth boundary, and is chunked without an `N x N` distance matrix; it is also
+  1.2--4.4x faster at 500--5,000 nodes. `topology_sha256` is one shared
+  definition. The official ID30 identity is now `32,302,952` edges /
+  `57f40fb157e6416558db5507d95c3a5e4f828881e0bc92e142e1b85de802dc6c`, verified
+  equal in fresh 1-thread and 4-thread processes; the legacy `344158...` and
+  `1eea0af8...` hashes are 293 and 292 edges larger and must not be reused as
+  expected values. No model equation, default, or checkpoint schema changed, and
+  every historical packet stays internally valid because its arms shared one
+  in-memory list. See `docs/TOPOLOGY_CONTRACT_20260727.md`.
 - Sparse geometry-aware local attention with selectable `O(3)`/`SE(3)`
   symmetry is implemented and **not promoted**. The useful EquiFlex transfer
   is an opt-in sparse `0e/1o/2e` score refinement, with a mathematically
@@ -880,6 +898,57 @@
   artifacts remain under ignored
   `artifacts/`; results, including rejection or null results, are appended to
   `docs/EXPERIMENTS.jsonl`. Automatic GitHub Actions remain disabled.
+
+## Deterministic Sparse Topology Contract
+
+- Decision state: implemented and verified on 2026-07-27 as the repair the
+  preceding LBA packets recorded as a precondition for any cross-run or
+  multi-seed claim. It is a data-contract repair, not an architecture change.
+- A cached candidate list retains `i <- j` exactly when the float64 squared
+  displacement is below the squared cutoff. The float64 promotion is mandatory
+  whatever the storage dtype, so the topology cannot depend on model precision,
+  coordinate magnitude, translation, node permutation, or BLAS thread count. No
+  matrix-multiplication Euclidean distance may decide retention.
+- Self edges are always present. Each relation keeps the `k` smallest squared
+  distances and retains every exact tie at the boundary, so a receiver degree may
+  exceed its budget; that is required for permutation equivariance. Candidate
+  order is receiver major, then self, intra-segment, cross-segment, then
+  ascending sender index.
+- `equivariant_attention.pdbbind.topology_sha256` is the only admitted candidate
+  identity. Runners delegate to it rather than hashing edges themselves, and
+  `scripts/verify_lba_topology.py` must report one edge count and one hash across
+  fresh processes before a multi-seed LBA claim.
+- The frozen official ID30 identity at revision
+  `f93dd2d150a47c270f624620f84e07451a158705`, `R_c = 6.0 Angstrom`, and
+  `intra_k = cross_k = 16` is `32,302,952` edges and
+  `57f40fb157e6416558db5507d95c3a5e4f828881e0bc92e142e1b85de802dc6c`. Legacy
+  hashes remain valid only as records of past runs.
+- New LBA numbers are not bit-comparable with pre-repair numbers. Any
+  cross-packet comparison must rerun both arms under this contract.
+
+## Registered LBA Clipping Confirmation
+
+- Decision state: preregistered and implemented, **awaiting compute approval**.
+  No GPU run is authorized by this section alone.
+- Motivation: the frozen seed-44 screen improved last-epoch validation RMSE from
+  `1.628645` to `1.600802 pK` by removing global gradient clipping, above its
+  registered `0.020 pK` threshold, at `1.0101x` latency and `0.9988x` peak
+  allocation. It is one-seed evidence and ran on the drifting candidate list, so
+  the public default remains `grad_clip=1.0`.
+- The runner is `scripts/run_lba_clipping_confirmation.py`. It compares clip 1
+  against no clipping at model/order seeds 41--43 in one process, on one shared
+  and hashed topology, with the current squared-RBF gated-plus-grouped LGL,
+  matched 20 epochs, batch 16, AdamW `3e-4`, weight decay `0.01`, five warmup
+  epochs, cosine decay, strict deterministic FP32, and no test path. It aborts
+  before training when `--expect-topology` does not match.
+- The frozen promotion rule, fixed before any outcome is inspected: mean paired
+  last-epoch improvement at least `0.020 pK`, at least two of three paired wins,
+  worst paired regression at most `0.050 pK`, median step-latency and
+  peak-allocation ratios at most `1.05`, identical update counts and initial
+  state hashes within each pair, and every arm finite and completed. Only that
+  conjunction authorizes changing the public `grad_clip` default.
+- Registering the protocol is not evidence. A failed gate leaves the default at
+  `1.0` and is recorded in `docs/EXPERIMENTS.jsonl` as an authoritative null.
 
 ## Sparse Geometry-Aware O(3)/SE(3) Local Attention
 

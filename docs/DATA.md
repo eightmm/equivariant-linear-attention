@@ -34,6 +34,22 @@ uv run --extra qm9 python scripts/train_compare.py \
 The current QM9 split is a seeded random-row warm-start split. See
 `QM9_CONTRACT.md` before interpreting results.
 
+## Precomputed candidate topology
+
+`segment_balanced_knn_edge_index` retains `i <- j` exactly when the float64
+squared displacement is below the squared cutoff, always keeps self edges, keeps
+the `k` smallest squared distances per relation, and retains every exact tie at
+the boundary, so a receiver degree may exceed its budget. The float64 promotion
+is mandatory whatever the storage dtype: a matrix-multiplication Euclidean
+distance is neither translation invariant nor thread-order reproducible in
+float32 and must not decide retention. Candidate order is receiver major, then
+self, intra-segment, cross-segment, then ascending sender index.
+
+`topology_sha256` is the only admitted candidate identity, and
+`scripts/verify_lba_topology.py` must report one edge count and one hash across
+fresh processes before a multi-seed claim. See `TOPOLOGY_CONTRACT_20260727.md`
+for the frozen ATOM3D-LBA ID30 identity and the effect on historical numbers.
+
 ## ATOM3D-LBA train-only overfit packet
 
 The optional `pdbbind` dependency group loads the public

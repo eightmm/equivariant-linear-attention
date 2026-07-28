@@ -10,6 +10,23 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [data] v0.2 -> v0.3 (2026-07-27) — replace the `torch.cdist` retention test in
+  `segment_balanced_knn_edge_index` with an exact chunked float64
+  squared-distance test against the squared cutoff, keep every tie at the kth
+  boundary, and centralize candidate identity in
+  `equivariant_attention.pdbbind.topology_sha256`. impact: the LBA candidate list
+  is now translation invariant, permutation equivariant, and identical across
+  processes and BLAS thread budgets; the official ID30 identity becomes
+  `32,302,952` edges / `57f40fb1...` (293 fewer edges than the drifting list), so
+  new LBA numbers are not bit-comparable with pre-repair numbers. Also 1.2--4.4x
+  faster at 500--5,000 nodes and free of the `N x N` distance matrix.
+- [eval] v0.10 -> v0.11 (2026-07-27) — add `scripts/verify_lba_topology.py`
+  cross-process topology verification and the preregistered
+  `scripts/run_lba_clipping_confirmation.py` paired seeds 41--43 clip-1
+  versus no-clipping runner with frozen promotion thresholds. impact: the
+  multi-seed clipping confirmation blocked by the topology defect is now one
+  command and aborts on topology drift; no default changed and no GPU run is
+  authorized by the code alone.
 - [model] v0.15 -> v0.16 (2026-07-27) — add selectable O(3)/SE(3) symmetry,
   sparse local `0e/1o/2e` score refinement, static per-layer scheduling, and
   an SE(3)-only axial `2e x 2e -> l=1` value. impact: the path remains

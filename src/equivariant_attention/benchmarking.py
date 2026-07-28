@@ -305,7 +305,9 @@ def _make_synthetic_sample(
     pos = torch.randn(n_nodes, 3, generator=generator)
     pos = pos - pos.mean(dim=0, keepdim=True)
 
-    dist = torch.cdist(pos, pos)
+    # The matrix-multiplication distance is thread-order dependent, so the
+    # synthetic target would not be reproducible above 25 nodes.
+    dist = torch.cdist(pos, pos, compute_mode="donot_use_mm_for_euclid_dist")
     charge = (atom_ids.float() + 1.0) / node_dim
     pair_weight = charge.unsqueeze(0) * charge.unsqueeze(1)
     upper = torch.triu(torch.ones_like(dist, dtype=torch.bool), diagonal=1)

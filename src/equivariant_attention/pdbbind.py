@@ -22,6 +22,22 @@ _TRAIN_FILES = (
     "data/train-00001-of-00002.parquet",
 )
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
+TOPOLOGY_CHUNK_NODES = 128
+
+
+def topology_sha256(samples: Sequence[GraphSample]) -> str:
+    """Canonical identity of a precomputed candidate list.
+
+    Every runner must consume this one definition so a drifting candidate list
+    cannot be mistaken for a matched topology across processes or packets.
+    """
+    digest = hashlib.sha256()
+    for sample in samples:
+        if sample.edge_index is None:
+            raise ValueError("topology hash requires precomputed edges")
+        digest.update(sample.sample_id.encode("utf-8"))
+        digest.update(sample.edge_index.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
 
 
 def segment_balanced_knn_edge_index(
@@ -31,8 +47,19 @@ def segment_balanced_knn_edge_index(
     intra_k: int,
     cross_k: int,
     cutoff: float,
+    chunk_nodes: int = TOPOLOGY_CHUNK_NODES,
 ) -> torch.Tensor:
-    """Build self plus bounded same/cross-segment directed candidates."""
+    """Build self plus bounded same/cross-segment directed candidates.
+
+    The retention test is the exact float64 squared displacement against the
+    squared cutoff, so the candidate list is reproducible across processes and
+    invariant under translation, node permutation, and BLAS thread count. A
+    matrix-multiplication Euclidean distance is not: its float32 error grows
+    with coordinate magnitude and depends on the reduction blocking.
+
+    Exact ties at the neighbor boundary are all retained, so a receiver degree
+    may exceed its budget. That keeps the selection permutation equivariant.
+    """
     if pos.ndim != 2 or pos.shape[1] != 3:
         raise ValueError("pos must have shape (N, 3)")
     if pos.shape[0] == 0:
@@ -55,30 +82,43 @@ def segment_balanced_knn_edge_index(
         or float(cutoff) <= 0.0
     ):
         raise ValueError("cutoff must be finite and positive")
+    if isinstance(chunk_nodes, bool) or not isinstance(chunk_nodes, int):
+        raise TypeError("chunk_nodes must be an integer")
+    if chunk_nodes <= 0:
+        raise ValueError("chunk_nodes must be positive")
 
-    distance = torch.cdist(pos, pos)
-    node_index = torch.arange(pos.shape[0], device=pos.device)
+    node_count = pos.shape[0]
+    geometry = pos.detach().to(dtype=torch.float64)
+    cutoff_squared = float(cutoff) * float(cutoff)
+    node_index = torch.arange(node_count, device=pos.device)
     receivers: list[torch.Tensor] = []
     senders: list[torch.Tensor] = []
-    for receiver in range(pos.shape[0]):
-        selected = [node_index.new_tensor([receiver])]
-        nonself = node_index != receiver
-        within = distance[receiver] < float(cutoff)
-        same_segment = segment_mask == segment_mask[receiver]
+    for start in range(0, node_count, chunk_nodes):
+        stop = min(start + chunk_nodes, node_count)
+        rows = node_index[start:stop]
+        displacement = geometry[start:stop].unsqueeze(1) - geometry.unsqueeze(0)
+        squared = displacement.square().sum(dim=-1)
+        self_edge = node_index.unsqueeze(0) == rows.unsqueeze(1)
+        within = squared < cutoff_squared
+        same_segment = segment_mask[start:stop].unsqueeze(1) == segment_mask.unsqueeze(0)
+        selection = [self_edge]
         for relation_mask, maximum in (
             (same_segment, intra_k),
             (~same_segment, cross_k),
         ):
-            candidates = node_index[nonself & within & relation_mask]
-            if maximum and candidates.numel():
-                candidate_distance = distance[receiver, candidates]
-                if candidates.numel() > maximum:
-                    boundary = torch.kthvalue(candidate_distance, maximum).values
-                    candidates = candidates[candidate_distance <= boundary]
-                selected.append(candidates)
-        sender = torch.cat(selected)
-        receivers.append(torch.full_like(sender, receiver))
-        senders.append(sender)
+            eligible = within & relation_mask & ~self_edge
+            budget = min(maximum, node_count)
+            if budget == 0:
+                selection.append(torch.zeros_like(eligible))
+                continue
+            ranked = torch.where(eligible, squared, squared.new_full((), math.inf))
+            boundary = ranked.topk(budget, dim=-1, largest=False).values[:, -1:]
+            selection.append(eligible & (squared <= boundary))
+        # Row-major nonzero order is (self, intra, cross) then ascending sender.
+        flat = torch.stack(selection, dim=1).reshape(stop - start, -1)
+        row, column = flat.nonzero(as_tuple=True)
+        receivers.append(rows[row])
+        senders.append(column % node_count)
     return torch.stack([torch.cat(receivers), torch.cat(senders)])
 
 
