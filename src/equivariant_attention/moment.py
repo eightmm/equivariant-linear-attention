@@ -4555,11 +4555,13 @@ def _whitened_global_read(
         read = _unpad_by_graph(padded_read, layout)
     if rank_reliability_gate:
         # A graph with n key samples cannot identify more than n directions of
-        # an F-dimensional Gram matrix.  The conservative degrees-of-freedom
-        # fraction below disables the auxiliary read when n <= F and approaches
-        # one on the large graphs for which whitening is statistically stable.
+        # an F-dimensional Gram matrix, and the p/n ~= 1 regime remains poorly
+        # conditioned even just above full rank.  Requiring two samples per
+        # feature keeps the auxiliary read out of that high-dimensional regime
+        # and approaches one on large biomolecular graphs.
+        required_samples = 2.0 * float(features)
         reliability = (
-            (counts - float(features)).clamp_min(0.0) / counts
+            (counts - required_samples).clamp_min(0.0) / counts
         )[batch]
         read = read * reliability[:, None, None]
     offset = scalar_value.shape[-1]

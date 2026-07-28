@@ -138,7 +138,7 @@ def test_rank_reliability_gate_disables_underdetermined_graphs() -> None:
 
 def test_rank_reliability_gate_uses_the_graphwise_degrees_of_freedom_fraction() -> None:
     generator = torch.Generator().manual_seed(23)
-    nodes = 40
+    nodes = 80
     inputs = {
         "query_scalar": torch.rand(
             (nodes, 1, 2), generator=generator, dtype=torch.float64
@@ -167,7 +167,7 @@ def test_rank_reliability_gate_uses_the_graphwise_degrees_of_freedom_fraction() 
         inputs, rank_reliability_gate=True
     )
     feature_count = inputs["query_scalar"].shape[-1] + 1 + 3 + 6
-    expected = (nodes - feature_count) / nodes
+    expected = (nodes - 2 * feature_count) / nodes
 
     torch.testing.assert_close(gated_scalar, expected * scalar)
     torch.testing.assert_close(gated_vector, expected * vector)

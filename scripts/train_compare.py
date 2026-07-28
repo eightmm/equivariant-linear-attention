@@ -422,7 +422,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--whitened-global-rank-gate",
         action="store_true",
         help=(
-            "scale the auxiliary whitened read by max(0, n-F)/n per graph, "
+            "scale the auxiliary whitened read by max(0, n-2F)/n per graph, "
             "where F is the kernel-feature dimension"
         ),
     )
