@@ -581,6 +581,7 @@ def _build_model(
     model_seed: int = MODEL_SEED,
     checkpoint_gated_local_mlp: bool = False,
     whitened_ridge: float = WHITENED_GLOBAL_RIDGE,
+    whitened_rank_gate: bool = False,
 ) -> torch.nn.Module:
     torch.manual_seed(model_seed)
     if arm == "egnn":
@@ -635,6 +636,9 @@ def _build_model(
         geometry_aware_local_layers=(0,) if arm in geometry_arms else None,
         use_whitened_global_read=arm == "whitened",
         whitened_global_ridge=whitened_ridge,
+        whitened_global_rank_gate=(
+            whitened_rank_gate if arm == "whitened" else False
+        ),
         checkpoint_gated_local_mlp=(
             checkpoint_gated_local_mlp if arm in gated_arms else False
         ),
@@ -668,9 +672,14 @@ def _train_arm(
     args: argparse.Namespace,
     output_dir: Path,
     budget_seconds: float,
+    freeze_whitened_mix: bool = False,
 ) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     model = model.to(device=device, dtype=torch.float32)
+    frozen_whitened_mix_parameter_count = _freeze_whitened_mix_gradients(
+        model,
+        enabled=freeze_whitened_mix,
+    )
     device_normalizer = normalizer.to(device=device, dtype=torch.float32)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -870,6 +879,9 @@ def _train_arm(
         "status": status,
         "stop_reason": stop_reason,
         "parameter_count": _parameter_count(model),
+        "frozen_whitened_mix_parameter_count": (
+            frozen_whitened_mix_parameter_count
+        ),
         "initial_state_sha256": initial_state_sha256,
         "best_state_sha256": _state_hash(model),
         "epochs_completed": epochs_completed,
@@ -954,6 +966,29 @@ def _train_arm(
         "validation_evaluated": True,
         "test_evaluated": False,
     }
+
+
+def _freeze_whitened_mix_gradients(
+    model: torch.nn.Module,
+    *,
+    enabled: bool,
+) -> int:
+    """Freeze whitened mixes through hooks while preserving graph and schema."""
+    if not enabled:
+        return 0
+    count = 0
+    for name, parameter in model.named_parameters():
+        if not name.endswith(
+            (".whitened_scalar_mix", ".whitened_vector_mix")
+        ):
+            continue
+        if bool(torch.count_nonzero(parameter.detach())):
+            raise ValueError("frozen whitened mix must start at zero")
+        parameter.register_hook(torch.zeros_like)
+        count += parameter.numel()
+    if count == 0:
+        raise ValueError("no whitened mix parameters were found to freeze")
+    return count
 
 
 @torch.no_grad()

@@ -35,6 +35,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--steps", type=int, default=STEPS)
     parser.add_argument("--budget-seconds", type=float, default=900.0)
+    parser.add_argument(
+        "--rank-gated-schema-control",
+        action="store_true",
+        help=(
+            "compare the 2F finite-sample gate against a frozen-mix control "
+            "with the identical whitening schema and autograd path"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if not 1 <= args.steps <= STEPS:
@@ -50,6 +58,7 @@ def build_command(
     output: Path,
     steps: int,
     device: str,
+    rank_gated_schema_control: bool = False,
 ) -> list[str]:
     if arm not in ARMS:
         raise ValueError(f"unknown arm: {arm}")
@@ -103,7 +112,7 @@ def build_command(
         "--metrics-out",
         str(output),
     ]
-    if arm == "whitened_ridge_0p1":
+    if arm == "whitened_ridge_0p1" or rank_gated_schema_control:
         command.extend(
             [
                 "--whitened-global-read",
@@ -111,6 +120,10 @@ def build_command(
                 "0.1",
             ]
         )
+    if rank_gated_schema_control:
+        command.append("--whitened-global-rank-gate")
+        if arm == "candidate":
+            command.append("--freeze-whitened-global-mix")
     return command
 
 
@@ -119,8 +132,13 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "schema_version": 1,
         "run_id": RUN_ID,
         "question": (
-            "Does the ridge-0.1 whitened global read remain numerically safe "
-            "on the small-graph QM9 gap task?"
+            "Does the 2F rank-gated whitened global read remain numerically "
+            "safe against an identical-schema frozen-mix control on QM9?"
+            if args.rank_gated_schema_control
+            else (
+                "Does the ridge-0.1 whitened global read remain numerically "
+                "safe on the small-graph QM9 gap task?"
+            )
         ),
         "hypothesis": (
             "The whitened lane remains finite and changes validation MAE by at "
@@ -140,6 +158,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "maximum_absolute_mae_delta_eV": MAXIMUM_ABSOLUTE_MAE_DELTA_EV,
         "maximum_resource_ratio": MAXIMUM_RESOURCE_RATIO,
         "decision_use": "safety_only",
+        "rank_gated_schema_control": args.rank_gated_schema_control,
         "claim_boundary": (
             "registered_safety_smoke"
             if args.steps == STEPS
@@ -161,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output=args.output_dir / f"{arm}.json",
             steps=args.steps,
             device=args.device,
+            rank_gated_schema_control=args.rank_gated_schema_control,
         )
         for arm in ARMS
     }

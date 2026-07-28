@@ -145,6 +145,38 @@ def test_secondary_success_cannot_rescue_a_failed_primary() -> None:
     assert result["exact_ridge_resolved"] is False
 
 
+def test_rank_gated_confirmation_uses_the_schema_matched_control() -> None:
+    symbols = _symbols()
+    records: list[dict[str, object]] = []
+    for seed, improvement in {41: 0.030, 42: 0.025, 43: 0.020}.items():
+        control = _record(
+            symbols["RANK_CONTROL_ARM"],
+            seed,
+            last_rmse=1.60,
+            ridge=0.1,
+        )
+        active = _record(
+            symbols["RANK_ACTIVE_ARM"],
+            seed,
+            last_rmse=1.60 - improvement,
+            ridge=0.1,
+        )
+        control["initial_state_sha256"] = f"full-{seed}"
+        active["initial_state_sha256"] = f"full-{seed}"
+        records.extend([control, active])
+
+    result = symbols["decision"](
+        records,
+        qm9_safety_passed=True,
+        rank_gated_schema_control=True,
+    )
+
+    assert result["passed"] is True
+    assert result["schema_matched_control"] is True
+    assert result["secondary"] is None
+    assert result["primary"]["criteria"]["full_initial_state_matches"] is True
+
+
 def test_decision_rejects_resource_or_paired_seed_failures() -> None:
     symbols = _symbols()
     records = _paired(

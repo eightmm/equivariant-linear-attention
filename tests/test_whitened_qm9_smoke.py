@@ -115,3 +115,27 @@ def test_build_command_keeps_the_feature_and_test_boundary_matched() -> None:
     assert "--whitened-global-read" in whitened
     ridge_index = whitened.index("--whitened-global-ridge")
     assert whitened[ridge_index + 1] == "0.1"
+
+
+def test_rank_gated_commands_use_an_identical_schema_control() -> None:
+    symbols = _symbols()
+    control = symbols["build_command"](
+        "candidate",
+        output=Path("control.json"),
+        steps=500,
+        device="cuda",
+        rank_gated_schema_control=True,
+    )
+    active = symbols["build_command"](
+        "whitened_ridge_0p1",
+        output=Path("active.json"),
+        steps=500,
+        device="cuda",
+        rank_gated_schema_control=True,
+    )
+
+    for command in (control, active):
+        assert "--whitened-global-read" in command
+        assert "--whitened-global-rank-gate" in command
+    assert "--freeze-whitened-global-mix" in control
+    assert "--freeze-whitened-global-mix" not in active

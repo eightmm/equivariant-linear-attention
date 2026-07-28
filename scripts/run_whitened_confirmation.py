@@ -38,6 +38,8 @@ SEEDS = (41, 42, 43)
 PRIMARY_RIDGE = 0.1
 SECONDARY_RIDGE = 0.01
 RIDGES = (PRIMARY_RIDGE, SECONDARY_RIDGE)
+RANK_CONTROL_ARM = "whitened_rank_frozen"
+RANK_ACTIVE_ARM = "whitened_rank_ridge_0p1"
 MATCHED_EPOCHS = 20
 MINIMUM_MEAN_IMPROVEMENT_PK = 0.020
 MINIMUM_IMPROVING_SEEDS = 2
@@ -72,6 +74,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--train-limit", type=int)
     parser.add_argument("--val-limit", type=int)
+    parser.add_argument(
+        "--rank-gated-schema-control",
+        action="store_true",
+        help=(
+            "run only ridge 0.1 with the 2F finite-sample gate and compare it "
+            "to an identical-schema frozen-mix control"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if args.batch_size <= 0 or args.epochs <= 0:
@@ -100,8 +110,14 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "schema_version": 1,
         "run_id": RUN_ID,
         "question": (
-            "Does the ridge-0.1 whitened global read improve fixed-budget "
-            "ATOM3D-LBA ID30 validation RMSE across seeds 41--43?"
+            "Does the 2F rank-gated ridge-0.1 read improve fixed-budget "
+            "ATOM3D-LBA ID30 validation RMSE against an identical-schema "
+            "frozen-mix control across seeds 41--43?"
+            if args.rank_gated_schema_control
+            else (
+                "Does the ridge-0.1 whitened global read improve fixed-budget "
+                "ATOM3D-LBA ID30 validation RMSE across seeds 41--43?"
+            )
         ),
         "hypothesis": (
             "Ridge 0.1 improves mean paired last-epoch validation RMSE by at "
@@ -127,8 +143,14 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "primary_ridge": PRIMARY_RIDGE,
         "secondary_ridge": SECONDARY_RIDGE,
         "secondary_policy": (
-            "sensitivity only; ridge 0.01 cannot rescue a failed ridge-0.1 primary"
+            "not run after the QM9 failure exposed a schema/autograd confound"
+            if args.rank_gated_schema_control
+            else (
+                "sensitivity only; ridge 0.01 cannot rescue a failed "
+                "ridge-0.1 primary"
+            )
         ),
+        "rank_gated_schema_control": args.rank_gated_schema_control,
         "epochs": args.epochs,
         "warmup_epochs": args.warmup_epochs,
         "batch_size": args.batch_size,
@@ -243,7 +265,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         - (time.perf_counter() - started)
         - args.finalization_grace_seconds
     )
-    arm_count = len(SEEDS) * (1 + len(RIDGES))
+    arm_count = len(SEEDS) * (
+        2 if args.rank_gated_schema_control else 1 + len(RIDGES)
+    )
     if remaining <= 0.0:
         raise RuntimeError("budget exhausted before arm training")
     per_arm_budget = remaining / arm_count
@@ -252,20 +276,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_json(result_path, result)
     for seed in SEEDS:
         base_args = _train_args(args, seed=seed, budget_seconds=per_arm_budget)
-        for name, ridge in [
-            ("candidate", None),
-            *((_arm_name(value), value) for value in RIDGES),
-        ]:
+        arm_specs = (
+            [
+                (RANK_CONTROL_ARM, PRIMARY_RIDGE, True),
+                (RANK_ACTIVE_ARM, PRIMARY_RIDGE, False),
+            ]
+            if args.rank_gated_schema_control
+            else [
+                ("candidate", None, False),
+                *((_arm_name(value), value, False) for value in RIDGES),
+            ]
+        )
+        for name, ridge, freeze_mix in arm_specs:
             arm_args = copy.copy(base_args)
+            model_arm = (
+                "whitened"
+                if args.rank_gated_schema_control or ridge is not None
+                else "candidate"
+            )
             model = TRAIN_LBA["_build_model"](
-                "candidate" if ridge is None else "whitened",
+                model_arm,
                 None,
                 model_seed=seed,
                 whitened_ridge=PRIMARY_RIDGE if ridge is None else ridge,
+                whitened_rank_gate=args.rank_gated_schema_control,
             )
             paired_hash = _paired_base_initial_state_sha256(model)
             record = TRAIN_LBA["_train_arm"](
-                arm="candidate" if ridge is None else "whitened",
+                arm=model_arm,
                 model=model,
                 train_samples=train_samples,
                 val_samples=val_samples,
@@ -275,6 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args=arm_args,
                 output_dir=args.output_dir / f"seed{seed}" / name,
                 budget_seconds=per_arm_budget,
+                freeze_whitened_mix=freeze_mix,
             )
             record["confirmation_arm"] = name
             record["whitened_global_ridge"] = ridge
@@ -301,6 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result["decision"] = decision(
         result["arm_results"],
         qm9_safety_passed=safety_passed,
+        rank_gated_schema_control=args.rank_gated_schema_control,
     )
     result["elapsed_seconds"] = time.perf_counter() - started
     result["status"] = (
@@ -320,6 +360,7 @@ def decision(
     records: object,
     *,
     qm9_safety_passed: bool = False,
+    rank_gated_schema_control: bool = False,
 ) -> dict[str, object]:
     if not isinstance(records, list):
         return {"passed": False, "reason": "arm results are missing"}
@@ -329,15 +370,35 @@ def decision(
             continue
         seed = int(record["model_seed"])
         by_seed.setdefault(seed, {})[str(record["confirmation_arm"])] = record
-    required = {"candidate", *(_arm_name(ridge) for ridge in RIDGES)}
+    required = (
+        {RANK_CONTROL_ARM, RANK_ACTIVE_ARM}
+        if rank_gated_schema_control
+        else {"candidate", *(_arm_name(ridge) for ridge in RIDGES)}
+    )
     missing = [
         seed for seed in SEEDS if set(by_seed.get(seed, {})) != required
     ]
     if missing:
         return {"passed": False, "reason": f"incomplete seeds: {missing}"}
 
-    primary = _ridge_decision(by_seed, ridge=PRIMARY_RIDGE)
-    secondary = _ridge_decision(by_seed, ridge=SECONDARY_RIDGE)
+    primary = _ridge_decision(
+        by_seed,
+        ridge=PRIMARY_RIDGE,
+        baseline_name=(
+            RANK_CONTROL_ARM if rank_gated_schema_control else "candidate"
+        ),
+        candidate_name=(
+            RANK_ACTIVE_ARM
+            if rank_gated_schema_control
+            else _arm_name(PRIMARY_RIDGE)
+        ),
+        require_full_initial_state=rank_gated_schema_control,
+    )
+    secondary = (
+        None
+        if rank_gated_schema_control
+        else _ridge_decision(by_seed, ridge=SECONDARY_RIDGE)
+    )
     primary_passed = bool(primary["passed"])
     passed = primary_passed and qm9_safety_passed
     return {
@@ -349,6 +410,7 @@ def decision(
         "selected_ridge": PRIMARY_RIDGE if primary_passed else None,
         "exact_ridge_resolved": primary_passed,
         "secondary_can_rescue_primary": False,
+        "schema_matched_control": rank_gated_schema_control,
         "default_change_authorized": passed,
         "next_stage_authorized": passed,
         "evidence_grade": "paired_three_seed_same_validation_harness",
@@ -359,8 +421,11 @@ def _ridge_decision(
     by_seed: Mapping[int, Mapping[str, Mapping[str, object]]],
     *,
     ridge: float,
+    baseline_name: str = "candidate",
+    candidate_name: str | None = None,
+    require_full_initial_state: bool = False,
 ) -> dict[str, object]:
-    name = _arm_name(ridge)
+    name = _arm_name(ridge) if candidate_name is None else candidate_name
     improvements: list[float] = []
     best_improvements: list[float] = []
     latency_ratios: list[float] = []
@@ -369,9 +434,10 @@ def _ridge_decision(
     complete = True
     matched_updates = True
     paired_initialization = True
+    full_initial_state = True
     finite = True
     for seed in SEEDS:
-        baseline = by_seed[seed]["candidate"]
+        baseline = by_seed[seed][baseline_name]
         candidate = by_seed[seed][name]
         baseline_last = _metric(
             baseline, "last_epoch_validation", "rmse_pK"
@@ -408,6 +474,11 @@ def _ridge_decision(
             == candidate.get("paired_base_initial_state_sha256")
         )
         paired_initialization = paired_initialization and initial_matches
+        full_matches = (
+            baseline.get("initial_state_sha256")
+            == candidate.get("initial_state_sha256")
+        )
+        full_initial_state = full_initial_state and full_matches
         values = (
             baseline_last,
             candidate_last,
@@ -429,6 +500,7 @@ def _ridge_decision(
             "step_latency_ratio": latency,
             "peak_memory_ratio": memory,
             "paired_base_initialization_matches": initial_matches,
+            "full_initial_state_matches": full_matches,
             "baseline_gradient_monitor": baseline.get("gradient_monitor"),
             "whitened_gradient_monitor": candidate.get("gradient_monitor"),
             "whitened_mix_magnitude": candidate.get("whitened_mix_magnitude"),
@@ -456,6 +528,9 @@ def _ridge_decision(
         "all_arms_completed_without_test_access": complete,
         "matched_update_counts": matched_updates,
         "paired_base_initialization": paired_initialization,
+        "full_initial_state_matches": (
+            full_initial_state if require_full_initial_state else True
+        ),
         "finite_metrics": finite,
     }
     return {
