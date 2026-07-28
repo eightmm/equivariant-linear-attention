@@ -2,6 +2,49 @@
 
 ## Status
 
+- The 2026-07-28 seed-44 ATOM3D-LBA ID30 ridge screen gave the whitened global
+  read the **first positive one-seed accuracy evidence any global-path
+  intervention has earned in this project**, and it falsified the packet's own
+  registered prediction. At 4,400 matched updates on one shared candidate list,
+  candidate/ridge-0.5/ridge-0.1/ridge-0.01 last-epoch validation RMSEs were
+  `1.638053/1.629871/1.586308/1.588391 pK`, so the selected `ridge=0.1` improved
+  `0.051745 pK` where the preregistration predicted under `0.020 pK`. All three
+  ridges passed the frozen screen rule at `1.138--1.144x` step latency and
+  `1.0171x` peak allocation. Four cautions are recorded with the result: it is
+  one seed in a project where one-seed effects have repeatedly vanished; the
+  selected arm's best epoch was the last one, so part of the last-epoch gap is a
+  difference in when each arm degrades (best-checkpoint improvement is
+  `0.039961 pK`); `ridge=0.1` and `0.01` are not separable at one seed, since
+  `0.01` wins on best RMSE and MAE; and the gain came mostly through the whitened
+  `1o` vector route, whose learned gate reached `0.160--0.324` against
+  `0.031--0.053` for the scalar route. Clipping stayed at `0.9855` in every arm.
+  Nothing is promoted and no default changed. See
+  `docs/WHITENED_GLOBAL_READ_20260727.md`.
+- The whitened (ridge-regression) global read is implemented as an opt-in lane and
+  is **not promoted**. It targets the one axis the
+  rejected global packets left untouched. Every earlier repair sharpened the
+  kernel *weights*; this changes the *metric of the read*, replacing
+  `o_i = phi_i^T S / phi_i^T m` with `o_i = phi_i^T (G + lambda I)^-1 S`, where
+  `G` is the graph-mean Gram matrix of the same key feature map and
+  `lambda = ridge * tr(G)/F`. Whitening divides out the dominant near-constant
+  kernel direction instead of averaging along it, and the incumbent is exactly
+  its large-shrinkage limit. Cost is `O(N F^2 + G H F^3)` with `F = 26` and no
+  `N x N` tensor. Exact `O(3)` equivariance holds only in an isometric feature
+  basis, so the symmetric-quadratic block carries off-diagonal products at
+  `sqrt(2)` on both sides; the incumbent's asymmetric `1x`/`2x` compression pairs
+  to the same kernel but would break the whitened read, and both directions are
+  tested. On the first cached LBA complex (331 nodes, seed-41 candidate) the
+  incumbent row CV was `0.00298` with entropy `0.9999992`, while the whitened
+  read at `ridge=0.1` reached CV `0.677` and entropy `0.9643`, so the mechanism
+  is measurably active before any training claim; the key Gram condition number
+  was `3.3e9`. Real-training-path ratios were `1.0000474x` parameters,
+  `1.1138x` median step, and `1.0179x` peak allocation. The read is a *signed*
+  linear operator, not a convex attention distribution (`6.6%` negative weights
+  at `ridge=0.1`). The registered QM9 conclusion that near-uniform global
+  transport is desirable runs against this lane at `N ~ 18`; the argument for
+  testing it was that the deciding task has mean `~460` nodes per complex, and
+  the LBA screen above is consistent with that size asymmetry while the QM9
+  safety smoke remains unrun. See `docs/WHITENED_GLOBAL_READ_20260727.md`.
 - The recorded cross-run topology reproducibility defect is repaired and the
   candidate-list contract is frozen. `torch.cdist` defaults to the
   matrix-multiplication Euclidean identity above 25 points; in float32 its error
@@ -898,6 +941,72 @@
   artifacts remain under ignored
   `artifacts/`; results, including rejection or null results, are appended to
   `docs/EXPERIMENTS.jsonl`. Automatic GitHub Actions remain disabled.
+
+## Whitened Global Read
+
+- Decision state: implemented on 2026-07-27 as the conceptual strengthening of
+  equivariant linear attention. The registered diagnosis is that the global
+  kernel is numerically uniform and that every attempt to sharpen its *weights*
+  failed; this packet changes the *metric of the read* instead, which is the
+  remaining untested axis. Training and promotion require separate compute
+  approval.
+- The public switch is `use_whitened_global_read=False` with the dimensionless
+  `whitened_global_ridge=0.1`. The lane computes
+  `o_i = phi_i^T (G + lambda I)^-1 S` with `G` the graph-mean Gram matrix of the
+  key feature map, `S` its mean cross moment with the `0e`/`1o` values, and
+  `lambda = ridge * tr(G)/F`. The incumbent pooled read is exactly the
+  large-shrinkage limit of this expression, so the lane generalizes rather than
+  replaces it.
+- The key feature map must reproduce the incumbent kernel
+  `<q0,k0> + (floor + alpha) + alpha_dot (q1.k1) + gamma (q1.k1)^2` exactly, and
+  its symmetric-quadratic block must use the isometric basis
+  `[x^2, y^2, z^2, sqrt2 xy, sqrt2 xz, sqrt2 yz]` on both sides. Whitening is
+  basis dependent: exact `O(3)` equivariance requires the rotation action on the
+  feature vector to be orthogonal, which the incumbent's asymmetric `1x`/`2x`
+  compression is not. `tr(G)` is invariant under the same action.
+- The lane is added through per-head zero-initialized scalar and vector mixes, so
+  an enabled model is the exact incumbent function at initialization, consumes no
+  extra RNG, keeps every incumbent weight draw, and adds `2 * num_heads`
+  parameters on stages with at least one global head. It rewrites only the
+  `0e`/`1o` value lanes; relative-position and `2e` moment reconstruction stay on
+  the incumbent normalized read.
+- Construction rejects key balancing, `kernel_floor_mode="inverse_graph_size"`,
+  the multiscale spatial kernel, memory interaction, and non-learned transport,
+  because each changes the key feature map or its metric in a way this packet has
+  not proven. A learnable ridge, whitened local transport, and whitened
+  relative/`2e` lanes are deferred ablations, not hidden components.
+- At fixed channels the lane costs `O(N F^2)` for the moments and
+  `O(G H F^3)` for the factorization, materializes no `N x N` tensor, and must
+  stay within `1.25x` real-training step latency and peak allocation. Per-graph
+  moments are reduced as batched matrix products on a padded graph-major layout,
+  which declines itself under extreme graph-size skew and falls back to an exact
+  per-node reduction.
+- The mechanism must be verified active by measurement, not assumed: the
+  equivalent attention rows must become materially more dispersed than the
+  incumbent kernel's rows on real cached data. It must not be described as a
+  sparse or convex attention distribution, because `(G + lambda I)^-1` makes the
+  equivalent weights signed.
+- The frozen screen is a QM9 seed-42/500-update safety smoke (finite and within
+  `0.020 eV`, not an admission gate), then a fixed seed-44 ATOM3D-LBA ID30 ridge
+  screen over `{0.5, 0.1, 0.01}`, then a seeds 41--43 confirmation requiring mean
+  paired improvement at least `0.020 pK`, at least two of three paired wins, and
+  worst paired regression at most `0.050 pK`. Every arm consumes the frozen
+  topology hash. Test labels remain structurally inaccessible.
+- The ridge screen is executed by `scripts/run_whitened_ridge_screen.py`, which
+  the user authorized on 2026-07-28. It trains the candidate plus one arm per
+  ridge in one process on one in-memory hashed candidate list, aborts before
+  training when the topology hash differs from the frozen identity, allocates the
+  wall-clock budget evenly across arms, and records each arm's best-checkpoint
+  lane-gate magnitude. That last field is required: a null result is
+  interpretable only if it distinguishes an inert lane from an active but
+  unhelpful one. Only a ridge that improves last-epoch validation RMSE inside the
+  resource ceilings advances, and the screen alone authorizes no default change.
+- That screen was executed on 2026-07-28 and passed with `ridge=0.1` selected, so
+  the next authorized step is the seeds 41--43 confirmation. It must carry both
+  `ridge=0.1` and `ridge=0.01`, because one seed could not separate them, and it
+  must report best-checkpoint alongside fixed-budget metrics, because the selected
+  arm had not peaked at 20 epochs. Promotion additionally requires the QM9 safety
+  smoke, which has not run. No default may change before that conjunction holds.
 
 ## Deterministic Sparse Topology Contract
 

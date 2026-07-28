@@ -38,6 +38,7 @@ SUPPORTED_ARMS = (
     "ctp",
     "geometry_o3",
     "geometry_se3",
+    "whitened",
 )
 
 

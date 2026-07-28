@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import combinations_with_replacement
+import math
 from math import factorial, isfinite, prod, sqrt
 import warnings
 
@@ -205,6 +206,8 @@ class EquivariantAttentionConfig:
     use_geometry_aware_local_attention: bool = False
     use_se3_axial_tensor_product: bool = False
     geometry_aware_local_layers: tuple[int, ...] | None = None
+    use_whitened_global_read: bool = False
+    whitened_global_ridge: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -370,6 +373,11 @@ class EquivariantAttention(nn.Module):
                     memory_assignment_scale=config.memory_assignment_scale,
                     memory_interaction_cutoff=config.memory_interaction_cutoff,
                     use_radial_trace=config.use_radial_trace,
+                    use_whitened_global_read=(
+                        config.use_whitened_global_read
+                        and local_head_counts[layer_index] < config.num_heads
+                    ),
+                    whitened_global_ridge=config.whitened_global_ridge,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -900,6 +908,8 @@ class _EquivariantMomentLayer(nn.Module):
         use_radial_trace: bool,
         residual_scale_init: float,
         eps: float,
+        use_whitened_global_read: bool = False,
+        whitened_global_ridge: float = 0.1,
     ) -> None:
         super().__init__()
         self.scalars = scalars
@@ -1062,6 +1072,14 @@ class _EquivariantMomentLayer(nn.Module):
         )
         self.relative_mix = nn.Parameter(torch.full((num_heads,), 0.1))
         self.tensor_mix = nn.Parameter(torch.full((num_heads,), 0.1))
+        # Zero initialized and RNG free, so an enabled model starts as the exact
+        # incumbent function while both mixes still receive gradient.
+        self.whitened_global_ridge = float(whitened_global_ridge)
+        self.whitened_scalar_mix: nn.Parameter | None = None
+        self.whitened_vector_mix: nn.Parameter | None = None
+        if use_whitened_global_read:
+            self.whitened_scalar_mix = nn.Parameter(torch.zeros(num_heads))
+            self.whitened_vector_mix = nn.Parameter(torch.zeros(num_heads))
         self.vector_update = _ChannelMix(num_heads, vectors)
         self.persistent_tensor_to_head = (
             _ChannelMix(tensors, num_heads)
@@ -1469,6 +1487,21 @@ class _EquivariantMomentLayer(nn.Module):
                             use_radial_trace=self.use_radial_trace,
                             global_transport_mode=self.global_transport_mode,
                             spatial_features=spatial_features,
+                            whitened_ridge=(
+                                self.whitened_global_ridge
+                                if self.whitened_scalar_mix is not None
+                                else None
+                            ),
+                            whitened_scalar_mix=(
+                                None
+                                if self.whitened_scalar_mix is None
+                                else self.whitened_scalar_mix[global_heads]
+                            ),
+                            whitened_vector_mix=(
+                                None
+                                if self.whitened_vector_mix is None
+                                else self.whitened_vector_mix[global_heads]
+                            ),
                         )
                     )
 
@@ -2604,7 +2637,23 @@ def _global_moment_messages(
     use_radial_trace: bool,
     global_transport_mode: str = "learned",
     spatial_features: torch.Tensor | None = None,
+    whitened_ridge: float | None = None,
+    whitened_scalar_mix: torch.Tensor | None = None,
+    whitened_vector_mix: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if whitened_ridge is not None and (
+        whitened_scalar_mix is None or whitened_vector_mix is None
+    ):
+        raise ValueError("the whitened global read requires both lane mixes")
+    if whitened_ridge is not None and global_transport_mode != "learned":
+        raise ValueError("the whitened global read requires learned transport")
+    if whitened_ridge is not None and (
+        spatial_features is not None or use_memory_interaction
+    ):
+        raise ValueError(
+            "the whitened global read excludes spatial features and memory "
+            "interaction"
+        )
     if global_transport_mode not in {"learned", "uniform"}:
         raise ValueError(
             "_global_moment_messages supports only learned or uniform transport"
@@ -2710,6 +2759,29 @@ def _global_moment_messages(
     offset = scalar_value.shape[-1]
     scalar_message = transported[..., :offset]
     vector_base = transported[..., offset : offset + 3]
+    if whitened_ridge is not None:
+        if whitened_scalar_mix is None or whitened_vector_mix is None:
+            raise RuntimeError("the whitened global read is incomplete")
+        whitened_scalar, whitened_vector = _whitened_global_read(
+            query_scalar,
+            key_scalar,
+            query_vector,
+            key_vector,
+            kernel_scale,
+            scalar_value,
+            vector_value,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+            alignment_scale=alignment_scale,
+            alignment_dot_scale=alignment_dot_scale,
+            kernel_floor=kernel_floor,
+            ridge=whitened_ridge,
+        )
+        scalar_mix = whitened_scalar_mix.to(dtype=moment_dtype)[None, :, None]
+        vector_mix = whitened_vector_mix.to(dtype=moment_dtype)[None, :, None]
+        scalar_message = scalar_message + scalar_mix * whitened_scalar
+        vector_base = vector_base + vector_mix * whitened_vector
     relative_mass = transported[..., offset + 3]
     relative_position = transported[..., offset + 4 : offset + 7]
     relative = relative_position - pos_h * relative_mass.unsqueeze(-1)
@@ -4308,6 +4380,240 @@ def _symmetric_quadratic_features(
     return torch.cat((value.square(), off_diagonal), dim=-1)
 
 
+def _isometric_quadratic_features(value: torch.Tensor) -> torch.Tensor:
+    """Return an isometric factorization of ``(x.y)^2``.
+
+    Unlike the compressed `1x`/`2x` pair used by the incumbent numerator, this
+    basis carries the off-diagonal products at `sqrt(2)`, so both sides use one
+    orthonormal basis of the symmetric rank-2 space. Rotations then act on the
+    feature vector by an orthogonal matrix, which is what makes the whitened
+    read exactly `O(3)` equivariant; the asymmetric basis pairs to the same
+    kernel but is not norm preserving.
+    """
+    dimension = value.shape[-1]
+    upper = torch.triu_indices(
+        dimension,
+        dimension,
+        offset=1,
+        device=value.device,
+    )
+    off_diagonal = (
+        value.index_select(-1, upper[0]) * value.index_select(-1, upper[1])
+    )
+    root_two = torch.full((), 2.0, dtype=value.dtype, device=value.device).sqrt()
+    return torch.cat((value.square(), root_two * off_diagonal), dim=-1)
+
+
+def _kernel_feature_map(
+    scalar: torch.Tensor,
+    vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    alignment_scale: torch.Tensor,
+    alignment_dot_scale: torch.Tensor,
+    *,
+    kernel_floor: float,
+) -> torch.Tensor:
+    """Explicit isometric feature map of the incumbent global kernel.
+
+    The pairing reproduces
+    ``<q0,k0> + (floor + alpha) + alpha_dot (q1.k1) + gamma (q1.k1)^2`` exactly,
+    so the whitened lane reads the same kernel the incumbent transports.
+    """
+    dtype = _moment_dtype(scalar, vector, kernel_scale)
+    scalar = scalar.to(dtype=dtype)
+    vector = vector.to(dtype=dtype)
+    baseline = (
+        alignment_scale.to(dtype=dtype) + float(kernel_floor)
+    ).clamp_min(0.0).sqrt()
+    linear = alignment_dot_scale.to(dtype=dtype).clamp_min(0.0).sqrt()
+    quadratic = kernel_scale.to(dtype=dtype).clamp_min(0.0).sqrt()
+    constant = baseline[None, :, None].expand(scalar.shape[0], -1, 1)
+    return torch.cat(
+        [
+            scalar,
+            constant,
+            linear[None, :, None] * vector,
+            quadratic[None, :, None] * _isometric_quadratic_features(vector),
+        ],
+        dim=-1,
+    )
+
+
+def _whitened_global_read(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    scalar_value: torch.Tensor,
+    vector_value: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+    alignment_scale: torch.Tensor,
+    alignment_dot_scale: torch.Tensor,
+    kernel_floor: float,
+    ridge: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Read ``phi_i^T (G + ridge I)^-1 S`` instead of the pooled ``phi_i^T S``.
+
+    ``G`` is the graph-mean Gram matrix of the key feature map and ``S`` its
+    mean cross moment with the values, so this solves one ridge regression from
+    key features to values per graph and head and evaluates it at the query.
+    Whitening suppresses the kernel's dominant near-constant direction rather
+    than averaging along it; as ``ridge`` grows the read returns to a scaled
+    copy of the incumbent sum pooling. Cost is ``O(N F^2 + F^3)`` per graph and
+    head with no ``N x N`` tensor.
+
+    ``ridge`` is dimensionless: the applied shrinkage is ``ridge * tr(G)/F`` per
+    graph and head, so the same value means the same amount of whitening at any
+    feature scale, and the shifted matrix stays positive definite because the
+    constant kernel block keeps the trace strictly positive. The trace is
+    invariant under the orthogonal rotation action, so this normalization does
+    not weaken the ``O(3)`` contract.
+    """
+    query_features = _kernel_feature_map(
+        query_scalar,
+        query_vector,
+        kernel_scale,
+        alignment_scale,
+        alignment_dot_scale,
+        kernel_floor=kernel_floor,
+    )
+    key_features = _kernel_feature_map(
+        key_scalar,
+        key_vector,
+        kernel_scale,
+        alignment_scale,
+        alignment_dot_scale,
+        kernel_floor=kernel_floor,
+    )
+    dtype = query_features.dtype
+    value = torch.cat(
+        [scalar_value.to(dtype=dtype), vector_value.to(dtype=dtype)],
+        dim=-1,
+    )
+    counts = graph_counts.to(device=value.device, dtype=dtype).clamp_min(1.0)
+    inverse_counts = counts.reciprocal()[:, None, None, None]
+    layout = _graph_padded_layout(batch, graph_counts, num_graphs)
+    if layout is None:
+        # Extreme graph-size skew: the padded layout would waste more memory
+        # than the per-node moments it replaces, so reduce node by node.
+        gram = inverse_counts * _segment_sum(
+            key_features.unsqueeze(-1) * key_features.unsqueeze(-2),
+            batch,
+            num_graphs,
+        )
+        cross = inverse_counts * _segment_sum(
+            key_features.unsqueeze(-1) * value.unsqueeze(-2),
+            batch,
+            num_graphs,
+        )
+    else:
+        padded_key = _pad_by_graph(key_features, layout)
+        gram = inverse_counts * torch.einsum(
+            "gmhd,gmhe->ghde", padded_key, padded_key
+        )
+        cross = inverse_counts * torch.einsum(
+            "gmhd,gmhv->ghdv", padded_key, _pad_by_graph(value, layout)
+        )
+    features = gram.shape[-1]
+    identity = torch.eye(features, dtype=dtype, device=gram.device)
+    shrinkage = (
+        float(ridge)
+        * gram.diagonal(dim1=-2, dim2=-1).sum(dim=-1)
+        / float(features)
+    ).clamp_min(torch.finfo(dtype).tiny)
+    factor = torch.linalg.cholesky(
+        gram + shrinkage[..., None, None] * identity
+    )
+    coefficients = torch.cholesky_solve(cross, factor)
+    if layout is None:
+        read = torch.einsum(
+            "nhd,nhdv->nhv",
+            query_features,
+            _graph_summary_for_nodes(coefficients, batch, num_graphs),
+        )
+    else:
+        padded_read = torch.einsum(
+            "gmhd,ghdv->gmhv",
+            _pad_by_graph(query_features, layout),
+            coefficients,
+        )
+        read = _unpad_by_graph(padded_read, layout)
+    offset = scalar_value.shape[-1]
+    return read[..., :offset], read[..., offset:]
+
+
+@dataclass(frozen=True)
+class _GraphPaddedLayout:
+    """Index plan that turns node-major tensors into graph-major blocks."""
+
+    order: torch.Tensor
+    sorted_batch: torch.Tensor
+    position: torch.Tensor
+    max_nodes: int
+    num_graphs: int
+
+
+def _graph_padded_layout(
+    batch: torch.Tensor,
+    graph_counts: torch.Tensor,
+    num_graphs: int,
+    *,
+    maximum_padding_ratio: float = 8.0,
+) -> _GraphPaddedLayout | None:
+    """Plan a graph-major padded layout, or decline when padding would dominate.
+
+    Reducing per-graph moments as batched matrix products instead of per-node
+    outer products removes the ``(N, H, F, F)`` and ``(N, H, F, V)``
+    intermediates and their scatter/gather backward, which the recorded profile
+    showed to be the dominant cost of this lane.
+    """
+    node_count = batch.shape[0]
+    max_nodes = int(graph_counts.max())
+    if max_nodes <= 0:
+        return None
+    if num_graphs * max_nodes > maximum_padding_ratio * max(node_count, 1):
+        return None
+    order = torch.argsort(batch, stable=True)
+    sorted_batch = batch[order]
+    offsets = torch.cumsum(graph_counts, dim=0) - graph_counts
+    position = (
+        torch.arange(node_count, device=batch.device) - offsets[sorted_batch]
+    )
+    return _GraphPaddedLayout(
+        order=order,
+        sorted_batch=sorted_batch,
+        position=position,
+        max_nodes=max_nodes,
+        num_graphs=num_graphs,
+    )
+
+
+def _pad_by_graph(
+    value: torch.Tensor, layout: _GraphPaddedLayout
+) -> torch.Tensor:
+    """Scatter node-major values into ``(graphs, max_nodes, ...)`` zero padding."""
+    padded = value.new_zeros(
+        (layout.num_graphs, layout.max_nodes, *value.shape[1:])
+    )
+    return padded.index_put(
+        (layout.sorted_batch, layout.position),
+        value[layout.order],
+    )
+
+
+def _unpad_by_graph(
+    padded: torch.Tensor, layout: _GraphPaddedLayout
+) -> torch.Tensor:
+    """Return padded graph-major values to the original node order."""
+    gathered = padded[layout.sorted_batch, layout.position]
+    restored = gathered.new_zeros(gathered.shape)
+    return restored.index_put((layout.order,), gathered)
+
+
 def _positive_quadratic_form(
     vector: torch.Tensor, matrix: torch.Tensor
 ) -> torch.Tensor:
@@ -4837,6 +5143,46 @@ def _validate_equivariant_input_tensor(
         raise ValueError(f"{name} must be finite")
 
 
+def _validate_whitened_global_read(config: EquivariantAttentionConfig) -> None:
+    """Restrict the whitened lane to the kernel it can factorize exactly.
+
+    Each rejected combination changes the key feature map or its metric, so
+    admitting it silently would break either the exact kernel reproduction or
+    the orthogonality argument that makes the whitened read `O(3)` equivariant.
+    """
+    ridge = config.whitened_global_ridge
+    if isinstance(ridge, bool) or not isinstance(ridge, (int, float)):
+        raise TypeError("whitened_global_ridge must be a real number")
+    if not math.isfinite(float(ridge)) or not math.isfinite(
+        float(torch.tensor(float(ridge), dtype=torch.float32).item())
+    ):
+        raise ValueError("whitened_global_ridge must be finite in float32")
+    if float(ridge) <= 0.0:
+        raise ValueError("whitened_global_ridge must be positive")
+    if config.global_transport_mode != "learned":
+        raise ValueError(
+            "use_whitened_global_read requires learned global transport"
+        )
+    if config.use_key_balancing:
+        raise ValueError(
+            "use_whitened_global_read is not registered with key balancing; the "
+            "balanced key scale would have to enter the key feature map"
+        )
+    if config.kernel_floor_mode != "fixed":
+        raise ValueError(
+            "use_whitened_global_read requires the fixed kernel baseline"
+        )
+    if config.use_multiscale_spatial_kernel:
+        raise ValueError(
+            "use_whitened_global_read excludes the multiscale spatial kernel in "
+            "this packet because its feature block is not proven isometric"
+        )
+    if config.use_memory_interaction or config.global_memory_count > 1:
+        raise ValueError(
+            "use_whitened_global_read excludes memory interaction"
+        )
+
+
 def _inverse_sigmoid(probability: float) -> float:
     if not 0.0 < probability < 1.0:
         raise ValueError("probability must lie strictly between zero and one")
@@ -4890,6 +5236,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_radial_trace",
         "coordinate_updates",
         "use_multiscale_spatial_kernel",
+        "use_whitened_global_read",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
@@ -4953,6 +5300,8 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             raise ValueError(
                 "use_multiscale_spatial_kernel cannot use memory interaction"
             )
+    if config.use_whitened_global_read:
+        _validate_whitened_global_read(config)
     if config.use_pairwise_local_content and not any(local_head_counts):
         raise ValueError("use_pairwise_local_content requires at least one local head")
     if (

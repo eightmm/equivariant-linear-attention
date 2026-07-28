@@ -53,7 +53,9 @@ EXPERIMENTAL_ARMS = (
     "ctp",
     "geometry_o3",
     "geometry_se3",
+    "whitened",
 )
+WHITENED_GLOBAL_RIDGE = 0.1
 V3_VARIANTS = {
     "irrep_norm": {
         "use_irrep_rms_normalization": True,
@@ -578,6 +580,7 @@ def _build_model(
     *,
     model_seed: int = MODEL_SEED,
     checkpoint_gated_local_mlp: bool = False,
+    whitened_ridge: float = WHITENED_GLOBAL_RIDGE,
 ) -> torch.nn.Module:
     torch.manual_seed(model_seed)
     if arm == "egnn":
@@ -596,6 +599,7 @@ def _build_model(
         "v3",
         "geometry_o3",
         "geometry_se3",
+        "whitened",
     }
     if arm not in attention_arms:
         raise ValueError(f"unknown arm: {arm}")
@@ -607,6 +611,7 @@ def _build_model(
         "v3",
         "geometry_o3",
         "geometry_se3",
+        "whitened",
     }
     persistent_tensor_arms = {"persistent_2e", "ctp"}
     geometry_arms = {"geometry_o3", "geometry_se3"}
@@ -628,6 +633,8 @@ def _build_model(
         use_geometry_aware_local_attention=arm in geometry_arms,
         use_se3_axial_tensor_product=arm == "geometry_se3",
         geometry_aware_local_layers=(0,) if arm in geometry_arms else None,
+        use_whitened_global_read=arm == "whitened",
+        whitened_global_ridge=whitened_ridge,
         checkpoint_gated_local_mlp=(
             checkpoint_gated_local_mlp if arm in gated_arms else False
         ),

@@ -10,6 +10,38 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.16 -> v0.17 (2026-07-27) — add the opt-in whitened global read:
+  `o_i = phi_i^T (G + lambda I)^-1 S` with an explicit isometric feature map of
+  the incumbent kernel, dimensionless `whitened_global_ridge` shrinkage
+  `ridge * tr(G)/F`, per-head zero-initialized scalar/vector mixes, and a padded
+  graph-major batched-matmul reduction with an exact per-node fallback. impact:
+  replaces the *metric* of the global read rather than its weights, which is the
+  axis the rejected differential-attention, output-gain, quartic, and rank-two
+  packets left untouched; exact `O(3)`/permutation/graph-isolation contracts and
+  a dense ridge reference pass at `atol=1e-10`, the lane is measurably active on
+  a real 331-node LBA complex (row CV `0.00298 -> 0.677` at `ridge=0.1`), and it
+  costs `1.0000474x` parameters, `1.1138x` real-training step, and `1.0179x`
+  peak allocation. No accuracy result, no default change, and the equivalent row
+  weights are signed rather than convex.
+- [eval] v0.11 -> v0.12 (2026-07-27) — add
+  `scripts/probe_whitened_global_read.py` uniformity measurement over a ridge
+  grid on cached LBA data, and a `whitened` arm in the LBA runner and train-step
+  profiler. impact: the mechanism's non-accuracy prediction is checkable before
+  any training run; the frozen screen is preregistered and awaits compute
+  approval.
+- [eval] v0.12 -> v0.13 (2026-07-28) — add
+  `scripts/run_whitened_ridge_screen.py`, a one-process seed-44 ATOM3D-LBA ID30
+  screen over the whitened ridge grid with a shared hashed topology, a
+  frozen-topology abort, per-arm best-checkpoint lane-gate magnitudes, and the
+  registered per-ridge advancement rule; `_build_model` now takes an explicit
+  `whitened_ridge`. impact: the ridge grid runs as one internally controlled
+  comparison instead of separate processes, and an inert lane can be
+  distinguished from an active but unhelpful one. The executed screen gave
+  candidate/0.5/0.1/0.01 last-epoch validation RMSEs of
+  `1.638053/1.629871/1.586308/1.588391 pK`, so `ridge=0.1` improved
+  `0.051745 pK` against a registered prediction of under `0.020 pK` and advances
+  to a seeds 41--43 confirmation; defaults are unchanged and the evidence is
+  one-seed exploratory.
 - [data] v0.2 -> v0.3 (2026-07-27) — replace the `torch.cdist` retention test in
   `segment_balanced_knn_edge_index` with an exact chunked float64
   squared-distance test against the squared cutoff, keep every tie at the kth

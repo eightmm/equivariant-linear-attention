@@ -405,6 +405,50 @@ could create a residual. Registered routes use all-local or all-global blocks;
 mixed-head `none` is legal but its shared updater is not a head-separable
 ablation.
 
+## Optional whitened global read
+
+`use_whitened_global_read` adds a second global lane that changes the metric of
+the read rather than the kernel. Write the incumbent kernel through its explicit
+feature map, using the isometric symmetric-quadratic basis
+
+```text
+Q(x) = [x1^2, x2^2, x3^2, sqrt2 x1x2, sqrt2 x1x3, sqrt2 x2x3],
+phi_i = [q0_i, sqrt(c+alpha), sqrt(alpha_dot) q1_i, sqrt(gamma) Q(q1_i)],
+psi_j = [k0_j, sqrt(c+alpha), sqrt(alpha_dot) k1_j, sqrt(gamma) Q(k1_j)],
+```
+
+so that `<Q(x),Q(y)> = (x.y)^2` and `phi_i . psi_j = K_ij` exactly, including the
+tensor-product and quartic content extensions, which already live inside
+`q0`/`k0`. With `V_j` the concatenated `0e` scalar and `1o` vector values,
+
+```text
+G_g = (1/N_g) sum_{j in g} psi_j psi_j^T,
+S_g = (1/N_g) sum_{j in g} psi_j V_j^T,
+lambda_g = ridge * tr(G_g) / F,
+o_i = phi_i^T (G_{b_i} + lambda_{b_i} I)^-1 S_{b_i}.
+```
+
+The equivalent pair weights are `A_ij = phi_i^T (G + lambda I)^-1 psi_j / N_g`,
+which is never materialized; cost is `O(N F^2)` plus `O(G H F^3)`. As `ridge`
+grows, `(G + lambda I)^-1 -> I/lambda` and the lane becomes a scaled copy of the
+incumbent pooled read, so the incumbent is its large-shrinkage limit.
+`G + lambda I` is positive definite because the constant block keeps `tr(G) > 0`.
+
+Equivariance is exact but basis dependent. Rotations act on the feature vector by
+`M(R) = diag(I, 1, R, D(R))`, where `D(R)` represents `S -> R S R^T` on the
+symmetric rank-2 block. `M(R)` is orthogonal only in the isometric basis, and
+only then does `(M G M^T + lambda I)^-1 = M (G + lambda I)^-1 M^T`, which is what
+cancels the transform in `phi^T (G + lambda I)^-1 psi`. The compressed `1x`/`2x`
+pairing used by the numerator gives the same kernel but is not norm preserving,
+so it is not admissible here. `tr(G)` is invariant under the same action, and the
+coefficients `(G + lambda I)^-1 phi_i` are invariant scalars, so `o_i` transforms
+exactly like its values.
+
+Because `(G + lambda I)^-1` is not a positive reweighting of the kernel, the
+equivalent rows are signed. The lane is bounded, since the shifted inverse has
+spectral norm at most `1/lambda`, and it is `O(3)` equivariant, but it is not a
+convex attention distribution and is not described as one.
+
 ## Local heads
 
 Local heads use raw-coordinate directed edges `i <- j` within the same graph.
