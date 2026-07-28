@@ -53,9 +53,14 @@ def segment_balanced_knn_edge_index(
 
     The retention test is the exact float64 squared displacement against the
     squared cutoff, so the candidate list is reproducible across processes and
-    invariant under translation, node permutation, and BLAS thread count. A
+    invariant under node permutation and BLAS thread count. A
     matrix-multiplication Euclidean distance is not: its float32 error grows
     with coordinate magnitude and depends on the reduction blocking.
+
+    Translation invariance holds for the *stored* coordinates. Promoting inside
+    this function cannot undo rounding that a translation already applied in the
+    storage dtype, so float32 storage is invariant to at least a 1e3 Angstrom
+    offset and float64 storage far beyond that.
 
     Exact ties at the neighbor boundary are all retained, so a receiver degree
     may exceed its budget. That keeps the selection permutation equivariant.

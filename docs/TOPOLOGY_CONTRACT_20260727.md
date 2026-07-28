@@ -4,8 +4,10 @@
 
 The recorded cross-run ATOM3D-LBA topology defect is root-caused and repaired.
 The candidate list is now built from exact float64 squared displacements against
-the squared cutoff, so it is reproducible across processes, invariant under
-translation and node permutation, and independent of the BLAS thread budget.
+the squared cutoff, so for given stored coordinates it is reproducible across
+processes, invariant under node permutation, and independent of the BLAS thread
+budget. Translation invariance holds to the resolution the storage dtype
+provides; see the frozen contract below for the measured margin.
 
 This unblocks the gate that every recent packet deferred: "before a cross-run or
 multi-seed claim, the recorded one-edge topology reproducibility defect must be
@@ -58,7 +60,16 @@ order   = receiver-major, then self, intra-segment, cross-segment,
 ```
 
 - The decision is evaluated in float64 whatever the storage dtype, so the
-  candidate list does not depend on model precision.
+  candidate list does not depend on model precision. Invariance is a property of
+  the *stored* coordinates: a float64 promotion inside the builder cannot undo
+  rounding that a translation already applied in float32. Measured margin on the
+  400-point fixture: float32 storage is exactly translation invariant to at least
+  a `1e3 Angstrom` offset and diverges at `1e4`, where float32 spacing reaches
+  `1.2e-3 Angstrom`; float64 storage stays invariant at `1e6`. Cached
+  ATOM3D-LBA coordinates reach `61.58 Angstrom`, where float32 spacing is
+  `7.34e-6 Angstrom`, so the operating range sits three orders of magnitude
+  inside the measured float32 margin. This narrowing follows an independent Codex
+  review of the original unconditional wording.
 - Self edges are always present. A receiver degree may exceed its budget only
   through exact ties, which is what keeps selection permutation equivariant.
 - Retention uses squared distance, matching the frozen local-cutoff contract
@@ -74,9 +85,11 @@ hash a candidate list its own way.
 
 ## Verification
 
-`scripts/check.sh fast`: 624 tests, 88.66% coverage, ml smoke ok.
+`scripts/check.sh fast`: 624 tests at the time of the repair, 670 after the
+whitened packet and the review corrections; 88.88% coverage, ml smoke ok.
 
-`tests/test_topology_contract.py` freezes: translation invariance, exact
+`tests/test_topology_contract.py` freezes: translation invariance, the storage
+precision that bounds it, exact
 agreement with the float64 cutoff graph when untruncated, no retained pair
 outside the cutoff, survival of the layer's own cutoff filter, permutation
 equivariance above the 25-point `cdist` threshold, thread-count invariance,

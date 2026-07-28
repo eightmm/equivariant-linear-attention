@@ -431,7 +431,11 @@ o_i = phi_i^T (G_{b_i} + lambda_{b_i} I)^-1 S_{b_i}.
 The equivalent pair weights are `A_ij = phi_i^T (G + lambda I)^-1 psi_j / N_g`,
 which is never materialized; cost is `O(N F^2)` plus `O(G H F^3)`. As `ridge`
 grows, `(G + lambda I)^-1 -> I/lambda` and the lane becomes a scaled copy of the
-incumbent pooled read, so the incumbent is its large-shrinkage limit.
+*unnormalized* kernel moment `phi_i^T S`. That limit is the incumbent
+numerator, not the incumbent read `phi_i^T S / phi_i^T m`: the omitted
+denominator is query dependent and varies across nodes of one graph, so no
+rescaling recovers the incumbent function from this lane. What does hold exactly
+is the disabled and zero-initialized state, where the lane contributes nothing.
 `G + lambda I` is positive definite because the constant block keeps `tr(G) > 0`.
 
 Equivariance is exact but basis dependent. Rotations act on the feature vector by

@@ -54,10 +54,15 @@ Three properties follow:
    `1/(N sigma^2 + lambda)` while the residual variation is shrunk only by
    `1/lambda`. The read becomes contrastive: it answers "what distinguishes this
    node from the graph's key covariance" instead of "what is the graph mean".
-2. **It strictly generalizes the incumbent.** As `ridge` grows,
+2. **Its large-shrinkage limit is the incumbent numerator.** As `ridge` grows,
    `(G + lambda I)^-1 -> I/lambda`, so the read becomes a scaled copy of the
-   incumbent pooled read. The incumbent is the large-shrinkage limit of the new
-   lane, not a different model.
+   *unnormalized* kernel moment `phi_i^T S`. It is **not** a scaled copy of the
+   incumbent read `phi_i^T S / phi_i^T m`; that denominator is query dependent
+   and, measured on this packet's own float64 fixture, varies by a factor of
+   `1.73--2.25` across nodes of a single graph, so no rescaling turns the limit
+   into the incumbent function. An independent Codex review caught this packet
+   overstating the relationship as "strictly generalizes"; the exact statement
+   that does hold is the disabled and zero-initialized equivalence below.
 3. **It stays linear in nodes.** Cost is `O(N F^2)` for the moments plus
    `O(G H F^3)` for the factorization, with `F = 26` for the current LBA
    candidate. No `N x N` tensor and no pair state.
@@ -119,12 +124,13 @@ EquivariantAttentionConfig(
 
 ## Verification
 
-`scripts/check.sh fast`: 660 tests, 88.88% coverage. `scripts/check.sh gpu`: ok.
+`scripts/check.sh fast`: 670 tests, 88.88% coverage. `scripts/check.sh gpu`: ok.
 
-`tests/test_whitened_global_read.py` (27 tests) covers the isometric pairing,
+`tests/test_whitened_global_read.py` (29 tests) covers the isometric pairing,
 exact reproduction of the incumbent dense kernel by the feature map, exact
 agreement with an explicit dense ridge reference at `atol=1e-10` in float64, the
-large-shrinkage sum-pooling limit, full `O(3)` including reflection, the
+large-shrinkage kernel-moment limit *and* its separation from the normalized
+incumbent read, full `O(3)` including reflection, the
 compressed-basis counterexample, permutation equivariance, graph isolation,
 linearity in the values, degenerate and single-node graphs, the padded and
 per-node reduction paths agreeing to `1e-12`, exact incumbent equivalence at

@@ -30,6 +30,7 @@ import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.moment import (
+    _factorized_moment_attention,
     _isometric_quadratic_features,
     _kernel_feature_map,
     _segment_sum,
@@ -308,8 +309,77 @@ def test_whitened_read_is_an_exact_row_stochasticfree_linear_map() -> None:
     assert _max_error(scaled_read, 3.0 * scalar_read) < 1e-10
 
 
-def test_large_ridge_recovers_the_sum_pooling_limit() -> None:
-    """At large shrinkage the read is the incumbent pooled read, times a scale.
+def test_large_ridge_limit_is_not_the_normalized_incumbent_read() -> None:
+    """The large-shrinkage limit is the kernel *numerator*, not the incumbent.
+
+    An independent review found the packet's original wording wrong: the
+    incumbent read is `phi_i^T S / phi_i^T m`, while this lane tends to
+    `(1/lambda) phi_i^T S`. The missing factor is the query-dependent
+    denominator, which varies across nodes of one graph, so no rescaling can
+    turn the limit into the incumbent function.
+    """
+    inputs = _read_inputs()
+    ridge = 1.0e9
+    scalar_read, vector_read = _call_read(inputs, ridge=ridge)
+    value = torch.cat([inputs["scalar_value"], inputs["vector_value"]], dim=-1)
+    batch = inputs["batch"]
+    num_graphs = int(batch.max()) + 1
+
+    incumbent = _factorized_moment_attention(
+        inputs["query_scalar"],
+        inputs["key_scalar"],
+        inputs["query_vector"],
+        inputs["key_vector"],
+        inputs["kernel_scale"],
+        value,
+        batch,
+        num_graphs=num_graphs,
+        balanced=False,
+        alignment_scale=inputs["alignment_scale"],
+        alignment_dot_scale=inputs["alignment_scale"],
+        kernel_floor=1.0,
+    )
+
+    query_features = _kernel_feature_map(
+        inputs["query_scalar"],
+        inputs["query_vector"],
+        inputs["kernel_scale"],
+        inputs["alignment_scale"],
+        inputs["alignment_scale"],
+        kernel_floor=1.0,
+    )
+    key_features = _kernel_feature_map(
+        inputs["key_scalar"],
+        inputs["key_vector"],
+        inputs["kernel_scale"],
+        inputs["alignment_scale"],
+        inputs["alignment_scale"],
+        kernel_floor=1.0,
+    )
+    counts = torch.bincount(batch, minlength=num_graphs).to(dtype=value.dtype)
+    gram = _segment_sum(
+        key_features.unsqueeze(-1) * key_features.unsqueeze(-2), batch, num_graphs
+    ) / counts[:, None, None, None]
+    shrinkage = ridge * gram.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / gram.shape[-1]
+    observed = shrinkage[batch][..., None] * torch.cat(
+        [scalar_read, vector_read], dim=-1
+    )
+
+    same_graph = batch.unsqueeze(1) == batch.unsqueeze(0)
+    kernel = torch.einsum("ihd,jhd->hij", query_features, key_features) * same_graph
+    numerator = torch.einsum("hij,jhf->ihf", kernel, value) / counts[batch][
+        None, :, None
+    ].permute(1, 0, 2)
+    assert _max_error(observed, numerator) < 1e-7
+
+    # The incumbent divides by a denominator that is not constant within a graph.
+    denominator = kernel.sum(dim=-1).permute(1, 0)[batch == 0, 0] / counts[0]
+    assert float(denominator.max() - denominator.min()) > 0.1
+    assert _max_error(observed, incumbent) > 0.1
+
+
+def test_large_ridge_recovers_the_kernel_moment_limit() -> None:
+    """At large shrinkage the read is the pooled kernel moment, times a scale.
 
     The shrinkage is `ridge * tr(G)/F` per graph and head, so the recovered
     constant is that quantity rather than `ridge` alone.

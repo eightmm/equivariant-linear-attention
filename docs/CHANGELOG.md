@@ -10,6 +10,16 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [eval] v0.13 -> v0.14 (2026-07-28) — narrow two contract claims that an
+  independent Codex review found overstated, and add a regression test for each.
+  impact: the whitened lane's large-shrinkage limit is documented as the
+  incumbent *numerator* rather than the normalized incumbent read (the omitted
+  query-dependent denominator varies `1.73--2.25x` within one graph), and
+  topology translation invariance is documented as bounded by the storage dtype
+  (float32 storage exact to a `1e3 Angstrom` offset, diverging at `1e4`, against
+  a `61.58 Angstrom` operating range). No code behavior, screen result, or
+  default changed; the `O(3)` isometry argument and the zero-initialized
+  equivalence were confirmed sound.
 - [model] v0.16 -> v0.17 (2026-07-27) — add the opt-in whitened global read:
   `o_i = phi_i^T (G + lambda I)^-1 S` with an explicit isometric feature map of
   the incumbent kernel, dimensionless `whitened_global_ridge` shrinkage

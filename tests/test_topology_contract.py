@@ -85,6 +85,41 @@ def test_topology_is_invariant_to_rigid_translation() -> None:
         assert torch.equal(observed, reference), f"offset {offset} changed topology"
 
 
+def test_translation_invariance_is_bounded_by_the_storage_precision() -> None:
+    """Invariance is a property of the stored coordinates, not of the pipeline.
+
+    An independent review noted that the builder's float64 promotion cannot undo
+    rounding that already happened when a translation was applied in float32.
+    The contract is therefore: exact and deterministic given the stored
+    coordinates, and translation invariant to the resolution the storage dtype
+    still provides. Cached ATOM3D-LBA coordinates reach about `62 Angstrom`,
+    where float32 spacing is `7e-6 Angstrom`, so the measured float32 margin
+    below is three orders of magnitude above the operating range.
+    """
+    node_count = 400
+    generator = torch.Generator().manual_seed(7)
+    base = torch.rand((node_count, 3), dtype=torch.float64, generator=generator) * 14.0
+    segment_mask = torch.zeros(node_count, dtype=torch.bool)
+    segment_mask[: node_count // 2] = True
+
+    reference = _canonical_codes(
+        _build(base.to(dtype=torch.float32), segment_mask), node_count
+    )
+    for offset in (1.0e2, 1.0e3):
+        shifted = (base + offset).to(dtype=torch.float32)
+        observed = _canonical_codes(_build(shifted, segment_mask), node_count)
+        assert observed.numel() == reference.numel(), f"float32 offset {offset}"
+        assert torch.equal(observed, reference), f"float32 offset {offset}"
+
+    # float64 storage keeps the geometry, so invariance survives far beyond that.
+    wide = _canonical_codes(_build(base + 1.0e6, segment_mask), node_count)
+    assert torch.equal(wide, _canonical_codes(_build(base, segment_mask), node_count))
+
+    # Whatever the storage dtype, repeated builds of one stored tensor agree.
+    stored = (base + 1.0e6).to(dtype=torch.float32)
+    assert torch.equal(_build(stored, segment_mask), _build(stored, segment_mask))
+
+
 def test_topology_matches_exact_squared_cutoff_when_untruncated() -> None:
     """Without a neighbor budget the retained set is the exact cutoff graph."""
     node_count = 400

@@ -4462,9 +4462,12 @@ def _whitened_global_read(
     mean cross moment with the values, so this solves one ridge regression from
     key features to values per graph and head and evaluates it at the query.
     Whitening suppresses the kernel's dominant near-constant direction rather
-    than averaging along it; as ``ridge`` grows the read returns to a scaled
-    copy of the incumbent sum pooling. Cost is ``O(N F^2 + F^3)`` per graph and
-    head with no ``N x N`` tensor.
+    than averaging along it. As ``ridge`` grows the read returns to a scaled
+    copy of the incumbent's *unnormalized* kernel-weighted moment
+    ``phi_i^T S``; it does not return to the incumbent read ``phi_i^T S /
+    phi_i^T m``, whose query-dependent denominator varies across nodes of one
+    graph. Cost is ``O(N F^2 + F^3)`` per graph and head with no ``N x N``
+    tensor.
 
     ``ridge`` is dimensionless: the applied shrinkage is ``ridge * tr(G)/F`` per
     graph and head, so the same value means the same amount of whitening at any

@@ -27,8 +27,11 @@
   `o_i = phi_i^T S / phi_i^T m` with `o_i = phi_i^T (G + lambda I)^-1 S`, where
   `G` is the graph-mean Gram matrix of the same key feature map and
   `lambda = ridge * tr(G)/F`. Whitening divides out the dominant near-constant
-  kernel direction instead of averaging along it, and the incumbent is exactly
-  its large-shrinkage limit. Cost is `O(N F^2 + G H F^3)` with `F = 26` and no
+  kernel direction instead of averaging along it. Its large-shrinkage limit is
+  the incumbent *numerator* `phi_i^T S`, not the normalized incumbent read,
+  whose query-dependent denominator varies `1.73--2.25x` within one graph; the
+  exact equivalence that does hold is the zero-initialized disabled state. Cost
+  is `O(N F^2 + G H F^3)` with `F = 26` and no
   `N x N` tensor. Exact `O(3)` equivariance holds only in an isometric feature
   basis, so the symmetric-quadratic block carries off-diagonal products at
   `sqrt(2)` on both sides; the incumbent's asymmetric `1x`/`2x` compression pairs
@@ -954,9 +957,11 @@
   `whitened_global_ridge=0.1`. The lane computes
   `o_i = phi_i^T (G + lambda I)^-1 S` with `G` the graph-mean Gram matrix of the
   key feature map, `S` its mean cross moment with the `0e`/`1o` values, and
-  `lambda = ridge * tr(G)/F`. The incumbent pooled read is exactly the
-  large-shrinkage limit of this expression, so the lane generalizes rather than
-  replaces it.
+  `lambda = ridge * tr(G)/F`. The large-shrinkage limit of this expression is
+  the incumbent *numerator*, not the normalized incumbent read; claiming the
+  latter is a contract error, because the omitted denominator is query
+  dependent. The exact equivalence the lane must preserve is its disabled and
+  zero-initialized state.
 - The key feature map must reproduce the incumbent kernel
   `<q0,k0> + (floor + alpha) + alpha_dot (q1.k1) + gamma (q1.k1)^2` exactly, and
   its symmetric-quadratic block must use the isometric basis
@@ -1015,9 +1020,15 @@
   multi-seed claim. It is a data-contract repair, not an architecture change.
 - A cached candidate list retains `i <- j` exactly when the float64 squared
   displacement is below the squared cutoff. The float64 promotion is mandatory
-  whatever the storage dtype, so the topology cannot depend on model precision,
-  coordinate magnitude, translation, node permutation, or BLAS thread count. No
-  matrix-multiplication Euclidean distance may decide retention.
+  whatever the storage dtype, so retention is exact and reproducible *given the
+  stored coordinates*: independent of model precision, node permutation, and
+  BLAS thread count. Translation invariance is bounded by the storage dtype
+  rather than by the builder, because a translation applied in float32 rounds
+  the coordinates before the builder sees them. Measured margin: float32 storage
+  is exactly translation invariant to at least a `1e3 Angstrom` offset and
+  breaks at `1e4`, while cached ATOM3D-LBA coordinates reach `61.58 Angstrom`,
+  where float32 spacing is `7.34e-6 Angstrom`; float64 storage stays invariant at
+  `1e6`. No matrix-multiplication Euclidean distance may decide retention.
 - Self edges are always present. Each relation keeps the `k` smallest squared
   distances and retains every exact tie at the boundary, so a receiver degree may
   exceed its budget; that is required for permutation equivariance. Candidate

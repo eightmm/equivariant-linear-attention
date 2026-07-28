@@ -42,7 +42,10 @@ the `k` smallest squared distances per relation, and retains every exact tie at
 the boundary, so a receiver degree may exceed its budget. The float64 promotion
 is mandatory whatever the storage dtype: a matrix-multiplication Euclidean
 distance is neither translation invariant nor thread-order reproducible in
-float32 and must not decide retention. Candidate order is receiver major, then
+float32 and must not decide retention. The promotion makes retention exact and
+reproducible *given the stored coordinates*; translation invariance is limited by
+the storage dtype itself, exactly to at least a `1e3 Angstrom` float32 offset
+against a `61.58 Angstrom` operating range. Candidate order is receiver major, then
 self, intra-segment, cross-segment, then ascending sender index.
 
 `topology_sha256` is the only admitted candidate identity, and
