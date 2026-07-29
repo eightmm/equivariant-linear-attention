@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .benchmarking import GraphBatch, GraphSample
+from .config import ArchitectureConfig
 from .moment import EquivariantAttention, EquivariantAttentionConfig
 
 
@@ -75,7 +76,36 @@ def build_regression_model(
     use_sparse_low_rank_local_residual: bool = False,
     local_residual_rank: int = 4,
     local_residual_layers: tuple[int, ...] | None = None,
+    sparse_residual_normalization: str = "positive",
+    sparse_residual_score_limit: float = 3.0,
+    sparse_residual_balancing: str = "receiver",
+    sparse_residual_neighbor_policy: str = "require",
+    sparse_residual_complete_fallback_max_nodes: int = 256,
+    geometry_cache_mode: str = "full",
+    num_edge_relations: int = 0,
+    relation_cutoffs: tuple[float, ...] | None = None,
+    distance_band_cutoffs: tuple[float, ...] = (),
+    sparse_residual_backend: str = "materialized",
+    sparse_residual_stream_chunk_size: int = 32,
+    use_transient_l3_workspace: bool = False,
+    transient_l3_channels: int = 1,
+    transient_l3_layers: tuple[int, ...] | None = None,
+    transient_l3_residual_scale_init: float = 0.05,
+    num_node_roles: int = 0,
+    architecture_config: ArchitectureConfig | None = None,
 ) -> nn.Module:
+    if architecture_config is not None:
+        if not isinstance(architecture_config, ArchitectureConfig):
+            raise TypeError(
+                "architecture_config must be an ArchitectureConfig or None"
+            )
+        if architecture_config.node_dim != node_dim:
+            raise ValueError(
+                "architecture_config.node_dim must match the node_dim argument"
+            )
+        model = EquivariantAttention(architecture_config.to_legacy())
+        _zero_init_linear(model.scalar_out)
+        return model
     if (
         isinstance(hidden_tensor_dim, bool)
         or not isinstance(hidden_tensor_dim, int)
@@ -163,6 +193,28 @@ def build_regression_model(
             ),
             local_residual_rank=local_residual_rank,
             local_residual_layers=local_residual_layers,
+            sparse_residual_normalization=sparse_residual_normalization,
+            sparse_residual_score_limit=sparse_residual_score_limit,
+            sparse_residual_balancing=sparse_residual_balancing,
+            sparse_residual_neighbor_policy=sparse_residual_neighbor_policy,
+            sparse_residual_complete_fallback_max_nodes=(
+                sparse_residual_complete_fallback_max_nodes
+            ),
+            geometry_cache_mode=geometry_cache_mode,
+            num_edge_relations=num_edge_relations,
+            relation_cutoffs=relation_cutoffs,
+            distance_band_cutoffs=distance_band_cutoffs,
+            sparse_residual_backend=sparse_residual_backend,
+            sparse_residual_stream_chunk_size=(
+                sparse_residual_stream_chunk_size
+            ),
+            use_transient_l3_workspace=use_transient_l3_workspace,
+            transient_l3_channels=transient_l3_channels,
+            transient_l3_layers=transient_l3_layers,
+            transient_l3_residual_scale_init=(
+                transient_l3_residual_scale_init
+            ),
+            num_node_roles=num_node_roles,
         )
     )
     _zero_init_linear(model.scalar_out)
@@ -173,11 +225,27 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
     readout_kwargs = (
         {} if batch.readout_mask is None else {"readout_mask": batch.readout_mask}
     )
+    layout_kwargs = (
+        {}
+        if batch.graph_layout is None
+        or not getattr(model, "supports_graph_layout", False)
+        else {"graph_layout": batch.graph_layout}
+    )
+    configured_roles = int(
+        getattr(getattr(model, "config", None), "num_node_roles", 0)
+    )
+    role_kwargs = (
+        {}
+        if batch.node_role_id is None or configured_roles == 0
+        else {"node_role_id": batch.node_role_id}
+    )
     if batch.edge_index is None and batch.packed_neighbors is None:
         out = model(
             batch.node_feats,
             batch.pos,
             batch=batch.batch,
+            **layout_kwargs,
+            **role_kwargs,
             **readout_kwargs,
         )
     else:
@@ -186,12 +254,16 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
         }
         if batch.edge_index is not None:
             sparse_kwargs["edge_index"] = batch.edge_index
+            if batch.edge_relation_id is not None:
+                sparse_kwargs["edge_relation_id"] = batch.edge_relation_id
         if batch.packed_neighbors is not None:
             sparse_kwargs["packed_neighbors"] = batch.packed_neighbors
         out = model(
             batch.node_feats,
             batch.pos,
             batch=batch.batch,
+            **layout_kwargs,
+            **role_kwargs,
             **sparse_kwargs,
             **readout_kwargs,
         )

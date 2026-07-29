@@ -249,7 +249,7 @@ def test_interaction_readout_requires_ligand_and_pocket_roles() -> None:
 
     with pytest.raises(ValueError, match="readout_mask"):
         model(batch.node_feats, batch.pos, batch=batch.batch)
-    with pytest.raises(ValueError, match="pocket"):
+    with pytest.raises(ValueError, match="context"):
         model(
             batch.node_feats,
             batch.pos,
@@ -258,10 +258,42 @@ def test_interaction_readout_requires_ligand_and_pocket_roles() -> None:
         )
 
 
-def test_interaction_readout_supports_direct_bfloat16_forward_and_backward() -> None:
+def test_legacy_interaction_alias_matches_generic_bipartite_readout() -> None:
+    batch = collate_graphs(_samples())
+    assert batch.readout_mask is not None
+    torch.manual_seed(1704)
+    legacy = _attention(readout_mode="interaction")
+    torch.manual_seed(1704)
+    generic = _attention(readout_mode="bipartite")
+
+    assert legacy.state_dict().keys() == generic.state_dict().keys()
+    generic.load_state_dict(legacy.state_dict(), strict=True)
+    legacy_output = legacy(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+    generic_output = generic(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        readout_mask=batch.readout_mask,
+    )
+
+    for name in legacy_output:
+        torch.testing.assert_close(
+            generic_output[name],
+            legacy_output[name],
+            rtol=0,
+            atol=0,
+        )
+
+
+def test_bipartite_readout_supports_direct_bfloat16_forward_and_backward() -> None:
     batch = collate_graphs(_samples()).to("cpu", dtype=torch.bfloat16)
     assert batch.readout_mask is not None
-    module = moment._InteractionReadout(
+    module = moment._BipartiteInteractionReadout(
         scalars=12,
         output_scalars=2,
         num_rbf=8,

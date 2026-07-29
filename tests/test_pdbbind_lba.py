@@ -69,8 +69,34 @@ def test_atom3d_row_keeps_pocket_ligand_alignment_and_ligand_readout() -> None:
     assert sample.node_feats[1, 7].item() == 1.0
     assert sample.node_feats[2, 6].item() == 1.0
     assert sample.target.item() == pytest.approx(7.25)
+    assert torch.equal(sample.node_role_id, torch.tensor([0, 0, 1, 1]))
+    assert sample.node_masks is not None
+    assert torch.equal(sample.node_masks["ligand"], sample.readout_mask)
+    assert torch.equal(
+        sample.node_masks["pocket"],
+        torch.tensor([True, True, False, False]),
+    )
     assert sample.sample_id.startswith("atom3d-lba:train:0000007:")
     assert len(sample.sample_id.rsplit(":", maxsplit=1)[-1]) == 16
+
+
+def test_atom3d_structure_identity_is_label_blind() -> None:
+    first = atom3d_lba_row_to_sample(
+        _row(),
+        split="train",
+        row_index=7,
+        revision=_REVISION,
+    )
+    changed_label = {**_row(), "labels": 1.25}
+    second = atom3d_lba_row_to_sample(
+        changed_label,
+        split="train",
+        row_index=7,
+        revision=_REVISION,
+    )
+
+    assert first.sample_id == second.sample_id
+    assert first.target.item() != second.target.item()
 
 
 @pytest.mark.parametrize(

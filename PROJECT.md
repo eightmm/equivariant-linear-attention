@@ -9,12 +9,19 @@
   selected layers add an edge-state-free rank-`R` sparse residual. The same
   packet adds an exact explicit-feature GEMM global reduction, independent
   local/global key-balancing controls, compact receiver/reverse CSR metadata
-  with an explicit `segment_reduce` lane, and a degree-unbounded static
-  `IrrepLayout`/`TensorProductPlan` planning API. The numerical model backend
-  remains the optimized Cartesian `0e/1o/2e` executor; parser/planner support
-  is not arbitrary-`l` numerical support. All numerical paths are default-off
-  and common parameters, RNG state, state schema, and outputs remain exactly
-  compatible when disabled. Across two post-review same-recipe one-thread CPU
+  with capability-gated CSR/ELL reference lanes, and a degree-unbounded
+  `IrrepLayout`/`TensorProductPlan` API. The follow-up now also provides
+  equation-preserving global `auto` dispatch over direct, padded/bucketed BMM,
+  ragged GEMM, and extreme-ragged outer/scatter fallback; packed int32
+  receiver/reverse CSR with degree statistics and optional ELL; PyTorch
+  receiver-streamed positive and local-softmax references; structured
+  configuration plus immutable execution receipts; and a learned reference
+  Clebsch--Gordan executor. The production carrier remains the optimized
+  Cartesian `0e/1o/2e` model. The only live higher-order model path is an
+  opt-in, nonpersistent aggregate-then-project `l=3` workspace that returns to
+  `1o` within the same local refresh. It is not arbitrary persistent-`l`
+  model support. All new numerical paths remain default-off, with targeted
+  disabled-state compatibility tests. Across two post-review same-recipe one-thread CPU
   mechanics probes (PyTorch 2.12.1, 21 repeats), explicit-feature GEMM used
   `0.113--0.115x` the forward-plus-input-backward time of outer/scatter for
   `N=288,H=4,F_spatial=40,V=37`; a prepacked receiver-reduction microbenchmark
@@ -24,9 +31,34 @@
   `0.955x` its saved-tensor payload at `N=256,E=2048`, excluding the optimizer,
   because it deliberately retains three global transports instead of one.
   These are CPU operator diagnostics, not CUDA, memory-peak, or
-  downstream-accuracy evidence. Triton, ELL,
-  threshold-based auto-dispatch, and numerical `l>=3` execution remain
-  deferred.
+  downstream-accuracy evidence. ELL and dispatch are reference PyTorch
+  mechanisms, not custom-kernel performance claims. Triton/EAAS, production
+  cell-list/PBC construction, a custom streamed backward, and persistent
+  `l>=3` carriers remain deferred.
+- The integrated generic-3D smoke has executed one real ATOM3D-LBA ID30 train
+  complex (331 nodes / 9,306 typed edges) through the structured
+  `high_order` profile, invariant node roles and named masks, four relation
+  types, two overlapping distance bands, packed `streamed_csr`, global
+  `auto`, geometry-cache `auto`, transient `l=3`, and the generic
+  `readout_mode="bipartite"` selected/context readout. On the named NVIDIA RTX
+  PRO 6000 Blackwell Max-Q, the seeded BF16 five-update smoke reduced training
+  loss from `34.9281` to `33.4549`; a determinant-`-1` reflection/rotation
+  check returned zero O(3) scalar discrepancy and passed a hard `1e-4` FP32
+  tolerance. The run peaked at `93,915,136` allocated /
+  `117,440,512` reserved CUDA bytes. A separate strict-determinism CUDA
+  one-update smoke passed. These are train-row wiring/capacity receipts only:
+  they are not validation, cold-target, affinity-SOTA, resource-superiority,
+  or architecture-superiority evidence. See
+  `artifacts/e2former-complete-followup-20260729/real-lba-*-smoke.json`.
+- A representative CUDA architecture/resource matrix also completed 72/72
+  rows on the same GPU: six arms over `N={128,512}`, `k={4,32}`, and
+  uniform/skew/ragged exact-`E=kN` candidate graphs. It records model-only
+  forward, optimizer-inclusive train step, peak allocation, effective
+  backends, and separate graph-construction cost. Five non-reference arms miss
+  the registered 1% parameter-matching target and each row has one timed
+  repeat, so the artifact is diagnostic only and does not rank or promote an
+  architecture. See
+  `artifacts/e2former-complete-followup-20260729/architecture-matrix-cuda-representative.json`.
 - Exact global persistent-`2e` value transport is implemented as an opt-in
   architecture capability. `use_global_tensor_value_transport=True` projects
   the bounded hidden tensor to head multiplicity, appends its five coordinates
@@ -420,7 +452,7 @@
   interaction aggregations now use
   `sum_j f_c message / sqrt(1 + sum_j f_c)`; the squared-cutoff statistic is
   retained only as an explicit concentration feature where applicable. Exact
-  cutoff zero-edge reduction and direct BF16 interaction-readout dtype handling
+  cutoff zero-edge reduction and direct BF16 bipartite-readout dtype handling
   are also repaired. Singleton radial sweeps, `d/sqrt(1+d)` scaling, finite
   coordinate gradients, affected symmetry suites, and direct CUDA BF16
   forward/backward pass.
@@ -463,16 +495,17 @@
   reduction, not a demonstrated latency or memory win.
 - Dynamic coordinates now require an explicit external-neighbor contract:
   default `error`, approximate `fixed`, or exact complete-candidate `rebuild`.
-  An opt-in ligand/pocket/cross-interface readout adds parity-even products of
-  learned pseudoscalars while preserving full O(3). It is zero initialized and
-  initially matches ligand mean pooling exactly. On the frozen cached
-  ATOM3D-LBA train rows 0--15, 1,000 updates gave final train MAE
-  `0.088952 pK` for mean and `0.183435 pK` for interaction readout; median
-  steps were `24.01/26.99 ms`. The interaction head is therefore retained only
-  as an experimental task-specific path and is not promoted. No validation or
-  test labels were read. Full parity-complete hidden irreps and a production
-  Verlet/cell-list neighbor backend remain future work. Evidence is in
-  `artifacts/model-feedback-followup-20260724/`.
+  An opt-in generic bipartite readout adds selected/context/cross-edge pools
+  and parity-even products of learned polar moments while preserving full
+  O(3). It is zero initialized and initially matches selected-node mean pooling
+  exactly. In the frozen ATOM3D-LBA train-only diagnostic, the dataset adapter
+  selected ligand nodes and used the complement as context. At 1,000 updates,
+  final train MAE was `0.088952 pK` for mean and `0.183435 pK` for bipartite
+  readout; median steps were `24.01/26.99 ms`. The bipartite head is therefore
+  retained only as an experimental generic path and is not promoted. No
+  validation or test labels were read. Full parity-complete hidden irreps and a
+  production Verlet/cell-list neighbor backend remain future work. Evidence is
+  in `artifacts/model-feedback-followup-20260724/`.
 - Same-feature gated local/global packet confirmed on 2026-07-24. Raw node
   features, coordinates, splits, targets, and matched sparse candidates remain
   identical across compared models; only the architecture may change. The two
@@ -873,9 +906,48 @@
   and generic point clouds are downstream datasets. Their featurizers, label
   heads, masks, and split policies belong outside the core transport. Results
   on QM9 or ATOM3D-LBA are evidence probes, not a redefinition of the model.
-- Experimental memory banks, interaction readouts, and segment-aware features
+- Experimental memory banks, bipartite readouts, and segment-aware features
   remain opt-in research adapters. They do not define the architecture goal or
   its default path.
+
+## Generic annotation and adapter boundary
+
+- `GraphSample`/`GraphBatch` carry only generic tensor annotations:
+  `node_role_id`, `edge_relation_id`, named Boolean `node_masks`, and an
+  integer `hierarchy_id`. Collation offsets hierarchy IDs graph by graph,
+  preserves relation order with the sparse edge list, caches a
+  `PackedGraphLayout`, and rejects partial annotation across a batch.
+  `num_node_roles>0` turns a role ID into an invariant scalar embedding; the
+  role vocabulary itself is owned by the caller.
+- A `RelationTable` records a directed-relation involution. Packed reverse CSR
+  is explicitly only a sender-major view of the same directed edges; it does
+  not silently replace an ID by its semantic reverse. Relation-specific
+  cutoffs and scalar score biases share one sparse edge list. Overlapping
+  distance bands are optional additive residuals and are not a partition of
+  unity.
+- Generic multiscale, pooling, coordinate, and physics primitives live in the
+  root package: `HierarchyAssignment`, `MaskedInvariantPooling`,
+  `EquivariantVectorHead`, `CoordinateUpdateHead`, `ScalarEnergyHead`,
+  `conservative_forces`, and `DirectVectorForceHead`. They know only tensors,
+  graph IDs, masks, and integer assignments. Conservative force means
+  `-dE/dx`; a direct vector prediction is separately named and is not called a
+  potential.
+- Biological vocabularies, scientific labels, split policies, SBDD heads,
+  losses, and metrics live under `equivariant_attention.sbdd`. This is a task
+  adapter boundary, not a change to the point-cloud/3D-graph core. The SBDD
+  graph adapter constructs label-blind role/relation tensors, rich hierarchy
+  IDs, role masks, an explicit cross-edge interface mask, and a generic
+  `readout_mask`. Its v2 graph receipt hashes all model-visible annotations;
+  split receipts reject duplicate/conflicting membership. Its loss package
+  preserves exact, lower/upper-bound, and interval-censored affinity semantics
+  while requiring prediction/label direction agreement, and screening metrics
+  reject flattened multi-screen input. The package does **not** yet parse raw
+  PDB/mmCIF or RDKit objects, build production atom/coarse neighbor graphs,
+  generate protein/ligand clusters, or provide a complete training runner.
+  The older `pdbbind.py` loader is a dataset adapter outside the structured
+  namespace. Core `readout_mode="bipartite"` uses only selected/context masks;
+  legacy `"interaction"` is an exact config/state-key compatibility alias for
+  that same generic module and carries no biological ontology.
 
 ## One-Architecture Contract
 
@@ -925,8 +997,13 @@ H_(t+1) = FFN_t(H_t + G_t(H_t, X) + I[t in R] S_t(H_t, X, E))
 - `S_t` is the new separable local residual. Node-wise scalar/vector/value
   projections are evaluated once. Each retained edge forms only `R`
   invariant logits from receiver/key content, RBF geometry, vector inner
-  products, and projections onto the edge direction. Positive cutoff-weighted
-  rank lanes are receiver-normalized and aggregate scalar values, polar
+  products, and paired projections onto the edge direction. A bounded
+  exponential positive gate and family-specific radial value gates form
+  cutoff-weighted rank lanes. They aggregate with soft-mass normalization
+  `sum(raw * value)/(1 + sum(raw))`, so singleton normalization cannot cancel
+  the cutoff. The same receiver reduction carries mass, squared mass, scalar,
+  vector, relative, tensor, and radial statistics; `log1p` mass features feed
+  a zero-initialized scalar projection. The lanes aggregate scalar values, polar
   vectors, relative directions, transient `2e` edge quadrupoles, optional
   persistent `2e` values, and radial traces. Rank-to-head output maps are
   zero-initialized, so enabling the lane begins as the exact incumbent
@@ -936,7 +1013,9 @@ H_(t+1) = FFN_t(H_t + G_t(H_t, X) + I[t in R] S_t(H_t, X, E))
 - `local_residual_layers=None` refreshes every block; an explicit tuple makes
   local refresh periodic without reducing global rank. Legacy
   `local_head_counts` and LGL remain compatibility/evidence routes and cannot
-  be combined with the homogeneous residual.
+  be combined with the homogeneous residual. Explicit sparse candidates are
+  required by default; a total-node-bounded complete fallback exists only for
+  small diagnostics.
 - `global_reduction_backend="feature_gemm"` concatenates the scalar,
   constant, linear-`1o`, isometric quadratic, and optional distinct spatial
   query/key feature blocks. Graph-wise GEMM computes
@@ -945,20 +1024,37 @@ H_(t+1) = FFN_t(H_t + G_t(H_t, X) + I[t in R] S_t(H_t, X, E))
   denominator, and one-cycle key balancing. Highly ragged batches compute one
   stable grouping, slice by graph offsets, and apply one inverse permutation
   instead of rescanning all nodes per graph.
+- `global_reduction_backend="auto"` uses a cached `PackedGraphLayout` to choose
+  direct GEMM, padded/bucketed BMM, ragged grouped GEMM, or an
+  extreme-ragged/small-work outer-scatter fallback. Hardware-width padding is
+  exact zero padding. These are deterministic execution choices for the same
+  finite feature map, not different attention equations. If callers do not
+  provide cached layout metadata, building it is still part of the forward.
 - `local_reduction_backend="segment_csr"` builds receiver and reverse offsets
   after cutoff filtering for COO inputs. Local receiver sums use
   `torch.segment_reduce`; generic local key balancing uses reverse CSR. Public
   `PackedNeighborGraph` stores stable receiver CSR and optional reverse CSR in
   int32 whenever addressable; the model consumes and linearly restricts these
   plans without resorting, preserving index dtype across devices.
+- `sparse_residual_backend` separately selects the materialized PyTorch route,
+  receiver-streamed CSR, ELL, or deterministic `auto`. The streamed/ELL code
+  is a correctness reference with FP32 accumulation and gradgrad-safe fallback
+  metadata. No fused CUDA/Triton kernel or measured custom backward is implied.
 - `use_local_key_balancing` and `use_global_key_balancing` may now be controlled
   independently. `None` inherits the legacy `use_key_balancing`, preserving
   every existing configuration.
-- `IrrepLayout` and `TensorProductPlan` now parse and plan arbitrary
-  nonnegative degree/parity layouts once at construction. The live numerical
-  backend is deliberately unchanged: model execution accepts only
-  `0e/polar-1o/2e`, and canonical Cartesian tensor-product executors are bound
-  statically. A planned but unregistered numerical path fails explicitly.
+- `IrrepLayout` and `TensorProductPlan` parse arbitrary nonnegative
+  degree/parity layouts once at construction. A separate learned reference
+  executor records complete TP instructions (multiplicities, offsets,
+  connection/weight convention, coefficient dtype/device, and order) and
+  numerically evaluates real-basis Clebsch--Gordan paths. Same-irrep mixing,
+  irrep-wise RMS normalization, and scalar gating are reference operations,
+  not a replacement for the optimized model.
+- The `high_order` profile enables a bounded local workspace:
+  `1o x Y2 -> 3o`, receiver aggregation, then
+  `aggregated 3o x aggregated 2e -> 1o`. The `3o` activation is discarded
+  immediately and never enters a checkpoint or global layer. Persistent model
+  input/hidden/output layouts still accept only Cartesian `0e/1o/2e`.
 
 The previous adaptive multiscale middle-global LGL packet remains available
 and mechanically verified, but it no longer defines the architectural target.
@@ -966,9 +1062,11 @@ No real-data accuracy, CUDA speed, or CUDA peak-memory claim is attached to
 this new packet yet. The next scientific gate is a matched downstream
 comparison of homogeneous sparse-plus-global blocks against accepted gated
 LGL on a bounded-degree generic 3D task, followed by CUDA backend profiling.
-ELL, chunk-streamed gated MLPs, full-block recomputation, Triton, automatic
-threshold dispatch, persistent/public `l>=3`, and a general numerical CG
-executor require that evidence and remain out of scope.
+The PyTorch ELL/streamed references, cache modes, automatic dispatch, and
+general reference CG executor now exist, but their performance has not been
+established. Chunk-streamed gated MLP fusion, a custom reverse-CSR backward,
+Triton/EAAS, production neighbor construction, and persistent/public
+`l>=3` remain out of scope.
 
 ## Static-Compiled Irreps and CTP-LGL Extension
 
@@ -977,14 +1075,17 @@ executor require that evidence and remain out of scope.
   irrep contract with statically compiled execution rather than build a
   runtime-dynamic irrep interpreter or replace this project with a separate
   Equiformer family.
-- The numerical representation scope remains full-`O(3)` Cartesian
+- At the 2026-07-27 CTP phase, the numerical representation scope was
+  full-`O(3)` Cartesian
   `0e + polar-1o + symmetric-traceless-2e`.
   `CartesianIrreps`, and therefore executable model inputs/hidden/outputs,
-  continues to reject `0o`, `1e`, `2o`, and `l > 2`. The separate
-  degree-unbounded `IrrepLayout`/`TensorProductPlan` layer now parses,
-  canonicalizes, slices, and applies O(3)/SE(3) selection rules without
-  claiming a numerical executor. No `e3nn`, spherical-harmonic, or other
-  dependency is added.
+  still rejects `0o`, `1e`, `2o`, and persistent `l > 2`. That phase's
+  degree-unbounded `IrrepLayout`/`TensorProductPlan` only parsed,
+  canonicalized, sliced, and applied O(3)/SE(3) selection rules. The
+  2026-07-29 follow-up supersedes only the reference boundary: it adds in-repo
+  real spherical harmonics/CG coefficients, executable learned reference TP
+  instructions, and the nonpersistent `l=3` workspace. It does not widen
+  `CartesianIrreps` or add `e3nn`.
 - "Static compiled" means that the enabled tensor-product paths, input/output
   degrees, parities, multiplicities, and tensor storage slices are resolved
   once in `__init__`. Forward execution contains no input-dependent irrep

@@ -8,6 +8,7 @@ import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.benchmarking import (
+    GraphBatch,
     GraphSample,
     SyntheticMoleculeDataset,
     _radius_candidate_edge_index,
@@ -16,6 +17,7 @@ from equivariant_attention.benchmarking import (
     load_qm9_samples,
     split_dataset,
 )
+from equivariant_attention.graph_layout import pack_graph_layout
 from equivariant_attention.training import (
     build_regression_model,
     evaluate_regression,
@@ -51,6 +53,12 @@ def test_synthetic_dataset_collates_graph_batch() -> None:
     assert batch.batch.min().item() == 0
     assert batch.batch.max().item() == 1
     assert batch.sample_ids == (dataset[0].sample_id, dataset[1].sample_id)
+    assert batch.graph_layout is not None
+    assert batch.graph_layout.batch is batch.batch
+    assert batch.graph_layout.graph_counts.tolist() == [
+        dataset[0].node_feats.shape[0],
+        dataset[1].node_feats.shape[0],
+    ]
 
 
 def test_graph_batch_separates_feature_and_geometry_precision() -> None:
@@ -59,6 +67,27 @@ def test_graph_batch_separates_feature_and_geometry_precision() -> None:
 
     assert batch.node_feats.dtype == torch.float16
     assert batch.pos.dtype == torch.float32
+    assert batch.graph_layout is not None
+    assert batch.graph_layout.batch is batch.batch
+
+
+def test_graph_batch_move_rejects_a_stale_cached_layout() -> None:
+    semantic_batch = torch.tensor([0, 1])
+    stale_layout = pack_graph_layout(
+        torch.tensor([0, 0]),
+        assume_grouped=True,
+    )
+    batch = GraphBatch(
+        node_feats=torch.randn(2, 3),
+        pos=torch.randn(2, 3),
+        batch=semantic_batch,
+        target=torch.randn(2, 1),
+        sample_ids=("a", "b"),
+        graph_layout=stale_layout,
+    )
+
+    with pytest.raises(ValueError, match="exact batch tensor"):
+        batch.to("cpu")
 
 
 def test_sparse_edges_collate_with_offsets_and_move_with_batch() -> None:
@@ -90,6 +119,137 @@ def test_sparse_edges_collate_with_offsets_and_move_with_batch() -> None:
     assert moved.edge_index.device == moved.node_feats.device
     assert torch.equal(moved.edge_index, batch.edge_index)
     assert moved.edge_index_is_validated
+
+
+def test_collate_graphs_preserves_scalar_edge_relations() -> None:
+    samples = [
+        GraphSample(
+            node_feats=torch.randn(2, 3),
+            pos=torch.randn(2, 3),
+            target=torch.tensor([0.0]),
+            sample_id="a",
+            edge_index=torch.tensor([[0, 0, 1], [0, 1, 1]]),
+            edge_relation_id=torch.tensor([0, 1, 0]),
+        ),
+        GraphSample(
+            node_feats=torch.randn(3, 3),
+            pos=torch.randn(3, 3),
+            target=torch.tensor([1.0]),
+            sample_id="b",
+            edge_index=torch.tensor([[0, 1, 2], [0, 1, 2]]),
+            edge_relation_id=torch.tensor([2, 2, 2]),
+        ),
+    ]
+
+    batch = collate_graphs(samples)
+    moved = batch.to("cpu")
+
+    assert torch.equal(
+        batch.edge_relation_id,
+        torch.tensor([0, 1, 0, 2, 2, 2]),
+    )
+    assert moved.edge_relation_id is not None
+    assert moved.edge_relation_id.dtype == torch.long
+    assert moved.edge_relation_id.device == moved.node_feats.device
+
+
+def test_collate_graphs_rejects_partial_relation_metadata() -> None:
+    dataset = SyntheticMoleculeDataset(num_samples=2, node_dim=3, seed=20260812)
+    first = dataset[0]
+    first_receiver = torch.arange(first.pos.shape[0])
+    sparse = GraphSample(
+        node_feats=first.node_feats,
+        pos=first.pos,
+        target=first.target,
+        sample_id=first.sample_id,
+        edge_index=torch.stack([first_receiver, first_receiver]),
+        edge_relation_id=torch.zeros_like(first_receiver),
+    )
+    second = dataset[1]
+    second_receiver = torch.arange(second.pos.shape[0])
+    missing = GraphSample(
+        node_feats=second.node_feats,
+        pos=second.pos,
+        target=second.target,
+        sample_id=second.sample_id,
+        edge_index=torch.stack([second_receiver, second_receiver]),
+    )
+
+    with pytest.raises(ValueError, match="edge_relation_id"):
+        collate_graphs([sparse, missing])
+
+
+def test_collate_preserves_roles_hierarchy_and_named_masks() -> None:
+    samples = [
+        GraphSample(
+            node_feats=torch.randn(3, 4),
+            pos=torch.randn(3, 3),
+            target=torch.tensor([0.0]),
+            sample_id="first",
+            node_role_id=torch.tensor([0, 1, 1]),
+            hierarchy_id=torch.tensor([0, 0, 1]),
+            node_masks={
+                "selected": torch.tensor([True, False, True]),
+                "context": torch.tensor([False, True, True]),
+            },
+        ),
+        GraphSample(
+            node_feats=torch.randn(2, 4),
+            pos=torch.randn(2, 3),
+            target=torch.tensor([1.0]),
+            sample_id="second",
+            node_role_id=torch.tensor([2, 0]),
+            hierarchy_id=torch.tensor([0, 1]),
+            node_masks={
+                "selected": torch.tensor([False, True]),
+                "context": torch.tensor([True, False]),
+            },
+        ),
+    ]
+
+    batch = collate_graphs(samples)
+    moved = batch.to("cpu")
+    hierarchy = batch.hierarchy_assignment()
+
+    assert torch.equal(batch.node_role_id, torch.tensor([0, 1, 1, 2, 0]))
+    assert torch.equal(batch.hierarchy_id, torch.tensor([0, 0, 1, 2, 3]))
+    assert batch.node_masks is not None
+    assert tuple(batch.node_masks) == ("context", "selected")
+    assert torch.equal(
+        batch.node_masks["selected"],
+        torch.tensor([True, False, True, False, True]),
+    )
+    assert hierarchy.num_coarse == 4
+    assert torch.equal(hierarchy.coarse_batch, torch.tensor([0, 0, 1, 1]))
+    assert moved.node_role_id is not None
+    assert moved.hierarchy_id is not None
+    assert moved.node_masks is not None
+    assert all(mask.device == moved.node_feats.device for mask in moved.node_masks.values())
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["node_role_id", "hierarchy_id", "node_masks"],
+)
+def test_collate_rejects_partial_generic_annotations(field: str) -> None:
+    dataset = SyntheticMoleculeDataset(num_samples=2, node_dim=4, seed=20260825)
+    values = {
+        "node_role_id": torch.zeros(dataset[0].pos.shape[0], dtype=torch.long),
+        "hierarchy_id": torch.zeros(dataset[0].pos.shape[0], dtype=torch.long),
+        "node_masks": {
+            "selected": torch.ones(dataset[0].pos.shape[0], dtype=torch.bool)
+        },
+    }
+    annotated = GraphSample(
+        node_feats=dataset[0].node_feats,
+        pos=dataset[0].pos,
+        target=dataset[0].target,
+        sample_id=dataset[0].sample_id,
+        **{field: values[field]},
+    )
+
+    with pytest.raises(ValueError, match=field):
+        collate_graphs([annotated, dataset[1]])
 
 
 @pytest.mark.parametrize(

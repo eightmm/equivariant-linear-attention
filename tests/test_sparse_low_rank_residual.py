@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
+from equivariant_attention import moment
 
 
 def _config(
@@ -51,6 +52,77 @@ def _ring_edges(nodes: int, width: int) -> torch.Tensor:
             receiver.append(target)
             sender.append((target + offset) % nodes)
     return torch.tensor([receiver, sender], dtype=torch.long)
+
+
+def _unit_sparse_residual(
+    *,
+    normalization: str = "positive",
+) -> moment._SparseLowRankLocalResidual:
+    residual = moment._SparseLowRankLocalResidual(
+        scalars=1,
+        vectors=1,
+        tensors=0,
+        num_heads=1,
+        rank=1,
+        num_rbf=4,
+        residual_scale_init=1.0,
+        eps=1e-12,
+        normalization=normalization,
+        score_limit=3.0,
+        num_edge_relations=0,
+        relation_cutoffs=None,
+        distance_band_cutoffs=(),
+    ).double()
+    with torch.no_grad():
+        for parameter in residual.parameters():
+            parameter.zero_()
+        residual.scalar_value.bias.fill_(1.0)
+        residual.scalar_out.weight.fill_(1.0)
+        residual.residual_scale.fill_(1.0)
+    return residual
+
+
+def _receiver_star_geometry(
+    degree: int,
+    *,
+    sender_distance: float = 0.0,
+) -> tuple[moment._LocalGeometry, torch.Tensor]:
+    nodes = degree + 1
+    pos = torch.zeros(nodes, 3, dtype=torch.float64, requires_grad=True)
+    if degree:
+        with torch.no_grad():
+            pos[1:, 0] = sender_distance
+    edge_index = torch.stack(
+        [
+            torch.zeros(degree, dtype=torch.long),
+            torch.arange(1, nodes, dtype=torch.long),
+        ]
+    )
+    geometry = moment._local_geometry(
+        pos,
+        torch.zeros(nodes, dtype=torch.long),
+        num_graphs=1,
+        cutoff=1.0,
+        num_rbf=4,
+        edge_index=edge_index,
+        edge_index_is_validated=True,
+    )
+    return geometry, pos
+
+
+def _unit_sparse_scalar_output(
+    residual: moment._SparseLowRankLocalResidual,
+    geometry: moment._LocalGeometry,
+    *,
+    nodes: int,
+) -> torch.Tensor:
+    outputs = residual(
+        torch.zeros(nodes, 1, dtype=torch.float64),
+        torch.zeros(nodes, 1, 3, dtype=torch.float64),
+        geometry,
+        num_nodes=nodes,
+    )
+    return outputs[0][:, 0, 0]
 
 
 def _inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -501,3 +573,320 @@ def test_sparse_low_rank_residual_keeps_no_pair_matrix_or_persistent_edge_state(
     for value in vars(residual).values():
         if isinstance(value, torch.Tensor) and value.ndim:
             assert value.shape[0] not in edge_counts
+
+
+@pytest.mark.parametrize(
+    ("degree", "expected"),
+    [
+        (0, 0.0),
+        (1, 1.0 / 2.0),
+        (64, 64.0 / 65.0),
+    ],
+)
+def test_sparse_residual_positive_normalization_uses_soft_mass_damping(
+    degree: int,
+    expected: float,
+) -> None:
+    residual = _unit_sparse_residual()
+    geometry, _pos = _receiver_star_geometry(degree)
+
+    output = _unit_sparse_scalar_output(
+        residual,
+        geometry,
+        nodes=degree + 1,
+    )
+
+    assert output[0].item() == pytest.approx(expected, abs=1e-12)
+
+
+def test_sparse_residual_singleton_retains_cutoff_and_coordinate_gradient() -> None:
+    residual = _unit_sparse_residual()
+
+    def evaluate(distance: float) -> tuple[float, float]:
+        geometry, pos = _receiver_star_geometry(
+            1,
+            sender_distance=distance,
+        )
+        value = _unit_sparse_scalar_output(residual, geometry, nodes=2)[0]
+        gradient = torch.autograd.grad(
+            value,
+            pos,
+            allow_unused=True,
+        )[0]
+        derivative = 0.0 if gradient is None else float(gradient[1, 0])
+        return float(value.detach()), derivative
+
+    near_distance = 1.0 - 1e-5
+    near_value, near_derivative = evaluate(near_distance)
+    at_value, at_derivative = evaluate(1.0)
+    outside_value, outside_derivative = evaluate(1.0 + 1e-5)
+    cutoff = 0.5 * (
+        torch.cos(
+            torch.tensor(
+                torch.pi * near_distance**2,
+                dtype=torch.float64,
+            )
+        )
+        + 1.0
+    )
+
+    assert near_value == pytest.approx(
+        float(cutoff / (1.0 + cutoff)),
+        rel=2e-6,
+        abs=1e-14,
+    )
+    assert abs(near_derivative) < 5e-4
+    assert at_value == 0.0
+    assert at_derivative == 0.0
+    assert outside_value == 0.0
+    assert outside_derivative == 0.0
+
+
+def test_sparse_residual_two_edge_cutoff_crossing_is_continuous() -> None:
+    residual = _unit_sparse_residual()
+
+    def evaluate(departing_distance: float | None) -> float:
+        sender_count = 1 if departing_distance is None else 2
+        pos = torch.zeros(sender_count + 1, 3, dtype=torch.float64)
+        if departing_distance is not None:
+            pos[2, 0] = departing_distance
+        edge_index = torch.stack(
+            [
+                torch.zeros(sender_count, dtype=torch.long),
+                torch.arange(1, sender_count + 1, dtype=torch.long),
+            ]
+        )
+        geometry = moment._local_geometry(
+            pos,
+            torch.zeros(sender_count + 1, dtype=torch.long),
+            num_graphs=1,
+            cutoff=1.0,
+            num_rbf=4,
+            edge_index=edge_index,
+            edge_index_is_validated=True,
+        )
+        return float(
+            _unit_sparse_scalar_output(
+                residual,
+                geometry,
+                nodes=sender_count + 1,
+            )[0].detach()
+        )
+
+    reference = evaluate(None)
+    coarse_error = abs(evaluate(1.0 - 1e-2) - reference)
+    fine_error = abs(evaluate(1.0 - 1e-3) - reference)
+
+    assert reference == pytest.approx(0.5, abs=1e-12)
+    assert 0.0 < fine_error < 0.02 * coarse_error
+    assert evaluate(1.0) == pytest.approx(reference, abs=1e-12)
+    assert evaluate(1.0 + 1e-3) == pytest.approx(reference, abs=1e-12)
+
+
+def test_sparse_residual_fuses_mass_statistics_and_messages_in_one_receiver_sum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    residual = _unit_sparse_residual()
+    geometry, _pos = _receiver_star_geometry(4)
+    original = moment._local_receiver_sum
+    calls: list[int] = []
+
+    def counted(
+        geometry_value: moment._LocalGeometryInput,
+        index: torch.Tensor,
+        num_segments: int,
+        *values: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
+        calls.append(len(values))
+        return original(geometry_value, index, num_segments, *values)
+
+    monkeypatch.setattr(moment, "_local_receiver_sum", counted)
+    _unit_sparse_scalar_output(residual, geometry, nodes=5)
+
+    assert calls == [7]
+
+
+def test_sparse_residual_positive_gate_has_useful_bounded_contrast() -> None:
+    residual = _unit_sparse_residual()
+    scores = torch.tensor(
+        [-1e6, -2.0, 0.0, 2.0, 1e6],
+        dtype=torch.float64,
+    )
+
+    gate = residual._positive_gate(scores)
+
+    assert torch.isfinite(gate).all()
+    assert torch.all(gate > 0)
+    assert torch.all(gate[1:] > gate[:-1])
+    assert float(gate[-1] / gate[0]) > 100.0
+    assert float(gate[-1]) <= torch.exp(torch.tensor(3.0)).item() * (1.0 + 1e-12)
+
+
+def test_sparse_residual_radial_value_projection_is_family_specific() -> None:
+    residual = _unit_sparse_residual()
+    geometry, _pos = _receiver_star_geometry(1, sender_distance=0.35)
+    scalars = torch.zeros(2, 1, dtype=torch.float64)
+    vectors = torch.zeros(2, 1, 3, dtype=torch.float64)
+    vectors[1, 0, 0] = 1.0
+    with torch.no_grad():
+        residual.vector_value.weight.fill_(1.0)
+        residual.vector_out.weight.fill_(1.0)
+    baseline = residual(
+        scalars,
+        vectors,
+        geometry,
+        num_nodes=2,
+    )
+
+    with torch.no_grad():
+        residual.radial_value.weight[0, 0] = 4.0
+    candidate = residual(
+        scalars,
+        vectors,
+        geometry,
+        num_nodes=2,
+    )
+    candidate[0].sum().backward()
+
+    assert not torch.equal(candidate[0], baseline[0])
+    assert torch.equal(candidate[1], baseline[1])
+    assert residual.radial_value.weight.grad is not None
+    assert torch.count_nonzero(residual.radial_value.weight.grad[0]) > 0
+
+
+def test_sparse_residual_mass_features_distinguish_receiver_degree() -> None:
+    residual = _unit_sparse_residual()
+    with torch.no_grad():
+        residual.scalar_out.weight.zero_()
+        residual.mass_out.weight.zero_()
+        residual.mass_out.weight[0, 0] = 1.0
+    one_geometry, _ = _receiver_star_geometry(1)
+    dense_geometry, _ = _receiver_star_geometry(64)
+
+    one = _unit_sparse_scalar_output(residual, one_geometry, nodes=2)[0]
+    dense = _unit_sparse_scalar_output(residual, dense_geometry, nodes=65)[0]
+
+    assert one.item() == pytest.approx(torch.log(torch.tensor(2.0)).item())
+    assert dense > one
+
+
+def test_sparse_residual_softmax_is_an_explicit_post_cutoff_ablation() -> None:
+    residual = _unit_sparse_residual(normalization="softmax")
+    distance = 0.6
+    geometry, _pos = _receiver_star_geometry(
+        1,
+        sender_distance=distance,
+    )
+
+    value = _unit_sparse_scalar_output(residual, geometry, nodes=2)[0]
+    cutoff = 0.5 * (
+        torch.cos(
+            torch.tensor(
+                torch.pi * distance**2,
+                dtype=torch.float64,
+            )
+        )
+        + 1.0
+    )
+
+    assert value.item() == pytest.approx(float(cutoff), rel=2e-6)
+
+
+@pytest.mark.parametrize(
+    ("updates", "exception", "message"),
+    [
+        (
+            {"sparse_residual_normalization": "unknown"},
+            ValueError,
+            "sparse_residual_normalization",
+        ),
+        (
+            {"sparse_residual_score_limit": 0.49},
+            ValueError,
+            "sparse_residual_score_limit",
+        ),
+        (
+            {"sparse_residual_score_limit": 4.01},
+            ValueError,
+            "sparse_residual_score_limit",
+        ),
+        (
+            {"sparse_residual_balancing": "legacy"},
+            ValueError,
+            "sparse_residual_balancing",
+        ),
+        (
+            {"sparse_residual_neighbor_policy": "unknown"},
+            ValueError,
+            "sparse_residual_neighbor_policy",
+        ),
+        (
+            {"sparse_residual_complete_fallback_max_nodes": 0},
+            ValueError,
+            "sparse_residual_complete_fallback_max_nodes",
+        ),
+    ],
+)
+def test_sparse_residual_validates_v2_controls(
+    updates: dict[str, object],
+    exception: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(exception, match=message):
+        EquivariantAttention(replace(_config(enabled=True), **updates))
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_sparse_residual_rejects_legacy_local_balancing_noop(
+    legacy: bool,
+) -> None:
+    with pytest.raises(ValueError, match="sparse_residual_balancing"):
+        EquivariantAttention(
+            replace(
+                _config(enabled=True),
+                use_local_key_balancing=legacy,
+            )
+        )
+
+
+def test_sparse_residual_requires_explicit_neighbors_by_default() -> None:
+    model = EquivariantAttention(
+        _config(enabled=True, num_layers=1)
+    ).double()
+    node_feats, pos, batch, _edge_index = _inputs()
+
+    with pytest.raises(ValueError, match="sparse.*neighbors"):
+        model(node_feats, pos, batch=batch)
+
+
+def test_sparse_residual_complete_fallback_is_explicit_bounded_and_equivalent() -> (
+    None
+):
+    model = EquivariantAttention(
+        replace(
+            _config(enabled=True, num_layers=1),
+            sparse_residual_neighbor_policy="complete_fallback",
+            sparse_residual_complete_fallback_max_nodes=8,
+        )
+    ).double()
+    node_feats, pos, batch, edge_index = _inputs()
+    _activate_local_residual(model, node_feats, pos, batch, edge_index)
+    model.eval()
+
+    fallback = model(node_feats, pos, batch=batch)
+    explicit = model(
+        node_feats,
+        pos,
+        batch=batch,
+        edge_index=edge_index,
+    )
+
+    for name in fallback:
+        assert torch.equal(fallback[name], explicit[name]), name
+
+    with pytest.raises(ValueError, match="fallback.*max_nodes"):
+        model(
+            torch.cat([node_feats, node_feats[:1]], dim=0),
+            torch.cat([pos, pos[:1]], dim=0),
+            batch=torch.tensor([0, 0, 0, 0, 1, 1, 1, 1, 1]),
+        )

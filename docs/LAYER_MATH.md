@@ -336,6 +336,18 @@ batches are grouped once, sliced by graph offsets, concatenated once, and
 returned to node order with one inverse permutation. They execute the same two
 GEMMs without `G` full-batch scans or a repeated full-size `index_copy` chain.
 
+`PackedGraphLayout` freezes graph counts, one grouped-node permutation and
+inverse, dense masks/padding, and optional degree-like size buckets. The
+deterministic `auto` selector maps one/similar-size/bucketable/ragged batches
+to direct GEMM, padded BMM, bucketed BMM, or ragged grouped GEMM. Small work or
+an extreme size ratio can fall back to outer/scatter. Feature and augmented
+value widths are zero-padded to a device/dtype-dependent multiple, which
+cannot change any dot product. When this layout is passed to the model, the
+forward does not sort, call `.item()`/`.tolist()`, or rebuild graph metadata.
+If it is omitted, layout construction remains caller-visible overhead and may
+synchronize; the selector constants are heuristics, not a measured
+target-GPU optimum.
+
 ## Homogeneous sparse low-rank residual
 
 The vNext block retains the full global message in every layer and adds a
@@ -348,36 +360,47 @@ M_i^t = G_i^t + 1[t in R] S_i^t.
 For rank `r=1..R`, node projections produce invariant scalars
 `q_ir,k_jr`, polar vectors `u_ir,v_jr`, scalar values `z_jrd`, polar values
 `p_jr`, and invariant value gates. With normalized polar edge direction
-`d_ij=(x_j-x_i)/Rc`, the edge logit is
+`d_ij=(x_j-x_i)/Rc`, the invariant score and bounded positive gate are
 
 ```text
-ell_ijr = tanh(
-  q_ir + k_jr + A_r RBF(||d_ij||^2)
+s_ijr =
+  q_ir k_jr + b_r + A_r RBF(||d_ij||^2)
   + alpha_r <u_ir,v_jr>
-  + beta_r <u_ir,d_ij>
-  + chi_r <v_jr,d_ij>
-).
+  + beta_r <u_ir,d_ij><v_jr,d_ij>
+  + chi_r (<u_ir,d_ij>^2 + <v_jr,d_ij>^2)
+g_ijr = exp(L tanh(s_ijr/L)), 0.5 <= L <= 4.
 ```
 
-Every term in `ell` is O(3)-invariant: polar/polar and polar/direction
+Every term in `s` is O(3)-invariant: polar/polar and polar/direction
 contractions remain even under reflection. Positive receiver-normalized
 weights are
 
 ```text
-abar_ijr = fc(||d_ij||^2) sigmoid(ell_ijr),
-a_ijr = abar_ijr / sum_(k -> i) abar_ikr.
+wbar_ijr = fc(||d_ij||^2) g_ijr,
+m_ir = sum_(k -> i) wbar_ikr,
+m2_ir = sum_(k -> i) wbar_ikr^2.
 ```
 
-Rank-space sufficient statistics are
+A single RBF projection gives five neutral-initialized family gates
+`rho^f_ijr = 2 sigmoid(B^f_r RBF_ij)`. Rank-space sufficient statistics are
 
 ```text
-S0_ird = sum_j a_ijr z_jrd
-S1_ir  = sum_j a_ijr p_jr
-Sd_ir  = sum_j a_ijr g^d_jr d_ij
-S2_ir  = sum_j a_ijr (
+S0_ird = sum_j wbar_ijr rho^0_ijr z_jrd / (1 + m_ir)
+S1_ir  = sum_j wbar_ijr rho^1_ijr p_jr / (1 + m_ir)
+Sd_ir  = sum_j wbar_ijr rho^d_ijr g^d_jr d_ij / (1 + m_ir)
+S2_ir  = sum_j wbar_ijr rho^2_ijr (
            g^2_jr ST(d_ij tensor d_ij) + optional W2 H_j^(2e))
-Sr_ir  = sum_j a_ijr g^r_jr ||d_ij||^2.
+         / (1 + m_ir)
+Sr_ir  = sum_j wbar_ijr rho^r_ijr g^r_jr ||d_ij||^2 / (1 + m_ir).
 ```
+
+The additive one in the denominator is a learned-null/soft-mass stabilizer:
+degree-one amplitude is `wbar/(1+wbar)` and therefore still goes smoothly to
+zero at the cutoff. `log1p(m)` and `log1p(m2)` feed a zero-initialized scalar
+projection so the pointwise update can distinguish sparse and dense
+neighborhoods. The optional local `softmax` ablation computes
+`softmax_j(s + log(fc)) * fc` and is not part of the exact global linear
+attention.
 
 Channel-only maps `R -> H` return this tuple to the existing head update.
 They are initialized at zero, so the enabled model starts as the exact
@@ -388,6 +411,11 @@ latents and canonical `E x R x {D,3,5}` transported values. It has no
 persistent edge state, hidden-width edge MLP, triplets, or `N x N` tensor.
 Its scalar payload gives work `O(N + E R D_head)` in general and
 `O(N + ER)` when rank and channel width are fixed.
+
+The sparse route requires supplied candidate neighbors by default. An explicit
+`complete_fallback` is guarded by a total-node ceiling before any quadratic
+candidate construction; this small-graph diagnostic path is not a scalable
+neighbor provider.
 
 ## Receiver CSR and reverse key mass
 
@@ -409,7 +437,22 @@ permutation into retained forward order, so neither receiver nor sender rows
 are resorted. CSR changes reduction order but not the defined sum; float64
 value/gradient equivalence and bounded float32 error are tested separately.
 
-## Static irrep planning boundary
+Packed metadata also includes receiver degree, maximum degree, fixed degree
+buckets/histogram/skew, and optionally an ELL matrix plus validity mask. ELL is
+a lossless row-major view of the same CSR, including zero-degree rows; it does
+not add or reorder semantic edges. Relation IDs follow the packed forward
+permutation. Reverse CSR is only another reduction view and never applies a
+semantic reverse-relation mapping.
+
+The receiver-streamed PyTorch reference iterates bounded CSR row chunks and
+keeps row masses/maxima/value accumulators local. Positive reduction computes
+the same mass-damped quotient above; local softmax streams a receiver maximum,
+partition sum, and value sum. FP16/BF16 inputs use FP32 accumulators. This
+avoids retaining a full normalized edge-weight/message tensor in the
+reference autograd graph, but it is not a fused CUDA kernel: Python/PyTorch row
+work, launch overhead, and saved-tensor behavior still require measurement.
+
+## Static irrep planning and reference execution
 
 For abstract irreps `(l_1,p_1)`, `(l_2,p_2)`, and `(L,p_L)`, the planner admits
 
@@ -421,10 +464,65 @@ p_L = p_1 p_2                         under O(3).
 SE(3) planning may retain an explicitly requested parity-mixed path because
 proper rotations do not distinguish the two parity labels. Layout parsing,
 multiplicity merging, flattened slices, and path binding are construction-time
-metadata. Only registered native Cartesian executors run numerically. The
-current bindings are the existing `1o x 0e -> 1o` passthrough plus
-`1o x 1o -> 2e`, `2e x 0e -> 2e`, and `2e x 1o -> 1o`; the planner does not
-turn arbitrary `l` into an executable model.
+metadata. A compiled reference instruction additionally freezes input/output
+multiplicities and offsets, deterministic order, `uvw` channel connection,
+shared-weight policy, real-tesseral Condon--Shortley CG convention, component
+normalization, and coefficient dtype/device. For one instruction,
+
+```text
+y_(u,M) = sum_(v,w,m1,m2)
+  W_(u,v,w) C^(L,M)_(l1,m1,l2,m2) x_(v,m1) z_(w,m2).
+```
+
+The learned `ReferenceTensorProduct` sums all reachable instructions into the
+declared output slices. Reference same-irrep channel mixing acts only on copy
+indices, irrep RMS norms contract over `m`, and scalar gates multiply complete
+nonscalar copies; all three commute with the declared group action. Real
+spherical harmonics and cached CG coefficients use the same convention.
+
+This is a correctness backend, not a persistent arbitrary-`l` model. The
+optimized `EquivariantAttention` carrier still stores only Cartesian
+`0e/1o/2e`; generic reference tensors are separate values unless used by the
+bounded transient workspace below.
+
+## Aggregate-then-project transient `l=3`
+
+The `high_order` profile keeps persistent degree at most two and applies one
+sparse reference interaction immediately before each selected layer's normal
+transport. The workspace consumes only supplied same-graph edges that pass the
+global local cutoff and any relation-specific cutoff; it never sees a hidden
+complete graph. For edge `j -> i`, let
+`Y2_ij = Y_2((x_j-x_i)/||x_j-x_i||)` and let invariant gates be
+`g^3_ij,g^2_ij`. It first computes
+
+```text
+L^3_ij = TP_(1o,2e->3o)(V^1_j, Y2_ij)
+A^3_i  = Reduce_(j->i) g^3_ij L^3_ij
+B^2_i  = Reduce_(j->i) g^2_ij Y2_ij
+Delta V^1_i = TP_(3o,2e->1o)(A^3_i, B^2_i).
+```
+
+`A_i` and `B_i` are reduced independently before the second tensor product.
+Consequently `Delta V_i` contains cross-edge interactions that cannot be
+reproduced by projecting each edge and then summing. The default reduction
+uses `sqrt(degree)` normalization; `none` and mass-damped references are also
+defined. The model bounds `Delta V_i`, applies a learned residual scale, and
+then discards `A_i^3`. No seven-coordinate activation is returned, persisted
+between blocks, or serialized in a checkpoint.
+
+Parity is explicit:
+
+```text
+1o x 2e -> 3o,       3o x 2e -> 1o.
+```
+
+Both paths therefore satisfy full O(3), including reflections. Coordinates
+enter only through displacement, so translation is absent; receiver sums
+commute with node/edge permutations. Sensitive geometry, CG contraction, and
+aggregation use FP32 for BF16/FP16 features (FP64 remains FP64), and the
+PyTorch reference supports second derivatives. The current implementation
+reconstructs COO from packed neighbors for this opt-in path and is not an
+optimized streamed high-order kernel.
 
 ## External equivariant inputs and irrep RMS normalization
 
@@ -1014,16 +1112,17 @@ then applies the same graph-centering and bound. This follows the EGNN
 relative-vector update pattern but remains a same-harness internal control, not
 an official implementation reproduction.
 
-## Optional ligand-pocket interaction readout
+## Optional generic bipartite readout
 
-`readout_mode="interaction"` keeps the ligand mean scalar readout as a residual
-baseline and adds an `O(E)` interface head after candidates are available. It
-requires a Boolean ligand mask; its complement is the pocket. Without supplied
-candidates, the current exact fallback still discovers them quadratically.
-Normalized invariant node states produce ligand and pocket mean pools. For
-directed ligand-receiver/pocket-sender edges inside the local cutoff, an
-invariant edge MLP produces content `e_ij` and six gates `g_ija`. The
-cross-interface content and polar moments are
+`readout_mode="bipartite"` keeps selected-node mean scalar pooling as a
+residual baseline and adds an `O(E)` two-partition cross path after candidates
+are available. It requires a Boolean `readout_mask` for selected nodes; its
+complement is context, and each graph must contain both partitions. Without
+supplied candidates, the current exact fallback still discovers them
+quadratically. Normalized invariant node states produce selected and context
+mean pools. For directed selected-receiver/context-sender edges inside the
+local cutoff, an invariant edge MLP produces content `e_ij` and six gates
+`g_ija`. The cross-partition content and polar moments are
 
 ```text
 c_g = sum_(i<-j in cross_g) f_c(u_ij) e_ij / sqrt(1 + C_g),
@@ -1034,12 +1133,18 @@ C_g = sum_(i<-j in cross_g) f_c(u_ij).
 
 Two scalar triple products of the polar moments are pseudoscalars. The scalar
 property head receives only the reflection-even combinations
-`[chi_1^2, chi_2^2, chi_1 chi_2]`, together with ligand, pocket, and interface
-pools. Thus the output remains invariant under full `O(3)`, including
-reflections, while retaining parity-sensitive intermediate information. The
-final interaction projection is zero initialized, so its initial graph scalar
-is exactly the existing ligand mean. This is a parity-aware task head, not a
-parity-complete `0o/1e/2o` hidden backbone.
+`[chi_1^2, chi_2^2, chi_1 chi_2]`, together with selected, context, and
+cross-partition pools. Thus the output remains invariant under full `O(3)`,
+including reflections, while retaining parity-sensitive intermediate
+information. The final projection is zero initialized, so its initial graph
+scalar is exactly the existing selected-node mean. This is a parity-aware
+generic readout, not a parity-complete `0o/1e/2o` hidden backbone.
+
+The core assigns no biological meaning to either partition. A downstream
+adapter may choose ligand atoms as selected and represented protein atoms as
+context, but other point-cloud or 3D-graph tasks may choose different roles.
+Legacy `readout_mode="interaction"` is an exact alias: it constructs the same
+module, preserves the same state keys, and evaluates these same equations.
 
 ## Multi-memory global gate (HEMM)
 
@@ -1219,6 +1324,46 @@ remains the caller's cost, so this is not a production radius-backend claim.
 The public wrapper derives graph metadata once and reuses it. Validation can
 still create compile graph breaks; full-graph compilation and production
 sparse-neighbor performance remain separate targets.
+
+## Generic task primitives and SBDD boundary
+
+Roles and relations enter the core only as integer-selected invariant scalar
+parameters. Named masks select rows but do not alter transformation laws.
+An atom/point-to-coarse assignment `c(i)` defines generic multiscale sums or
+means
+
+```text
+H_C = Reduce_(i:c(i)=C) H_i,
+X_C = Mean_(i:c(i)=C) X_i,
+```
+
+followed by an optional coarse-to-fine broadcast. These reductions commute
+with node permutations and O(3) actions. `MaskedInvariantPooling` computes
+interface/masked and all-node global invariant summaries separately, with an
+explicit empty-mask policy. A vector head mixes/gates `1o` channels with
+invariant scalars; a coordinate head additionally applies a Boolean update
+mask and an explicit centering rule.
+
+For energy models, the conservative primitive is definitionally
+
+```text
+F_i = - partial E / partial x_i.
+```
+
+It is separate from a direct equivariant vector-force head. The latter is an
+auxiliary/screening prediction unless independent trajectory evidence
+justifies a stronger claim.
+
+The generic equations contain no atom, residue, protein, ligand, pocket,
+water, metal, or cofactor label. Those vocabularies and task-specific
+affinity/pose/screening contracts live under `equivariant_attention.sbdd`.
+Its adapters construct role/relation tensors, hierarchy assignments, role and
+cross-edge interface masks, and a generic selected-node readout mask. Its
+censored-affinity loss preserves exact and bounded/interval labels. The package
+does not yet implement raw structure parsing, production graph construction,
+cluster generation, or a complete training/evaluation runner. The core
+bipartite readout remains vocabulary-free; legacy `"interaction"` is only its
+exact config/state-key compatibility alias.
 
 ## Executable representation boundaries
 

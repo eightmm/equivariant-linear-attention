@@ -215,7 +215,6 @@ def _atom3d_lba_row_to_sample(
         retained_atom_tokens,
         retained_coordinates,
         retained_types,
-        label,
     )
     sample_id = f"atom3d-lba:{split}:{row_index:07d}:{digest}"
     return GraphSample(
@@ -224,6 +223,11 @@ def _atom3d_lba_row_to_sample(
         target=target,
         sample_id=sample_id,
         readout_mask=readout_mask,
+        node_role_id=retained_types - 1,
+        node_masks={
+            "ligand": ligand[retained],
+            "pocket": pocket[retained],
+        },
     )
 
 
@@ -363,14 +367,14 @@ def _row_digest(
     atom_tokens: torch.Tensor,
     coordinates: torch.Tensor,
     token_types: torch.Tensor,
-    label: torch.Tensor,
 ) -> str:
+    """Return a label-blind canonical identity for one retained structure."""
+
     payload = {
         # Keep the frozen digest schema stable; values are treated as tokens.
         "atomic_numbers": atom_tokens.tolist(),
         "coords": coordinates.tolist(),
         "token_types": token_types.tolist(),
-        "label": float(label.item()),
     }
     encoded = json.dumps(
         payload,

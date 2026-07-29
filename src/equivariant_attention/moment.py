@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import combinations_with_replacement
 import math
 from math import factorial, isfinite, prod, sqrt
@@ -12,20 +13,44 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
+from .graph_layout import PackedGraphLayout, pack_graph_layout
+from .high_order import TransientL3Workspace
 from .irreps import CartesianIrreps, IrrepLayout, TensorProductPlan
+from .local_streaming import LocalBackendSelection, select_local_backend
+from .neighbor_providers import NeighborProvider
 from .neighbors import PackedNeighborGraph
 
 
 _MEMORY_ROUTER_DIM = 8
 _MEMORY_ROUTER_LOGIT_SCALE = 4.0
 _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
-_GLOBAL_REDUCTION_BACKENDS = frozenset({"outer_scatter", "feature_gemm"})
+_GLOBAL_REDUCTION_BACKENDS = frozenset(
+    {"outer_scatter", "feature_gemm", "auto"}
+)
 _LOCAL_REDUCTION_BACKENDS = frozenset({"index_add", "segment_csr"})
+_SPARSE_RESIDUAL_BACKENDS = frozenset(
+    {
+        "auto",
+        "materialized",
+        "segment_csr",
+        "ell",
+        "streamed_csr",
+        "custom",
+    }
+)
 _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 _COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
 _LOCAL_RBF_SPACINGS = frozenset({"squared", "distance"})
-_READOUT_MODES = frozenset({"interaction", "mean", "sum"})
+_READOUT_MODES = frozenset({"bipartite", "interaction", "mean", "sum"})
 _SYMMETRY_GROUPS = frozenset({"O3", "SE3"})
+_SPARSE_RESIDUAL_NORMALIZATIONS = frozenset({"positive", "softmax"})
+_SPARSE_RESIDUAL_BALANCING_MODES = frozenset({"receiver"})
+_SPARSE_RESIDUAL_NEIGHBOR_POLICIES = frozenset(
+    {"require", "complete_fallback"}
+)
+_GEOMETRY_CACHE_MODES = frozenset(
+    {"full", "compact", "recompute", "auto"}
+)
 _ADAPTIVE_SPATIAL_SCALES = (0.125, 0.25, 0.5, 1.0)
 
 
@@ -33,22 +58,98 @@ _ADAPTIVE_SPATIAL_SCALES = (0.125, 0.25, 0.5, 1.0)
 class _LocalGeometry:
     receiver: torch.Tensor
     sender: torch.Tensor
-    displacement: torch.Tensor
-    squared_distance: torch.Tensor
-    rbf: torch.Tensor
     nonself_receiver: torch.Tensor
     nonself_sender: torch.Tensor
-    nonself_displacement: torch.Tensor
-    nonself_squared_distance: torch.Tensor
-    nonself_rbf: torch.Tensor
-    nonself_cutoff: torch.Tensor
-    nonself_tensor_features: torch.Tensor
+    pos: torch.Tensor
+    cutoff: torch.Tensor
+    rbf_centers: torch.Tensor
+    rbf_widths: torch.Tensor
+    rbf_spacing: str
+    cache_mode: str
+    _displacement: torch.Tensor | None
+    _squared_distance: torch.Tensor | None
+    _rbf: torch.Tensor | None
+    _nonself_displacement: torch.Tensor | None
+    _nonself_squared_distance: torch.Tensor | None
+    _nonself_rbf: torch.Tensor | None
+    _nonself_cutoff: torch.Tensor | None
+    _nonself_tensor_features: torch.Tensor | None
+    relation_id: torch.Tensor | None = None
+    nonself_relation_id: torch.Tensor | None = None
     row_ptr: torch.Tensor | None = None
     reverse_order: torch.Tensor | None = None
     reverse_row_ptr: torch.Tensor | None = None
     nonself_row_ptr: torch.Tensor | None = None
     nonself_reverse_order: torch.Tensor | None = None
     nonself_reverse_row_ptr: torch.Tensor | None = None
+
+    @property
+    def displacement(self) -> torch.Tensor:
+        if self._displacement is not None:
+            return self._displacement
+        return (
+            self.pos[self.sender] - self.pos[self.receiver]
+        ) / self.cutoff
+
+    @property
+    def squared_distance(self) -> torch.Tensor:
+        if self._squared_distance is not None:
+            return self._squared_distance
+        return self.displacement.square().sum(dim=-1)
+
+    @property
+    def rbf(self) -> torch.Tensor:
+        if self._rbf is not None:
+            return self._rbf
+        return _radial_basis(
+            self.squared_distance,
+            num_rbf=self.rbf_centers.numel(),
+            spacing=self.rbf_spacing,
+            centers=self.rbf_centers,
+            widths=self.rbf_widths,
+        )
+
+    @property
+    def nonself_displacement(self) -> torch.Tensor:
+        if self._nonself_displacement is not None:
+            return self._nonself_displacement
+        return (
+            self.pos[self.nonself_sender] - self.pos[self.nonself_receiver]
+        ) / self.cutoff
+
+    @property
+    def nonself_squared_distance(self) -> torch.Tensor:
+        if self._nonself_squared_distance is not None:
+            return self._nonself_squared_distance
+        return self.nonself_displacement.square().sum(dim=-1)
+
+    @property
+    def nonself_rbf(self) -> torch.Tensor:
+        if self._nonself_rbf is not None:
+            return self._nonself_rbf
+        return _radial_basis(
+            self.nonself_squared_distance,
+            num_rbf=self.rbf_centers.numel(),
+            spacing=self.rbf_spacing,
+            centers=self.rbf_centers,
+            widths=self.rbf_widths,
+        )
+
+    @property
+    def nonself_cutoff(self) -> torch.Tensor:
+        if self._nonself_cutoff is not None:
+            return self._nonself_cutoff
+        return _cosine_of_squared_distance_cutoff(
+            self.nonself_squared_distance
+        )
+
+    @property
+    def nonself_tensor_features(self) -> torch.Tensor:
+        if self._nonself_tensor_features is not None:
+            return self._nonself_tensor_features
+        return _symmetric_traceless_features(
+            self.nonself_displacement
+        )
 
     def _base(self) -> tuple[torch.Tensor, ...]:
         return (
@@ -72,7 +173,26 @@ class _LocalGeometry:
         return self._base()[index]
 
 
-_LocalGeometryInput = _LocalGeometry | tuple[torch.Tensor, ...]
+@dataclass(frozen=True)
+class _PackedLocalGeometry:
+    """Compact receiver-owned geometry for streamed sparse residuals."""
+
+    packed: PackedNeighborGraph
+    pos: torch.Tensor
+    cutoff: torch.Tensor
+    rbf_centers: torch.Tensor
+    rbf_widths: torch.Tensor
+    rbf_spacing: str
+    cache_mode: str
+    backend_selection: LocalBackendSelection
+    chunk_size: int
+
+
+_LocalGeometryInput = (
+    _LocalGeometry
+    | _PackedLocalGeometry
+    | tuple[torch.Tensor, ...]
+)
 
 
 def _nonself_local_geometry(
@@ -228,6 +348,22 @@ class EquivariantAttentionConfig:
     use_sparse_low_rank_local_residual: bool = False
     local_residual_rank: int = 4
     local_residual_layers: tuple[int, ...] | None = None
+    sparse_residual_normalization: str = "positive"
+    sparse_residual_score_limit: float = 3.0
+    sparse_residual_balancing: str = "receiver"
+    sparse_residual_neighbor_policy: str = "require"
+    sparse_residual_complete_fallback_max_nodes: int = 256
+    geometry_cache_mode: str = "full"
+    num_edge_relations: int = 0
+    relation_cutoffs: tuple[float, ...] | None = None
+    distance_band_cutoffs: tuple[float, ...] = ()
+    sparse_residual_backend: str = "materialized"
+    sparse_residual_stream_chunk_size: int = 64
+    use_transient_l3_workspace: bool = False
+    transient_l3_channels: int = 1
+    transient_l3_layers: tuple[int, ...] | None = None
+    transient_l3_residual_scale_init: float = 0.05
+    num_node_roles: int = 0
 
 
 @dataclass(frozen=True)
@@ -272,6 +408,7 @@ class EquivariantAttention(nn.Module):
 
     attention_kind = "factorized_moment"
     symmetry = "O3"
+    supports_graph_layout = True
 
     def __init__(self, config: EquivariantAttentionConfig) -> None:
         super().__init__()
@@ -285,6 +422,22 @@ class EquivariantAttention(nn.Module):
             )
         self.config = config
         self.symmetry = config.symmetry_group
+        rbf_centers, rbf_widths = _radial_basis_parameters(
+            config.num_rbf,
+            config.local_rbf_spacing,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+        self.register_buffer(
+            "_local_rbf_centers",
+            rbf_centers,
+            persistent=False,
+        )
+        self.register_buffer(
+            "_local_rbf_widths",
+            rbf_widths,
+            persistent=False,
+        )
         self.hidden_irreps = CartesianIrreps.parse(config.hidden_irreps)
         self.output_irreps = CartesianIrreps.parse(config.output_irreps)
         input_terms = [f"{config.node_dim}x0e"]
@@ -364,6 +517,14 @@ class EquivariantAttention(nn.Module):
                 )
 
         self.scalar_in = nn.Linear(config.node_dim, self.hidden_irreps.scalars)
+        self.node_role_embedding = (
+            nn.Embedding(
+                config.num_node_roles,
+                self.hidden_irreps.scalars,
+            )
+            if config.num_node_roles
+            else None
+        )
         self.global_scalar_in = nn.Linear(3, self.hidden_irreps.scalars, bias=False)
         self.vector_in = nn.Linear(
             self.hidden_irreps.scalars, self.hidden_irreps.vectors
@@ -465,6 +626,13 @@ class EquivariantAttention(nn.Module):
                         and layer_index in local_residual_layers
                     ),
                     local_residual_rank=config.local_residual_rank,
+                    sparse_residual_normalization=(
+                        config.sparse_residual_normalization
+                    ),
+                    sparse_residual_score_limit=config.sparse_residual_score_limit,
+                    num_edge_relations=config.num_edge_relations,
+                    relation_cutoffs=config.relation_cutoffs,
+                    distance_band_cutoffs=config.distance_band_cutoffs,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -482,6 +650,36 @@ class EquivariantAttention(nn.Module):
             ]
             if config.coordinate_updates
             else []
+        )
+        selected_transient_l3_layers = (
+            tuple(range(config.num_layers))
+            if (
+                config.use_transient_l3_workspace
+                and config.transient_l3_layers is None
+            )
+            else (config.transient_l3_layers or ())
+        )
+        self.transient_l3_layers = nn.ModuleDict(
+            {
+                str(layer_index): TransientL3Workspace(
+                    input_vector_channels=self.hidden_irreps.vectors,
+                    workspace_channels=config.transient_l3_channels,
+                    output_vector_channels=self.hidden_irreps.vectors,
+                )
+                for layer_index in selected_transient_l3_layers
+            }
+        )
+        transient_scale = (
+            config.transient_l3_residual_scale_init
+            / sqrt(max(1, len(selected_transient_l3_layers)))
+        )
+        self.transient_l3_residual_scales = nn.ParameterDict(
+            {
+                str(layer_index): nn.Parameter(
+                    torch.tensor(float(transient_scale))
+                )
+                for layer_index in selected_transient_l3_layers
+            }
         )
         self.local_pairwise_content = (
             _LocalPairwiseContent(
@@ -506,15 +704,16 @@ class EquivariantAttention(nn.Module):
             self.output_irreps.tensors,
         )
         self.interaction_readout = (
-            _InteractionReadout(
+            _BipartiteInteractionReadout(
                 scalars=self.hidden_irreps.scalars,
                 output_scalars=self.output_irreps.scalars,
                 num_rbf=config.num_rbf,
                 cutoff=config.local_cutoff,
                 rbf_spacing=config.local_rbf_spacing,
+                geometry_cache_mode=config.geometry_cache_mode,
                 eps=config.eps,
             )
-            if config.readout_mode == "interaction"
+            if config.readout_mode in {"bipartite", "interaction"}
             else None
         )
 
@@ -525,9 +724,13 @@ class EquivariantAttention(nn.Module):
         batch: torch.Tensor | None = None,
         *,
         edge_index: torch.Tensor | None = None,
+        edge_relation_id: torch.Tensor | None = None,
         packed_neighbors: PackedNeighborGraph | None = None,
+        neighbor_provider: NeighborProvider | None = None,
+        graph_layout: PackedGraphLayout | None = None,
         edge_index_is_validated: bool = False,
         readout_mask: torch.Tensor | None = None,
+        node_role_id: torch.Tensor | None = None,
         node_vectors: torch.Tensor | None = None,
         node_tensors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
@@ -537,16 +740,57 @@ class EquivariantAttention(nn.Module):
             packed_neighbors, PackedNeighborGraph
         ):
             raise TypeError("packed_neighbors must be a PackedNeighborGraph")
-        if edge_index is not None and packed_neighbors is not None:
-            raise ValueError("edge_index and packed_neighbors are mutually exclusive")
-        if edge_index is None and packed_neighbors is None and edge_index_is_validated:
+        if graph_layout is not None and not isinstance(
+            graph_layout, PackedGraphLayout
+        ):
+            raise TypeError("graph_layout must be a PackedGraphLayout")
+        if neighbor_provider is not None and not isinstance(
+            neighbor_provider,
+            NeighborProvider,
+        ):
+            raise TypeError("neighbor_provider must satisfy NeighborProvider")
+        supplied_neighbor_sources = sum(
+            value is not None
+            for value in (edge_index, packed_neighbors, neighbor_provider)
+        )
+        if supplied_neighbor_sources > 1:
             raise ValueError(
-                "validated edge mode requires edge_index or packed_neighbors"
+                "edge_index, packed_neighbors, and neighbor_provider are "
+                "mutually exclusive"
+            )
+        if (
+            edge_index is None
+            and packed_neighbors is None
+            and neighbor_provider is None
+            and edge_index_is_validated
+        ):
+            raise ValueError(
+                "validated edge mode requires an explicit neighbor source"
+            )
+        if neighbor_provider is not None and edge_index_is_validated:
+            raise ValueError(
+                "neighbor_provider validates its own output; "
+                "edge_index_is_validated is not applicable"
+            )
+        if edge_relation_id is not None and edge_index is None:
+            raise ValueError("edge_relation_id requires edge_index")
+        if edge_relation_id is not None and self.config.num_edge_relations == 0:
+            raise ValueError(
+                "edge_relation_id requires positive num_edge_relations"
+            )
+        if (
+            self.config.num_edge_relations
+            and neighbor_provider is not None
+        ):
+            raise ValueError(
+                "typed relations require explicit edge_index metadata or "
+                "PackedNeighborGraph.relation_id"
             )
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
             pos,
             batch,
+            graph_layout,
         )
         if packed_neighbors is not None:
             if packed_neighbors.num_nodes != node_feats.shape[0]:
@@ -557,16 +801,31 @@ class EquivariantAttention(nn.Module):
                 raise ValueError(
                     "packed_neighbors and model inputs must use the same device"
                 )
+            if (
+                self.config.num_edge_relations
+                and packed_neighbors.relation_id is None
+            ):
+                raise ValueError(
+                    "typed sparse residual requires packed relation metadata"
+                )
         node_vectors, node_tensors = self._check_equivariant_inputs(
             node_feats,
             node_vectors,
             node_tensors,
         )
-        feature_gemm_layout_is_resolved = (
-            self.config.global_reduction_backend == "feature_gemm"
-        )
+        node_role_id = self._check_node_roles(node_role_id, node_feats)
+        feature_gemm_layout_is_resolved = self.config.global_reduction_backend in {
+            "feature_gemm",
+            "auto",
+        }
+        if feature_gemm_layout_is_resolved and graph_layout is None:
+            graph_layout = pack_graph_layout(
+                batch,
+                graph_counts=graph_counts,
+                assume_grouped=False,
+            )
         feature_gemm_layout = (
-            _graph_feature_layout(batch, graph_counts, num_graphs)
+            graph_layout
             if feature_gemm_layout_is_resolved
             else None
         )
@@ -577,12 +836,19 @@ class EquivariantAttention(nn.Module):
             graph_counts=graph_counts,
         )
         if self.interaction_readout is not None:
-            _validate_interaction_roles(
+            _validate_bipartite_roles(
                 readout_mask,
                 batch,
                 num_graphs=num_graphs,
+                compatibility_alias=(
+                    self.config.readout_mode == "interaction"
+                ),
             )
         scalars = self.scalar_in(node_feats)
+        if self.node_role_embedding is not None:
+            if node_role_id is None:
+                raise RuntimeError("validated node role IDs are missing")
+            scalars = scalars + self.node_role_embedding(node_role_id)
         vectors = scalars.new_zeros((scalars.shape[0], self.hidden_irreps.vectors, 3))
         if self.external_vector_in is not None:
             if node_vectors is None:
@@ -610,10 +876,50 @@ class EquivariantAttention(nn.Module):
         has_sparse_local_residual = any(
             layer.sparse_low_rank_local_residual is not None for layer in self.layers
         )
-        needs_layer_local_geometry = has_local_heads or has_sparse_local_residual
-        has_external_neighbors = edge_index is not None or packed_neighbors is not None
+        has_transient_l3 = bool(self.transient_l3_layers)
+        sparse_backend_selection = _resolve_sparse_backend(
+            self.config,
+            packed_neighbors=packed_neighbors,
+            dtype=node_feats.dtype,
+            device_type=node_feats.device.type,
+        )
+        compact_sparse_geometry = (
+            has_sparse_local_residual
+            and sparse_backend_selection.effective_backend
+            in {"segment_csr", "ell", "streamed_csr", "custom"}
+        )
+        if compact_sparse_geometry and packed_neighbors is None:
+            raise ValueError(
+                "streamed/CSR/ELL sparse residual requires packed_neighbors"
+            )
+        needs_layer_local_geometry = (
+            has_local_heads
+            or has_sparse_local_residual
+            or has_transient_l3
+        )
+        has_plain_local_attention = (
+            has_local_heads
+            and not self.config.use_gated_local_transport
+            and not self.config.use_edge_conditioned_local_transport
+        )
+        needs_reverse_local_csr = (
+            self.config.local_reduction_backend == "segment_csr"
+            and has_plain_local_attention
+            and (
+                self.config.use_key_balancing
+                if self.config.use_local_key_balancing is None
+                else self.config.use_local_key_balancing
+            )
+        )
+        has_external_neighbors = (
+            edge_index is not None
+            or packed_neighbors is not None
+            or neighbor_provider is not None
+        )
         if has_external_neighbors and not (
-            needs_layer_local_geometry or self.interaction_readout is not None
+            needs_layer_local_geometry
+            or self.interaction_readout is not None
+            or has_transient_l3
         ):
             raise ValueError(
                 "edge_index or packed_neighbors requires local heads/local "
@@ -622,6 +928,11 @@ class EquivariantAttention(nn.Module):
         resolved_edge_index = edge_index
         resolved_packed_neighbors = packed_neighbors
         resolved_edge_index_is_validated = edge_index_is_validated
+        rebuild_with_provider = (
+            neighbor_provider is not None
+            and self.config.coordinate_updates
+            and self.config.coordinate_neighbor_policy == "rebuild"
+        )
         if self.config.coordinate_updates and has_external_neighbors:
             if self.config.coordinate_neighbor_policy == "error":
                 raise ValueError(
@@ -632,29 +943,118 @@ class EquivariantAttention(nn.Module):
                 resolved_edge_index = None
                 resolved_packed_neighbors = None
                 resolved_edge_index_is_validated = False
-        if needs_layer_local_geometry and not self.config.coordinate_updates:
-            local_geometry = _local_geometry(
+        if neighbor_provider is not None and not rebuild_with_provider:
+            resolved_edge_index = neighbor_provider(
                 pos,
                 batch,
-                num_graphs=num_graphs,
                 cutoff=self.config.local_cutoff,
-                num_rbf=self.config.num_rbf,
-                rbf_spacing=self.config.local_rbf_spacing,
-                graph_counts=graph_counts,
-                edge_index=resolved_edge_index,
-                packed_neighbors=resolved_packed_neighbors,
-                edge_index_is_validated=resolved_edge_index_is_validated,
-                build_receiver_csr=(
-                    self.config.local_reduction_backend == "segment_csr"
-                ),
+            )
+            resolved_edge_index_is_validated = True
+        has_resolved_neighbors = (
+            resolved_edge_index is not None
+            or resolved_packed_neighbors is not None
+            or neighbor_provider is not None
+        )
+        if has_sparse_local_residual and not has_resolved_neighbors:
+            if self.config.sparse_residual_neighbor_policy == "require":
+                raise ValueError(
+                    "sparse residual requires explicit neighbors; provide "
+                    "edge_index/packed_neighbors or opt into the bounded "
+                    "complete_fallback policy"
+                )
+            if (
+                node_feats.shape[0]
+                > self.config.sparse_residual_complete_fallback_max_nodes
+            ):
+                raise ValueError(
+                    "sparse residual complete fallback exceeds "
+                    "sparse_residual_complete_fallback_max_nodes"
+                )
+        if has_transient_l3 and not has_resolved_neighbors:
+            raise ValueError(
+                "transient l=3 workspace requires explicit neighbors or a "
+                "neighbor_provider"
+            )
+        if needs_layer_local_geometry and not self.config.coordinate_updates:
+            local_geometry = (
+                _packed_local_geometry(
+                    pos,
+                    batch,
+                    packed_neighbors=packed_neighbors,
+                    cutoff=self.config.local_cutoff,
+                    rbf_spacing=self.config.local_rbf_spacing,
+                    rbf_centers=self._local_rbf_centers,
+                    rbf_widths=self._local_rbf_widths,
+                    cache_mode=self.config.geometry_cache_mode,
+                    backend_selection=sparse_backend_selection,
+                    chunk_size=(
+                        self.config.sparse_residual_stream_chunk_size
+                    ),
+                )
+                if compact_sparse_geometry and packed_neighbors is not None
+                else _local_geometry(
+                    pos,
+                    batch,
+                    num_graphs=num_graphs,
+                    cutoff=self.config.local_cutoff,
+                    num_rbf=self.config.num_rbf,
+                    rbf_spacing=self.config.local_rbf_spacing,
+                    graph_counts=graph_counts,
+                    edge_index=resolved_edge_index,
+                    edge_relation_id=edge_relation_id,
+                    packed_neighbors=resolved_packed_neighbors,
+                    edge_index_is_validated=resolved_edge_index_is_validated,
+                    rbf_centers=self._local_rbf_centers,
+                    rbf_widths=self._local_rbf_widths,
+                    cache_mode=self.config.geometry_cache_mode,
+                    build_receiver_csr=(
+                        self.config.local_reduction_backend == "segment_csr"
+                    ),
+                    build_reverse_csr=needs_reverse_local_csr,
+                )
             )
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
         global_geometry_injected = False
         for layer_index, layer in enumerate(self.layers):
             if self.config.coordinate_updates:
+                if rebuild_with_provider:
+                    if neighbor_provider is None:
+                        raise RuntimeError(
+                            "provider rebuild policy lost its provider"
+                        )
+                    resolved_edge_index = neighbor_provider(
+                        pos,
+                        batch,
+                        cutoff=self.config.local_cutoff,
+                    )
+                    resolved_packed_neighbors = None
+                    resolved_edge_index_is_validated = True
                 local_geometry = (
-                    _local_geometry(
+                    _packed_local_geometry(
+                        pos,
+                        batch,
+                        packed_neighbors=resolved_packed_neighbors,
+                        cutoff=self.config.local_cutoff,
+                        rbf_spacing=self.config.local_rbf_spacing,
+                        rbf_centers=self._local_rbf_centers,
+                        rbf_widths=self._local_rbf_widths,
+                        cache_mode=self.config.geometry_cache_mode,
+                        backend_selection=sparse_backend_selection,
+                        chunk_size=(
+                            self.config.sparse_residual_stream_chunk_size
+                        ),
+                    )
+                    if (
+                        compact_sparse_geometry
+                        and resolved_packed_neighbors is not None
+                        and (
+                            layer.local_head_count
+                            or layer.sparse_low_rank_local_residual is not None
+                            or str(layer_index) in self.transient_l3_layers
+                        )
+                    )
+                    else _local_geometry(
                         pos,
                         batch,
                         num_graphs=num_graphs,
@@ -663,15 +1063,21 @@ class EquivariantAttention(nn.Module):
                         rbf_spacing=self.config.local_rbf_spacing,
                         graph_counts=graph_counts,
                         edge_index=resolved_edge_index,
+                        edge_relation_id=edge_relation_id,
                         packed_neighbors=resolved_packed_neighbors,
                         edge_index_is_validated=(resolved_edge_index_is_validated),
+                        rbf_centers=self._local_rbf_centers,
+                        rbf_widths=self._local_rbf_widths,
+                        cache_mode=self.config.geometry_cache_mode,
                         build_receiver_csr=(
                             self.config.local_reduction_backend == "segment_csr"
                         ),
+                        build_reverse_csr=needs_reverse_local_csr,
                     )
                     if (
                         layer.local_head_count
                         or layer.sparse_low_rank_local_residual is not None
+                        or str(layer_index) in self.transient_l3_layers
                     )
                     else None
                 )
@@ -711,6 +1117,29 @@ class EquivariantAttention(nn.Module):
                 ) * normalized_pos.unsqueeze(1)
                 vectors = vectors + geometry_vector.to(dtype=vectors.dtype)
                 global_geometry_injected = True
+            transient_key = str(layer_index)
+            if transient_key in self.transient_l3_layers:
+                if local_geometry is None:
+                    raise RuntimeError(
+                        "transient l=3 workspace lost its local geometry"
+                    )
+                transient_edge_index = _transient_l3_edge_index(
+                    local_geometry,
+                    relation_cutoffs=self.config.relation_cutoffs,
+                )
+                transient_delta = self.transient_l3_layers[transient_key](
+                    vectors,
+                    pos,
+                    transient_edge_index,
+                )
+                bounded_transient_delta = _bounded_irrep(
+                    transient_delta,
+                    self.config.eps,
+                ).to(dtype=vectors.dtype)
+                vectors = vectors + (
+                    self.transient_l3_residual_scales[transient_key]
+                    * bounded_transient_delta
+                )
             layer_args = (
                 scalars,
                 vectors,
@@ -805,6 +1234,7 @@ class EquivariantAttention(nn.Module):
         node_feats: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor | None,
+        graph_layout: PackedGraphLayout | None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, torch.Tensor]:
         if node_feats.ndim != 2 or node_feats.shape[1] != self.config.node_dim:
             raise ValueError(f"node_feats must have shape (N, {self.config.node_dim})")
@@ -818,9 +1248,11 @@ class EquivariantAttention(nn.Module):
             raise TypeError("pos must use float32 or float64 coordinates")
         if node_feats.device != pos.device:
             raise ValueError("node_feats and pos must be on the same device")
-        if not torch.isfinite(node_feats).all() or not torch.isfinite(pos).all():
-            raise ValueError("node_feats and pos must be finite")
+        _require_finite("node_feats", node_feats)
+        _require_finite("pos", pos)
         if batch is None:
+            if graph_layout is not None:
+                raise ValueError("graph_layout requires an explicit batch tensor")
             batch = torch.zeros(
                 node_feats.shape[0], dtype=torch.long, device=node_feats.device
             )
@@ -839,9 +1271,62 @@ class EquivariantAttention(nn.Module):
                 raise ValueError(
                     "batch, node_feats, and pos must be on the same device"
                 )
+            if graph_layout is not None:
+                graph_layout.validate_batch(batch)
+                if graph_layout.device != node_feats.device:
+                    raise ValueError(
+                        "graph_layout and model inputs must use the same device"
+                    )
+                if graph_layout.num_nodes != node_feats.shape[0]:
+                    raise ValueError(
+                        "graph_layout node count must match model inputs"
+                    )
             batch = batch.to(dtype=torch.long)
-        num_graphs, graph_counts = _graph_metadata(batch)
+        if graph_layout is None:
+            num_graphs, graph_counts = _graph_metadata(batch)
+        else:
+            num_graphs = graph_layout.num_graphs
+            graph_counts = graph_layout.graph_counts
         return node_feats, pos, batch, num_graphs, graph_counts
+
+    def _check_node_roles(
+        self,
+        node_role_id: torch.Tensor | None,
+        node_feats: torch.Tensor,
+    ) -> torch.Tensor | None:
+        if self.config.num_node_roles == 0:
+            if node_role_id is not None:
+                raise ValueError(
+                    "node_role_id requires positive num_node_roles"
+                )
+            return None
+        if node_role_id is None:
+            raise ValueError(
+                "positive num_node_roles requires node_role_id"
+            )
+        if not isinstance(node_role_id, torch.Tensor):
+            raise TypeError("node_role_id must be a tensor")
+        if node_role_id.dtype not in {
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+            torch.uint8,
+        }:
+            raise TypeError("node_role_id must use an integer dtype")
+        if node_role_id.shape != (node_feats.shape[0],):
+            raise ValueError("node_role_id must have shape (N,)")
+        if node_role_id.device != node_feats.device:
+            raise ValueError(
+                "node_role_id and node features must share one device"
+            )
+        role_id = node_role_id.to(dtype=torch.long)
+        _require_index_range(
+            "node_role_id",
+            role_id,
+            upper_bound=self.config.num_node_roles,
+        )
+        return role_id
 
     def _check_equivariant_inputs(
         self,
@@ -1063,6 +1548,11 @@ class _EquivariantMomentLayer(nn.Module):
         use_global_tensor_value_transport: bool = False,
         use_sparse_low_rank_local_residual: bool = False,
         local_residual_rank: int = 4,
+        sparse_residual_normalization: str = "positive",
+        sparse_residual_score_limit: float = 3.0,
+        num_edge_relations: int = 0,
+        relation_cutoffs: tuple[float, ...] | None = None,
+        distance_band_cutoffs: tuple[float, ...] = (),
     ) -> None:
         super().__init__()
         self.scalars = scalars
@@ -1189,6 +1679,11 @@ class _EquivariantMomentLayer(nn.Module):
                         num_rbf=num_rbf,
                         residual_scale_init=residual_scale_init,
                         eps=eps,
+                        normalization=sparse_residual_normalization,
+                        score_limit=sparse_residual_score_limit,
+                        num_edge_relations=num_edge_relations,
+                        relation_cutoffs=relation_cutoffs,
+                        distance_band_cutoffs=distance_band_cutoffs,
                     )
                 )
 
@@ -1362,7 +1857,12 @@ class _EquivariantMomentLayer(nn.Module):
         local_pairwise_content: _LocalPairwiseContent | None = None,
         *,
         persistent_tensor: torch.Tensor | None = None,
-        feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+        feature_gemm_layout: (
+            PackedGraphLayout
+            | _GraphPaddedLayout
+            | _GraphRaggedLayout
+            | None
+        ) = None,
         feature_gemm_layout_is_resolved: bool = False,
     ) -> tuple[torch.Tensor, ...]:
         if self.tensors:
@@ -2275,10 +2775,18 @@ class _SparseLowRankLocalResidual(nn.Module):
         num_rbf: int,
         residual_scale_init: float,
         eps: float,
+        normalization: str,
+        score_limit: float,
+        num_edge_relations: int,
+        relation_cutoffs: tuple[float, ...] | None,
+        distance_band_cutoffs: tuple[float, ...],
     ) -> None:
         super().__init__()
         if scalars % num_heads:
             raise ValueError("scalars must be divisible by num_heads")
+        if normalization not in _SPARSE_RESIDUAL_NORMALIZATIONS:
+            choices = ", ".join(sorted(_SPARSE_RESIDUAL_NORMALIZATIONS))
+            raise ValueError(f"normalization must be one of: {choices}")
         self.scalars = scalars
         self.vectors = vectors
         self.tensors = tensors
@@ -2286,9 +2794,47 @@ class _SparseLowRankLocalResidual(nn.Module):
         self.rank = rank
         self.head_dim = scalars // num_heads
         self.eps = eps
+        self.normalization = normalization
+        self.score_limit = float(score_limit)
+        self.num_edge_relations = num_edge_relations
+        self.relation_score_bias: nn.Parameter | None = None
+        relation_cutoff_tensor = torch.empty(0, dtype=torch.float32)
+        if num_edge_relations:
+            self.relation_score_bias = nn.Parameter(
+                torch.zeros(num_edge_relations, rank)
+            )
+            if relation_cutoffs is None:
+                raise ValueError(
+                    "relation_cutoffs are required when edge relations are enabled"
+                )
+            relation_cutoff_tensor = torch.tensor(
+                relation_cutoffs,
+                dtype=torch.float32,
+            )
+        self.register_buffer(
+            "_relation_cutoffs",
+            relation_cutoff_tensor,
+            persistent=bool(num_edge_relations),
+        )
+        self.distance_band_score_bias: nn.Parameter | None = None
+        distance_band_tensor = torch.empty(0, dtype=torch.float32)
+        if distance_band_cutoffs:
+            self.distance_band_score_bias = nn.Parameter(
+                torch.zeros(len(distance_band_cutoffs), rank)
+            )
+            distance_band_tensor = torch.tensor(
+                distance_band_cutoffs,
+                dtype=torch.float32,
+            )
+        self.register_buffer(
+            "_distance_band_cutoffs",
+            distance_band_tensor,
+            persistent=bool(distance_band_cutoffs),
+        )
 
         self.scalar_query = nn.Linear(scalars, rank)
         self.scalar_key = nn.Linear(scalars, rank)
+        self.score_bias = nn.Parameter(torch.zeros(rank))
         self.radial_key = nn.Linear(num_rbf, rank, bias=False)
         self.vector_query = _ChannelMix(vectors, rank)
         self.vector_key = _ChannelMix(vectors, rank)
@@ -2303,6 +2849,10 @@ class _SparseLowRankLocalResidual(nn.Module):
         self.tensor_gate = nn.Linear(scalars, rank)
         self.radial_trace_gate = nn.Linear(scalars, rank)
         self.tensor_value = _ChannelMix(tensors, rank) if tensors else None
+        self.radial_value = nn.Linear(num_rbf, 5 * rank, bias=False)
+        nn.init.zeros_(self.radial_value.weight)
+        self.mass_out = nn.Linear(2 * rank, scalars, bias=False)
+        nn.init.zeros_(self.mass_out.weight)
 
         self.scalar_out = _ChannelMix(rank, num_heads)
         self.vector_out = _ChannelMix(rank, num_heads)
@@ -2321,6 +2871,10 @@ class _SparseLowRankLocalResidual(nn.Module):
             torch.tensor(float(residual_scale_init))
         )
 
+    def _positive_gate(self, score: torch.Tensor) -> torch.Tensor:
+        limit = score.new_tensor(self.score_limit)
+        return torch.exp(limit * torch.tanh(score / limit))
+
     def forward(
         self,
         scalars: torch.Tensor,
@@ -2330,6 +2884,14 @@ class _SparseLowRankLocalResidual(nn.Module):
         num_nodes: int,
         persistent_tensor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if isinstance(local_geometry, _PackedLocalGeometry):
+            return self._forward_packed_streamed(
+                scalars,
+                vectors,
+                local_geometry,
+                num_nodes=num_nodes,
+                persistent_tensor=persistent_tensor,
+            )
         receiver, sender, displacement, squared_distance, rbf = (
             _nonself_local_geometry(local_geometry)
         )
@@ -2348,29 +2910,94 @@ class _SparseLowRankLocalResidual(nn.Module):
         angular = (receiver_vector * sender_vector).sum(dim=-1)
         receiver_axis = (receiver_vector * direction).sum(dim=-1)
         sender_axis = (sender_vector * direction).sum(dim=-1)
-        edge_latent = torch.tanh(
+        score = (
             scalar_query[receiver].to(dtype=dtype)
-            + scalar_key[sender].to(dtype=dtype)
+            * scalar_key[sender].to(dtype=dtype)
+            + self.score_bias.to(dtype=dtype)[None, :]
             + self.radial_key(rbf.to(dtype=scalars.dtype)).to(dtype=dtype)
             + self.angular_mix.to(dtype=dtype)[None, :] * angular
-            + self.direction_mix.to(dtype=dtype)[None, :, 0] * receiver_axis
-            + self.direction_mix.to(dtype=dtype)[None, :, 1] * sender_axis
+            + self.direction_mix.to(dtype=dtype)[None, :, 0]
+            * receiver_axis
+            * sender_axis
+            + self.direction_mix.to(dtype=dtype)[None, :, 1]
+            * (receiver_axis.square() + sender_axis.square())
         )
-        cutoff = _nonself_cutoff(
-            local_geometry,
-            squared_distance,
-            dtype=dtype,
-        )
-        raw_weight = cutoff[:, None] * torch.sigmoid(edge_latent)
-        weight_mass = _local_receiver_sum(
-            local_geometry,
-            receiver,
-            num_nodes,
-            raw_weight,
-        )[0]
-        weight = raw_weight / weight_mass[receiver].clamp_min(
-            torch.finfo(dtype).tiny
-        )
+        if self.distance_band_score_bias is not None:
+            if not isinstance(local_geometry, _LocalGeometry):
+                raise ValueError(
+                    "distance-band sparse residual requires local geometry"
+                )
+            physical_squared_distance = squared_distance.to(dtype=dtype) * (
+                local_geometry.cutoff.to(dtype=dtype).square()
+            )
+            band_cutoffs = self._distance_band_cutoffs.to(
+                device=physical_squared_distance.device,
+                dtype=dtype,
+            )
+            scaled_square = (
+                physical_squared_distance.unsqueeze(-1)
+                / band_cutoffs.square()
+            )
+            band_gate = torch.where(
+                scaled_square < 1.0,
+                0.5 * (1.0 + torch.cos(torch.pi * scaled_square)),
+                torch.zeros_like(scaled_square),
+            )
+            score = score + torch.einsum(
+                "eb,br->er",
+                band_gate,
+                self.distance_band_score_bias.to(dtype=dtype),
+            )
+        if self.relation_score_bias is None:
+            cutoff = _nonself_cutoff(
+                local_geometry,
+                squared_distance,
+                dtype=dtype,
+            )
+        else:
+            if (
+                not isinstance(local_geometry, _LocalGeometry)
+                or local_geometry.nonself_relation_id is None
+            ):
+                raise ValueError(
+                    "typed sparse residual requires edge relation IDs"
+                )
+            relation_id = local_geometry.nonself_relation_id.to(
+                dtype=torch.long
+            )
+            if relation_id.numel():
+                _require_index_range(
+                    "edge relation IDs",
+                    relation_id,
+                    upper_bound=self.num_edge_relations,
+                )
+            score = score + self.relation_score_bias.to(dtype=dtype)[
+                relation_id
+            ]
+            relation_cutoff = self._relation_cutoffs.to(
+                device=squared_distance.device,
+                dtype=dtype,
+            )[relation_id]
+            local_cutoff = local_geometry.cutoff.to(dtype=dtype)
+            relation_squared_distance = squared_distance.to(dtype=dtype) * (
+                local_cutoff / relation_cutoff
+            ).square()
+            cutoff = _cosine_of_squared_distance_cutoff(
+                relation_squared_distance
+            )
+        raw_weight = cutoff[:, None] * self._positive_gate(score)
+        if self.normalization == "softmax":
+            edge_weight = (
+                _receiver_softmax(
+                    score,
+                    receiver,
+                    num_nodes=num_nodes,
+                    mass=cutoff,
+                )
+                * cutoff[:, None]
+            )
+        else:
+            edge_weight = raw_weight
 
         scalar_value = self.scalar_value(scalars).reshape(
             num_nodes,
@@ -2381,12 +3008,21 @@ class _SparseLowRankLocalResidual(nn.Module):
         relative_gate = torch.tanh(self.relative_gate(scalars))
         tensor_gate = torch.tanh(self.tensor_gate(scalars))
         radial_gate = torch.tanh(self.radial_trace_gate(scalars))
+        radial_value = 2.0 * torch.sigmoid(
+            self.radial_value(rbf.to(dtype=scalars.dtype)).reshape(
+                rbf.shape[0],
+                self.rank,
+                5,
+            )
+        ).to(dtype=dtype)
         tensor_basis = _nonself_tensor_features(
             local_geometry,
             displacement,
             dtype=dtype,
         ).unsqueeze(1)
-        tensor_edge = tensor_gate[sender].to(dtype=dtype).unsqueeze(-1) * tensor_basis
+        tensor_edge = (
+            tensor_gate[sender].to(dtype=dtype).unsqueeze(-1) * tensor_basis
+        )
         if self.tensor_value is not None:
             if persistent_tensor is None:
                 raise ValueError(
@@ -2397,6 +3033,8 @@ class _SparseLowRankLocalResidual(nn.Module):
             )[sender].to(dtype=dtype)
 
         (
+            weight_mass,
+            weight_square_mass,
             scalar_rank,
             vector_rank,
             relative_rank,
@@ -2406,26 +3044,559 @@ class _SparseLowRankLocalResidual(nn.Module):
             local_geometry,
             receiver,
             num_nodes,
-            weight.unsqueeze(-1)
+            raw_weight,
+            raw_weight.square(),
+            edge_weight.unsqueeze(-1)
+            * radial_value[:, :, 0].unsqueeze(-1)
             * scalar_value[sender].to(dtype=dtype),
-            weight.unsqueeze(-1)
+            edge_weight.unsqueeze(-1)
+            * radial_value[:, :, 1].unsqueeze(-1)
             * vector_value[sender].to(dtype=dtype),
-            weight.unsqueeze(-1)
+            edge_weight.unsqueeze(-1)
+            * radial_value[:, :, 2].unsqueeze(-1)
             * relative_gate[sender].to(dtype=dtype).unsqueeze(-1)
             * direction,
-            weight.unsqueeze(-1) * tensor_edge,
-            weight
+            edge_weight.unsqueeze(-1)
+            * radial_value[:, :, 3].unsqueeze(-1)
+            * tensor_edge,
+            edge_weight
+            * radial_value[:, :, 4]
             * radial_gate[sender].to(dtype=dtype)
             * squared_distance.to(dtype=dtype).unsqueeze(-1),
         )
+        if self.normalization == "positive":
+            inverse_mass = (1.0 + weight_mass).reciprocal()
+            scalar_rank = scalar_rank * inverse_mass.unsqueeze(-1)
+            vector_rank = vector_rank * inverse_mass.unsqueeze(-1)
+            relative_rank = relative_rank * inverse_mass.unsqueeze(-1)
+            tensor_rank = tensor_rank * inverse_mass.unsqueeze(-1)
+            radial_rank = radial_rank * inverse_mass
+        mass_features = torch.cat(
+            [
+                torch.log1p(weight_mass),
+                torch.log1p(weight_square_mass),
+            ],
+            dim=-1,
+        )
+        mass_scalar = self.mass_out(
+            mass_features.to(dtype=scalars.dtype)
+        ).reshape(num_nodes, self.num_heads, self.head_dim)
         scale = self.residual_scale.to(dtype=dtype)
         return (
-            scale * self.scalar_out(scalar_rank),
+            scale
+            * (
+                self.scalar_out(scalar_rank)
+                + mass_scalar.to(dtype=dtype)
+            ),
             scale * self.vector_out(vector_rank),
             scale * self.relative_out(relative_rank),
             scale * self.tensor_out(tensor_rank),
             scale * self.radial_trace_out(radial_rank.unsqueeze(-1)).squeeze(-1),
         )
+
+    def _forward_packed_streamed(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+        geometry: _PackedLocalGeometry,
+        *,
+        num_nodes: int,
+        persistent_tensor: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Receiver-owned reference that keeps edge messages row/chunk local."""
+
+        if geometry.packed.num_nodes != num_nodes:
+            raise ValueError("packed sparse geometry node count mismatch")
+        dtype = _moment_dtype(scalars, vectors, geometry.pos)
+        scalar_query = self.scalar_query(scalars).to(dtype=dtype)
+        scalar_key = self.scalar_key(scalars).to(dtype=dtype)
+        vector_query = (
+            self.vector_query(vectors)
+            * torch.tanh(self.vector_query_gate(scalars)).unsqueeze(-1)
+        ).to(dtype=dtype)
+        vector_key = (
+            self.vector_key(vectors)
+            * torch.tanh(self.vector_key_gate(scalars)).unsqueeze(-1)
+        ).to(dtype=dtype)
+        scalar_value = self.scalar_value(scalars).reshape(
+            num_nodes,
+            self.rank,
+            self.head_dim,
+        ).to(dtype=dtype)
+        vector_value = self.vector_value(vectors).to(dtype=dtype)
+        relative_gate = torch.tanh(self.relative_gate(scalars)).to(dtype=dtype)
+        tensor_gate = torch.tanh(self.tensor_gate(scalars)).to(dtype=dtype)
+        radial_gate = torch.tanh(
+            self.radial_trace_gate(scalars)
+        ).to(dtype=dtype)
+        persistent_value = (
+            None
+            if self.tensor_value is None
+            else self.tensor_value(
+                self._require_persistent_tensor(persistent_tensor)
+            ).to(dtype=dtype)
+        )
+        row_spans = geometry.packed._require_row_spans()
+        scalar_rows: list[torch.Tensor] = []
+        vector_rows: list[torch.Tensor] = []
+        relative_rows: list[torch.Tensor] = []
+        tensor_rows: list[torch.Tensor] = []
+        radial_rows: list[torch.Tensor] = []
+        mass_rows: list[torch.Tensor] = []
+        mass_square_rows: list[torch.Tensor] = []
+
+        for receiver, (row_start, row_stop) in enumerate(row_spans):
+            sender = self._packed_row_sender(
+                geometry,
+                receiver=receiver,
+                row_start=row_start,
+                row_stop=row_stop,
+            )
+            relation_id = (
+                None
+                if geometry.packed.relation_id is None
+                else geometry.packed.relation_id[row_start:row_stop]
+            )
+            nonself = sender != receiver
+            sender = sender[nonself]
+            if relation_id is not None:
+                relation_id = relation_id[nonself]
+            displacement = (
+                geometry.pos[sender] - geometry.pos[receiver]
+            ).to(dtype=dtype) / geometry.cutoff.to(dtype=dtype)
+            squared_distance = displacement.square().sum(dim=-1)
+            inside = squared_distance < 1.0
+            sender = sender[inside]
+            displacement = displacement[inside]
+            squared_distance = squared_distance[inside]
+            if relation_id is not None:
+                relation_id = relation_id[inside]
+            rbf = _radial_basis(
+                squared_distance,
+                num_rbf=geometry.rbf_centers.numel(),
+                spacing=geometry.rbf_spacing,
+                centers=geometry.rbf_centers.to(dtype=dtype),
+                widths=geometry.rbf_widths.to(dtype=dtype),
+            )
+            row = self._stream_sparse_row(
+                receiver=receiver,
+                sender=sender,
+                displacement=displacement,
+                squared_distance=squared_distance,
+                rbf=rbf,
+                relation_id=relation_id,
+                local_cutoff=geometry.cutoff.to(dtype=dtype),
+                scalar_query=scalar_query,
+                scalar_key=scalar_key,
+                vector_query=vector_query,
+                vector_key=vector_key,
+                scalar_value=scalar_value,
+                vector_value=vector_value,
+                relative_gate=relative_gate,
+                tensor_gate=tensor_gate,
+                radial_gate=radial_gate,
+                persistent_value=persistent_value,
+                chunk_size=geometry.chunk_size,
+                projection_dtype=scalars.dtype,
+                dtype=dtype,
+            )
+            (
+                scalar_row,
+                vector_row,
+                relative_row,
+                tensor_row,
+                radial_row,
+                mass_row,
+                mass_square_row,
+            ) = row
+            scalar_rows.append(scalar_row)
+            vector_rows.append(vector_row)
+            relative_rows.append(relative_row)
+            tensor_rows.append(tensor_row)
+            radial_rows.append(radial_row)
+            mass_rows.append(mass_row)
+            mass_square_rows.append(mass_square_row)
+
+        scalar_rank = torch.stack(scalar_rows)
+        vector_rank = torch.stack(vector_rows)
+        relative_rank = torch.stack(relative_rows)
+        tensor_rank = torch.stack(tensor_rows)
+        radial_rank = torch.stack(radial_rows)
+        weight_mass = torch.stack(mass_rows)
+        weight_square_mass = torch.stack(mass_square_rows)
+        mass_features = torch.cat(
+            [
+                torch.log1p(weight_mass),
+                torch.log1p(weight_square_mass),
+            ],
+            dim=-1,
+        )
+        mass_scalar = self.mass_out(
+            mass_features.to(dtype=scalars.dtype)
+        ).reshape(num_nodes, self.num_heads, self.head_dim)
+        scale = self.residual_scale.to(dtype=dtype)
+        return (
+            scale
+            * (
+                self.scalar_out(scalar_rank)
+                + mass_scalar.to(dtype=dtype)
+            ),
+            scale * self.vector_out(vector_rank),
+            scale * self.relative_out(relative_rank),
+            scale * self.tensor_out(tensor_rank),
+            scale
+            * self.radial_trace_out(radial_rank.unsqueeze(-1)).squeeze(-1),
+        )
+
+    def _stream_sparse_row(
+        self,
+        *,
+        receiver: int,
+        sender: torch.Tensor,
+        displacement: torch.Tensor,
+        squared_distance: torch.Tensor,
+        rbf: torch.Tensor,
+        relation_id: torch.Tensor | None,
+        local_cutoff: torch.Tensor,
+        scalar_query: torch.Tensor,
+        scalar_key: torch.Tensor,
+        vector_query: torch.Tensor,
+        vector_key: torch.Tensor,
+        scalar_value: torch.Tensor,
+        vector_value: torch.Tensor,
+        relative_gate: torch.Tensor,
+        tensor_gate: torch.Tensor,
+        radial_gate: torch.Tensor,
+        persistent_value: torch.Tensor | None,
+        chunk_size: int,
+        projection_dtype: torch.dtype,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, ...]:
+        device = scalar_query.device
+        mass = torch.zeros(self.rank, dtype=dtype, device=device)
+        mass_square = torch.zeros_like(mass)
+        scalar_sum = torch.zeros(
+            self.rank,
+            self.head_dim,
+            dtype=dtype,
+            device=device,
+        )
+        vector_sum = torch.zeros(
+            self.rank,
+            3,
+            dtype=dtype,
+            device=device,
+        )
+        relative_sum = torch.zeros_like(vector_sum)
+        tensor_sum = torch.zeros(
+            self.rank,
+            5,
+            dtype=dtype,
+            device=device,
+        )
+        radial_sum = torch.zeros_like(mass)
+        if sender.numel() == 0:
+            return (
+                scalar_sum,
+                vector_sum,
+                relative_sum,
+                tensor_sum,
+                radial_sum,
+                mass,
+                mass_square,
+            )
+        receiver_scalar_query = scalar_query[receiver]
+        receiver_vector_query = vector_query[receiver]
+
+        row_max = None
+        if self.normalization == "softmax":
+            row_max = torch.full_like(mass, -torch.inf)
+            for start in range(0, sender.numel(), chunk_size):
+                stop = min(start + chunk_size, sender.numel())
+                score, cutoff = self._stream_sparse_score(
+                    sender=sender[start:stop],
+                    displacement=displacement[start:stop],
+                    squared_distance=squared_distance[start:stop],
+                    rbf=rbf[start:stop],
+                    relation_id=(
+                        None
+                        if relation_id is None
+                        else relation_id[start:stop]
+                    ),
+                    local_cutoff=local_cutoff,
+                    receiver_scalar_query=receiver_scalar_query,
+                    scalar_key=scalar_key,
+                    receiver_vector_query=receiver_vector_query,
+                    vector_key=vector_key,
+                    projection_dtype=projection_dtype,
+                    dtype=dtype,
+                )
+                logit = torch.where(
+                    cutoff[:, None] > 0,
+                    score + cutoff[:, None].log(),
+                    torch.full_like(score, -torch.inf),
+                )
+                row_max = torch.maximum(row_max, logit.max(dim=0).values)
+            softmax_mass = torch.zeros_like(mass)
+        else:
+            softmax_mass = None
+
+        for start in range(0, sender.numel(), chunk_size):
+            stop = min(start + chunk_size, sender.numel())
+            chunk_sender = sender[start:stop]
+            chunk_displacement = displacement[start:stop]
+            chunk_squared_distance = squared_distance[start:stop]
+            chunk_rbf = rbf[start:stop]
+            chunk_relation = (
+                None if relation_id is None else relation_id[start:stop]
+            )
+            score, cutoff = self._stream_sparse_score(
+                sender=chunk_sender,
+                displacement=chunk_displacement,
+                squared_distance=chunk_squared_distance,
+                rbf=chunk_rbf,
+                relation_id=chunk_relation,
+                local_cutoff=local_cutoff,
+                receiver_scalar_query=receiver_scalar_query,
+                scalar_key=scalar_key,
+                receiver_vector_query=receiver_vector_query,
+                vector_key=vector_key,
+                projection_dtype=projection_dtype,
+                dtype=dtype,
+            )
+            raw_weight = cutoff[:, None] * self._positive_gate(score)
+            mass = mass + raw_weight.sum(dim=0)
+            mass_square = mass_square + raw_weight.square().sum(dim=0)
+            if row_max is None:
+                edge_weight = raw_weight
+            else:
+                logit = torch.where(
+                    cutoff[:, None] > 0,
+                    score + cutoff[:, None].log(),
+                    torch.full_like(score, -torch.inf),
+                )
+                finite_max = torch.isfinite(row_max)
+                exponent = torch.where(
+                    finite_max[None, :],
+                    torch.exp(logit - row_max[None, :]),
+                    torch.zeros_like(logit),
+                )
+                if softmax_mass is None:
+                    raise RuntimeError("softmax accumulator is missing")
+                softmax_mass = softmax_mass + exponent.sum(dim=0)
+                edge_weight = exponent * cutoff[:, None]
+            values = self._stream_sparse_values(
+                sender=chunk_sender,
+                displacement=chunk_displacement,
+                squared_distance=chunk_squared_distance,
+                rbf=chunk_rbf,
+                scalar_value=scalar_value,
+                vector_value=vector_value,
+                relative_gate=relative_gate,
+                tensor_gate=tensor_gate,
+                radial_gate=radial_gate,
+                persistent_value=persistent_value,
+                projection_dtype=projection_dtype,
+                dtype=dtype,
+            )
+            (
+                scalar_edge,
+                vector_edge,
+                relative_edge,
+                tensor_edge,
+                radial_edge,
+            ) = values
+            scalar_sum = scalar_sum + (
+                edge_weight.unsqueeze(-1) * scalar_edge
+            ).sum(dim=0)
+            vector_sum = vector_sum + (
+                edge_weight.unsqueeze(-1) * vector_edge
+            ).sum(dim=0)
+            relative_sum = relative_sum + (
+                edge_weight.unsqueeze(-1) * relative_edge
+            ).sum(dim=0)
+            tensor_sum = tensor_sum + (
+                edge_weight.unsqueeze(-1) * tensor_edge
+            ).sum(dim=0)
+            radial_sum = radial_sum + (edge_weight * radial_edge).sum(dim=0)
+
+        if self.normalization == "positive":
+            denominator = 1.0 + mass
+        else:
+            if softmax_mass is None:
+                raise RuntimeError("softmax denominator is missing")
+            denominator = softmax_mass.clamp_min(
+                torch.finfo(dtype).tiny
+            )
+        scalar_sum = scalar_sum / denominator.unsqueeze(-1)
+        vector_sum = vector_sum / denominator.unsqueeze(-1)
+        relative_sum = relative_sum / denominator.unsqueeze(-1)
+        tensor_sum = tensor_sum / denominator.unsqueeze(-1)
+        radial_sum = radial_sum / denominator
+        return (
+            scalar_sum,
+            vector_sum,
+            relative_sum,
+            tensor_sum,
+            radial_sum,
+            mass,
+            mass_square,
+        )
+
+    def _stream_sparse_score(
+        self,
+        *,
+        sender: torch.Tensor,
+        displacement: torch.Tensor,
+        squared_distance: torch.Tensor,
+        rbf: torch.Tensor,
+        relation_id: torch.Tensor | None,
+        local_cutoff: torch.Tensor,
+        receiver_scalar_query: torch.Tensor,
+        scalar_key: torch.Tensor,
+        receiver_vector_query: torch.Tensor,
+        vector_key: torch.Tensor,
+        projection_dtype: torch.dtype,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        direction = displacement.unsqueeze(1)
+        sender_vector = vector_key[sender]
+        angular = (
+            receiver_vector_query.unsqueeze(0) * sender_vector
+        ).sum(dim=-1)
+        receiver_axis = (
+            receiver_vector_query.unsqueeze(0) * direction
+        ).sum(dim=-1)
+        sender_axis = (sender_vector * direction).sum(dim=-1)
+        score = (
+            receiver_scalar_query.unsqueeze(0) * scalar_key[sender]
+            + self.score_bias.to(dtype=dtype)[None, :]
+            + self.radial_key(
+                rbf.to(dtype=projection_dtype)
+            ).to(dtype=dtype)
+            + self.angular_mix.to(dtype=dtype)[None, :] * angular
+            + self.direction_mix.to(dtype=dtype)[None, :, 0]
+            * receiver_axis
+            * sender_axis
+            + self.direction_mix.to(dtype=dtype)[None, :, 1]
+            * (receiver_axis.square() + sender_axis.square())
+        )
+        if self.distance_band_score_bias is not None:
+            physical_squared_distance = squared_distance * local_cutoff.square()
+            band_cutoffs = self._distance_band_cutoffs.to(
+                device=score.device,
+                dtype=dtype,
+            )
+            scaled_square = (
+                physical_squared_distance.unsqueeze(-1)
+                / band_cutoffs.square()
+            )
+            band_gate = torch.where(
+                scaled_square < 1.0,
+                0.5 * (1.0 + torch.cos(torch.pi * scaled_square)),
+                torch.zeros_like(scaled_square),
+            )
+            score = score + torch.einsum(
+                "eb,br->er",
+                band_gate,
+                self.distance_band_score_bias.to(dtype=dtype),
+            )
+        if self.relation_score_bias is None:
+            cutoff = _cosine_of_squared_distance_cutoff(squared_distance)
+        else:
+            if relation_id is None:
+                raise ValueError(
+                    "typed sparse residual requires edge relation IDs"
+                )
+            relation_long = relation_id.to(dtype=torch.long)
+            _require_index_range(
+                "edge relation IDs",
+                relation_long,
+                upper_bound=self.num_edge_relations,
+            )
+            score = score + self.relation_score_bias.to(dtype=dtype)[
+                relation_long
+            ]
+            relation_cutoff = self._relation_cutoffs.to(
+                device=score.device,
+                dtype=dtype,
+            )[relation_long]
+            cutoff = _cosine_of_squared_distance_cutoff(
+                squared_distance
+                * (local_cutoff / relation_cutoff).square()
+            )
+        return score, cutoff
+
+    def _stream_sparse_values(
+        self,
+        *,
+        sender: torch.Tensor,
+        displacement: torch.Tensor,
+        squared_distance: torch.Tensor,
+        rbf: torch.Tensor,
+        scalar_value: torch.Tensor,
+        vector_value: torch.Tensor,
+        relative_gate: torch.Tensor,
+        tensor_gate: torch.Tensor,
+        radial_gate: torch.Tensor,
+        persistent_value: torch.Tensor | None,
+        projection_dtype: torch.dtype,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, ...]:
+        radial_value = 2.0 * torch.sigmoid(
+            self.radial_value(rbf.to(dtype=projection_dtype)).reshape(
+                rbf.shape[0],
+                self.rank,
+                5,
+            )
+        ).to(dtype=dtype)
+        tensor_basis = _symmetric_traceless_features(
+            displacement
+        ).unsqueeze(1)
+        tensor_edge = (
+            tensor_gate[sender].unsqueeze(-1) * tensor_basis
+        )
+        if persistent_value is not None:
+            tensor_edge = tensor_edge + persistent_value[sender]
+        return (
+            radial_value[:, :, 0].unsqueeze(-1) * scalar_value[sender],
+            radial_value[:, :, 1].unsqueeze(-1) * vector_value[sender],
+            radial_value[:, :, 2].unsqueeze(-1)
+            * relative_gate[sender].unsqueeze(-1)
+            * displacement.unsqueeze(1),
+            radial_value[:, :, 3].unsqueeze(-1) * tensor_edge,
+            radial_value[:, :, 4]
+            * radial_gate[sender]
+            * squared_distance.unsqueeze(-1),
+        )
+
+    def _packed_row_sender(
+        self,
+        geometry: _PackedLocalGeometry,
+        *,
+        receiver: int,
+        row_start: int,
+        row_stop: int,
+    ) -> torch.Tensor:
+        if geometry.backend_selection.effective_backend == "ell":
+            if (
+                geometry.packed.ell_sender is None
+                or geometry.packed.ell_mask is None
+            ):
+                raise RuntimeError("ELL backend requires packed ELL metadata")
+            degree = row_stop - row_start
+            return geometry.packed.ell_sender[receiver, :degree]
+        return geometry.packed.sender[row_start:row_stop]
+
+    def _require_persistent_tensor(
+        self,
+        persistent_tensor: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if persistent_tensor is None:
+            raise ValueError(
+                "persistent_tensor is required for sparse residual 2e values"
+            )
+        return persistent_tensor
 
 
 class _GatedEquivariantLocalTransport(nn.Module):
@@ -2880,8 +4051,8 @@ class _LocalPairwiseContent(nn.Module):
         return self.residual_scale.to(dtype=reduction_dtype) * message
 
 
-class _InteractionReadout(nn.Module):
-    """Invariant ligand-pocket pooling with an O(E) parity-aware interface path."""
+class _BipartiteInteractionReadout(nn.Module):
+    """Invariant two-partition pooling with an O(E) parity-aware cross path."""
 
     def __init__(
         self,
@@ -2892,13 +4063,31 @@ class _InteractionReadout(nn.Module):
         cutoff: float,
         eps: float,
         rbf_spacing: str = "squared",
+        geometry_cache_mode: str = "full",
     ) -> None:
         super().__init__()
         width = max(8, min(32, scalars // 4))
         self.num_rbf = num_rbf
         self.cutoff = cutoff
         self.rbf_spacing = rbf_spacing
+        self.geometry_cache_mode = geometry_cache_mode
         self.eps = eps
+        rbf_centers, rbf_widths = _radial_basis_parameters(
+            num_rbf,
+            rbf_spacing,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+        self.register_buffer(
+            "_rbf_centers",
+            rbf_centers,
+            persistent=False,
+        )
+        self.register_buffer(
+            "_rbf_widths",
+            rbf_widths,
+            persistent=False,
+        )
         self.node_norm = nn.LayerNorm(scalars)
         self.entity_projection = nn.Linear(scalars, width, bias=False)
         self.edge_mlp = nn.Sequential(
@@ -2919,7 +4108,7 @@ class _InteractionReadout(nn.Module):
         scalars: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
-        ligand_mask: torch.Tensor,
+        selected_mask: torch.Tensor,
         *,
         num_graphs: int,
         graph_counts: torch.Tensor,
@@ -2927,8 +4116,8 @@ class _InteractionReadout(nn.Module):
         edge_index_is_validated: bool,
         packed_neighbors: PackedNeighborGraph | None = None,
     ) -> torch.Tensor:
-        ligand_counts, pocket_counts = _interaction_role_counts(
-            ligand_mask,
+        selected_counts, context_counts = _bipartite_role_counts(
+            selected_mask,
             batch,
             num_graphs=num_graphs,
         )
@@ -2936,18 +4125,18 @@ class _InteractionReadout(nn.Module):
             dtype=scalars.dtype
         )
         entity_state = self.entity_projection(node_state)
-        ligand_pool = _scatter_mean(
-            entity_state[ligand_mask],
-            batch[ligand_mask],
+        selected_pool = _scatter_mean(
+            entity_state[selected_mask],
+            batch[selected_mask],
             num_graphs,
-            ligand_counts,
+            selected_counts,
         )
-        pocket_mask = ~ligand_mask
-        pocket_pool = _scatter_mean(
-            entity_state[pocket_mask],
-            batch[pocket_mask],
+        context_mask = ~selected_mask
+        context_pool = _scatter_mean(
+            entity_state[context_mask],
+            batch[context_mask],
             num_graphs,
-            pocket_counts,
+            context_counts,
         )
         receiver, sender, displacement, squared_distance, rbf = _local_geometry(
             pos,
@@ -2960,8 +4149,15 @@ class _InteractionReadout(nn.Module):
             edge_index=edge_index,
             packed_neighbors=packed_neighbors,
             edge_index_is_validated=edge_index_is_validated,
+            rbf_centers=self._rbf_centers,
+            rbf_widths=self._rbf_widths,
+            cache_mode=self.geometry_cache_mode,
         )
-        cross = ligand_mask[receiver] & ~ligand_mask[sender] & (receiver != sender)
+        cross = (
+            selected_mask[receiver]
+            & context_mask[sender]
+            & (receiver != sender)
+        )
         receiver = receiver[cross]
         sender = sender[cross]
         displacement = displacement[cross]
@@ -3014,8 +4210,8 @@ class _InteractionReadout(nn.Module):
         parity_features = _parity_even_triple_features(polar_moments)
         context = torch.cat(
             [
-                ligand_pool,
-                pocket_pool,
+                selected_pool,
+                context_pool,
                 cross_pool.to(dtype=scalars.dtype),
                 parity_features.to(dtype=scalars.dtype),
             ],
@@ -3114,7 +4310,9 @@ def _global_moment_messages(
     whitened_rank_gate: bool = False,
     persistent_tensor_value: torch.Tensor | None = None,
     reduction_backend: str = "outer_scatter",
-    feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+    feature_gemm_layout: (
+        PackedGraphLayout | _GraphPaddedLayout | _GraphRaggedLayout | None
+    ) = None,
     feature_gemm_layout_is_resolved: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if whitened_ridge is not None and (
@@ -3717,6 +4915,189 @@ def _local_attention_weights(
     )
 
 
+def _resolve_geometry_cache_mode(mode: str, edge_count: int) -> str:
+    """Resolve deterministic geometry materialization from static edge count."""
+    if not isinstance(mode, str):
+        raise TypeError("geometry_cache_mode must be a string")
+    if mode not in _GEOMETRY_CACHE_MODES:
+        choices = ", ".join(sorted(_GEOMETRY_CACHE_MODES))
+        raise ValueError(f"geometry_cache_mode must be one of: {choices}")
+    if isinstance(edge_count, bool) or not isinstance(edge_count, int):
+        raise TypeError("edge_count must be an integer")
+    if edge_count < 0:
+        raise ValueError("edge_count must be nonnegative")
+    if mode != "auto":
+        return mode
+    if edge_count <= 4096:
+        return "full"
+    if edge_count <= 65_536:
+        return "compact"
+    return "recompute"
+
+
+def _resolve_sparse_backend(
+    config: EquivariantAttentionConfig,
+    *,
+    packed_neighbors: PackedNeighborGraph | None,
+    dtype: torch.dtype,
+    device_type: str,
+    require_gradgrad: bool = False,
+) -> LocalBackendSelection:
+    if (
+        config.sparse_residual_backend
+        in {"segment_csr", "ell", "streamed_csr"}
+        and packed_neighbors is None
+    ):
+        raise ValueError(
+            f"{config.sparse_residual_backend} sparse backend requires "
+            "packed_neighbors"
+        )
+    max_degree = (
+        0
+        if packed_neighbors is None or packed_neighbors.max_degree is None
+        else packed_neighbors.max_degree
+    )
+    has_csr = packed_neighbors is not None
+    has_ell = (
+        packed_neighbors is not None
+        and packed_neighbors.ell_sender is not None
+        and packed_neighbors.ell_mask is not None
+    )
+    return select_local_backend(
+        config.sparse_residual_backend,
+        operation=config.sparse_residual_normalization,
+        max_degree=max_degree,
+        has_csr=has_csr,
+        has_ell=has_ell,
+        require_gradgrad=require_gradgrad,
+        dtype=dtype,
+        device_type=device_type,
+        allow_fallback=(
+            config.sparse_residual_backend
+            in {"auto", "custom", "segment_csr"}
+        ),
+    )
+
+
+def _packed_local_geometry(
+    pos: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    packed_neighbors: PackedNeighborGraph,
+    cutoff: float,
+    rbf_spacing: str,
+    rbf_centers: torch.Tensor,
+    rbf_widths: torch.Tensor,
+    cache_mode: str,
+    backend_selection: LocalBackendSelection,
+    chunk_size: int,
+) -> _PackedLocalGeometry:
+    if not isinstance(packed_neighbors, PackedNeighborGraph):
+        raise TypeError("packed_neighbors must be a PackedNeighborGraph")
+    if packed_neighbors.num_nodes != pos.shape[0]:
+        raise ValueError("packed_neighbors num_nodes must match positions")
+    if packed_neighbors.device != pos.device:
+        raise ValueError(
+            "packed_neighbors and positions must use the same device"
+        )
+    row_spans = packed_neighbors._require_row_spans()
+    graph_isolated = torch.ones((), dtype=torch.bool, device=pos.device)
+    for receiver, (start, stop) in enumerate(row_spans):
+        if start == stop:
+            continue
+        sender = packed_neighbors.sender[start:stop]
+        graph_isolated = graph_isolated & (
+            batch[sender] == batch[receiver]
+        ).all()
+    async_assert = getattr(torch, "_assert_async", None)
+    if pos.device.type == "cuda" and async_assert is not None:
+        async_assert(
+            graph_isolated,
+            "packed_neighbors must not connect different graphs",
+        )
+    elif not bool(graph_isolated):
+        raise ValueError(
+            "packed_neighbors must not connect different graphs"
+        )
+    cutoff_tensor = pos.new_full((), float(cutoff))
+    return _PackedLocalGeometry(
+        packed=packed_neighbors,
+        pos=pos,
+        cutoff=cutoff_tensor,
+        rbf_centers=rbf_centers.to(
+            device=pos.device,
+            dtype=pos.dtype,
+        ),
+        rbf_widths=rbf_widths.to(
+            device=pos.device,
+            dtype=pos.dtype,
+        ),
+        rbf_spacing=rbf_spacing,
+        cache_mode=_resolve_geometry_cache_mode(
+            cache_mode,
+            packed_neighbors.num_edges,
+        ),
+        backend_selection=backend_selection,
+        chunk_size=chunk_size,
+    )
+
+
+def _transient_l3_edge_index(
+    geometry: _LocalGeometry | _PackedLocalGeometry,
+    *,
+    relation_cutoffs: tuple[float, ...] | None,
+) -> torch.Tensor:
+    """Return only candidates admitted by the local geometric domain.
+
+    The transient high-order workspace is a local residual, so a supplied
+    candidate list is not itself an interaction list.  This helper applies
+    the same strict physical cutoff contract before spherical harmonics are
+    evaluated.  Typed relations additionally narrow that domain when their
+    cutoffs are configured.
+    """
+
+    if isinstance(geometry, _LocalGeometry):
+        receiver = geometry.receiver
+        sender = geometry.sender
+        relation_id = geometry.relation_id
+        physical_squared_distance = (
+            geometry.squared_distance * geometry.cutoff.square()
+        )
+        local_cutoff = geometry.cutoff
+    else:
+        receiver = geometry.packed.receiver_index().to(dtype=torch.long)
+        sender = geometry.packed.sender.to(dtype=torch.long)
+        relation_id = geometry.packed.relation_id
+        displacement = geometry.pos.index_select(
+            0, sender
+        ) - geometry.pos.index_select(0, receiver)
+        physical_squared_distance = displacement.square().sum(dim=-1)
+        local_cutoff = geometry.cutoff
+
+    cutoff_square = local_cutoff.square().expand_as(
+        physical_squared_distance
+    )
+    if relation_cutoffs is not None:
+        if relation_id is None:
+            raise ValueError(
+                "transient l=3 typed relations require edge relation IDs"
+            )
+        relation_long = relation_id.to(dtype=torch.long)
+        relation_cutoff = torch.tensor(
+            relation_cutoffs,
+            dtype=physical_squared_distance.dtype,
+            device=physical_squared_distance.device,
+        )
+        _require_index_range(
+            "edge relation IDs",
+            relation_long,
+            upper_bound=relation_cutoff.numel(),
+        )
+        cutoff_square = relation_cutoff[relation_long].square()
+    inside = physical_squared_distance < cutoff_square
+    return torch.stack((receiver[inside], sender[inside]))
+
+
 def _local_geometry(
     pos: torch.Tensor,
     batch: torch.Tensor,
@@ -3727,13 +5108,27 @@ def _local_geometry(
     rbf_spacing: str = "squared",
     graph_counts: torch.Tensor | None = None,
     edge_index: torch.Tensor | None = None,
+    edge_relation_id: torch.Tensor | None = None,
     packed_neighbors: PackedNeighborGraph | None = None,
     edge_index_is_validated: bool = False,
+    rbf_centers: torch.Tensor | None = None,
+    rbf_widths: torch.Tensor | None = None,
+    cache_mode: str = "full",
     build_receiver_csr: bool = False,
+    build_reverse_csr: bool = False,
 ) -> _LocalGeometry:
     if edge_index is not None and packed_neighbors is not None:
         raise ValueError("edge_index and packed_neighbors are mutually exclusive")
+    if edge_relation_id is not None and packed_neighbors is not None:
+        raise ValueError(
+            "edge_relation_id is already stored by packed_neighbors"
+        )
+    if edge_relation_id is not None and edge_index is None:
+        raise ValueError("edge_relation_id requires edge_index")
+    if build_reverse_csr and not build_receiver_csr:
+        raise ValueError("reverse CSR requires receiver CSR")
     packed_reverse_order: torch.Tensor | None = None
+    candidate_relation_id: torch.Tensor | None = None
     if packed_neighbors is not None:
         if packed_neighbors.num_nodes != pos.shape[0]:
             raise ValueError("packed_neighbors num_nodes must match positions")
@@ -3741,14 +5136,20 @@ def _local_geometry(
             raise ValueError(
                 "packed_neighbors and positions must use the same device"
             )
+        if build_reverse_csr and not packed_neighbors.has_reverse:
+            raise ValueError(
+                "requested reverse CSR metadata is absent; call "
+                "build_reverse_csr() before the packed forward"
+            )
         receiver = packed_neighbors.receiver_index().to(dtype=torch.long)
         sender = packed_neighbors.sender.to(dtype=torch.long)
+        candidate_relation_id = packed_neighbors.relation_id
         if receiver.numel() and not torch.equal(
             batch[receiver],
             batch[sender],
         ):
             raise ValueError("packed_neighbors must not connect different graphs")
-        if packed_neighbors.reverse_edge_order is not None:
+        if build_reverse_csr and packed_neighbors.reverse_edge_order is not None:
             packed_reverse_order = packed_neighbors.reverse_edge_order.to(
                 dtype=torch.long
             )
@@ -3769,15 +5170,46 @@ def _local_geometry(
                 num_nodes=pos.shape[0],
                 device=pos.device,
             )
+        if edge_relation_id is not None:
+            if not isinstance(edge_relation_id, torch.Tensor):
+                raise TypeError("edge_relation_id must be a tensor")
+            if edge_relation_id.dtype not in {
+                torch.int8,
+                torch.int16,
+                torch.int32,
+                torch.int64,
+                torch.uint8,
+            }:
+                raise TypeError("edge_relation_id must use an integer dtype")
+            if edge_relation_id.device != pos.device:
+                raise ValueError(
+                    "edge_relation_id and positions must use the same device"
+                )
+            if edge_relation_id.shape != receiver.shape:
+                raise ValueError(
+                    "edge_relation_id must have one value per edge"
+                )
+            candidate_relation_id = edge_relation_id
     candidate_receiver = receiver
     candidate_sender = sender
     cutoff_tensor = pos.new_full((), float(cutoff))
     candidate_displacement = pos[sender] - pos[receiver]
-    candidate_distance = _stable_vector_norm(candidate_displacement).squeeze(-1)
-    inside = candidate_distance < cutoff_tensor
+    candidate_normalized_displacement = (
+        candidate_displacement / cutoff_tensor
+    )
+    candidate_squared_distance = (
+        candidate_normalized_displacement.square().sum(dim=-1)
+    )
+    inside = candidate_squared_distance < 1.0
     receiver = receiver[inside]
     sender = sender[inside]
-    displacement = candidate_displacement[inside] / cutoff_tensor
+    relation_id = (
+        None
+        if candidate_relation_id is None
+        else candidate_relation_id[inside]
+    )
+    displacement = candidate_normalized_displacement[inside]
+    squared_distance = candidate_squared_distance[inside]
     if (
         build_receiver_csr
         and receiver.numel()
@@ -3786,9 +5218,52 @@ def _local_geometry(
         receiver_order = torch.argsort(receiver, stable=True)
         receiver = receiver[receiver_order]
         sender = sender[receiver_order]
+        if relation_id is not None:
+            relation_id = relation_id[receiver_order]
         displacement = displacement[receiver_order]
-    squared_distance = displacement.square().sum(dim=-1)
-    rbf = _radial_basis(squared_distance, num_rbf=num_rbf, spacing=rbf_spacing)
+        squared_distance = squared_distance[receiver_order]
+    effective_cache_mode = _resolve_geometry_cache_mode(
+        cache_mode,
+        receiver.numel(),
+    )
+    if (rbf_centers is None) != (rbf_widths is None):
+        raise ValueError("RBF centers and widths must be provided together")
+    if rbf_centers is None or rbf_widths is None:
+        resolved_rbf_centers, resolved_rbf_widths = (
+            _radial_basis_parameters(
+                num_rbf,
+                rbf_spacing,
+                dtype=squared_distance.dtype,
+                device=squared_distance.device,
+            )
+        )
+    else:
+        if (
+            rbf_centers.shape != (num_rbf,)
+            or rbf_widths.shape != (num_rbf,)
+        ):
+            raise ValueError(
+                "RBF centers and widths must have shape (num_rbf,)"
+            )
+        resolved_rbf_centers = rbf_centers.to(
+            device=squared_distance.device,
+            dtype=squared_distance.dtype,
+        )
+        resolved_rbf_widths = rbf_widths.to(
+            device=squared_distance.device,
+            dtype=squared_distance.dtype,
+        )
+    rbf = (
+        _radial_basis(
+            squared_distance,
+            num_rbf=num_rbf,
+            spacing=rbf_spacing,
+            centers=resolved_rbf_centers,
+            widths=resolved_rbf_widths,
+        )
+        if effective_cache_mode == "full"
+        else None
+    )
     row_ptr = None
     if build_receiver_csr:
         row_ptr = (
@@ -3797,9 +5272,10 @@ def _local_geometry(
             else _receiver_csr_row_ptr(receiver, pos.shape[0])
         )
     reverse_order = None
-    if build_receiver_csr:
+    if build_receiver_csr and build_reverse_csr:
         if packed_reverse_order is None:
-            reverse_order = torch.argsort(sender, stable=True)
+            if packed_neighbors is None:
+                reverse_order = torch.argsort(sender, stable=True)
         else:
             # The packed reverse plan indexes the unfiltered receiver-major
             # edges. Restrict it to cutoff survivors and map those positions
@@ -3830,6 +5306,9 @@ def _local_geometry(
     nonself_squared_distance = squared_distance[nonself]
     nonself_receiver = receiver[nonself]
     nonself_sender = sender[nonself]
+    nonself_relation_id = (
+        None if relation_id is None else relation_id[nonself]
+    )
     nonself_row_ptr = None
     if build_receiver_csr:
         nonself_row_ptr = (
@@ -3864,23 +5343,47 @@ def _local_geometry(
                 pos.shape[0],
             )
         )
+    materialize_base = effective_cache_mode in {"full", "compact"}
+    materialize_derived = effective_cache_mode == "full"
     return _LocalGeometry(
         receiver=receiver,
         sender=sender,
-        displacement=displacement,
-        squared_distance=squared_distance,
-        rbf=rbf,
         nonself_receiver=nonself_receiver,
         nonself_sender=nonself_sender,
-        nonself_displacement=nonself_displacement,
-        nonself_squared_distance=nonself_squared_distance,
-        nonself_rbf=rbf[nonself],
-        nonself_cutoff=_cosine_of_squared_distance_cutoff(
-            nonself_squared_distance
+        pos=pos,
+        cutoff=cutoff_tensor,
+        rbf_centers=resolved_rbf_centers,
+        rbf_widths=resolved_rbf_widths,
+        rbf_spacing=rbf_spacing,
+        cache_mode=effective_cache_mode,
+        _displacement=displacement if materialize_base else None,
+        _squared_distance=(
+            squared_distance if materialize_base else None
         ),
-        nonself_tensor_features=_symmetric_traceless_features(
-            nonself_displacement
+        _rbf=rbf,
+        _nonself_displacement=(
+            nonself_displacement if materialize_base else None
         ),
+        _nonself_squared_distance=(
+            nonself_squared_distance if materialize_base else None
+        ),
+        _nonself_rbf=(
+            rbf[nonself] if rbf is not None else None
+        ),
+        _nonself_cutoff=(
+            _cosine_of_squared_distance_cutoff(
+                nonself_squared_distance
+            )
+            if materialize_derived
+            else None
+        ),
+        _nonself_tensor_features=(
+            _symmetric_traceless_features(nonself_displacement)
+            if materialize_derived
+            else None
+        ),
+        relation_id=relation_id,
+        nonself_relation_id=nonself_relation_id,
         row_ptr=row_ptr,
         reverse_order=reverse_order,
         reverse_row_ptr=reverse_row_ptr,
@@ -3926,11 +5429,45 @@ def _filtered_csr_row_ptr(
     return filtered.to(dtype=row_ptr.dtype)
 
 
+def _radial_basis_parameters(
+    num_rbf: int,
+    spacing: str,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Construct normalized RBF constants once for a model/cache."""
+    if spacing not in _LOCAL_RBF_SPACINGS:
+        choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
+        raise ValueError(f"local_rbf_spacing must be one of: {choices}")
+    if isinstance(num_rbf, bool) or not isinstance(num_rbf, int):
+        raise TypeError("num_rbf must be an integer")
+    if num_rbf <= 0:
+        raise ValueError("num_rbf must be positive")
+    knots = torch.linspace(
+        0.0,
+        1.0,
+        num_rbf,
+        dtype=dtype,
+        device=device,
+    )
+    step = 1.0 / max(1, num_rbf - 1)
+    if spacing == "squared":
+        centers = knots
+        widths = torch.full_like(knots, step)
+    else:
+        centers = knots.square()
+        widths = (knots + step).square() - centers
+    return centers, widths
+
+
 def _radial_basis(
     squared_distance: torch.Tensor,
     *,
     num_rbf: int,
     spacing: str,
+    centers: torch.Tensor | None = None,
+    widths: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Gaussian radial basis on the normalized squared distance.
 
@@ -3943,23 +5480,29 @@ def _radial_basis(
     the coincident-node derivative finite.
     """
 
-    if spacing not in _LOCAL_RBF_SPACINGS:
-        choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
-        raise ValueError(f"local_rbf_spacing must be one of: {choices}")
-    knots = torch.linspace(
-        0.0,
-        1.0,
-        num_rbf,
-        dtype=squared_distance.dtype,
-        device=squared_distance.device,
-    )
-    step = 1.0 / max(1, num_rbf - 1)
-    if spacing == "squared":
-        centers = knots
-        widths: torch.Tensor | float = step
+    if (centers is None) != (widths is None):
+        raise ValueError("RBF centers and widths must be provided together")
+    if centers is None or widths is None:
+        centers, widths = _radial_basis_parameters(
+            num_rbf,
+            spacing,
+            dtype=squared_distance.dtype,
+            device=squared_distance.device,
+        )
     else:
-        centers = knots.square()
-        widths = (knots + step).square() - centers
+        if spacing not in _LOCAL_RBF_SPACINGS:
+            choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
+            raise ValueError(f"local_rbf_spacing must be one of: {choices}")
+        if centers.shape != (num_rbf,) or widths.shape != (num_rbf,):
+            raise ValueError("RBF centers and widths must have shape (num_rbf,)")
+        centers = centers.to(
+            device=squared_distance.device,
+            dtype=squared_distance.dtype,
+        )
+        widths = widths.to(
+            device=squared_distance.device,
+            dtype=squared_distance.dtype,
+        )
     return torch.exp(
         -0.5 * ((squared_distance.unsqueeze(-1) - centers) / widths).square()
     )
@@ -4117,8 +5660,7 @@ def _adaptive_multiscale_spatial_features(
         raise TypeError("gate_logits must be a floating point tensor")
     if gate_logits.device != pos.device:
         raise ValueError("gate_logits and pos must use the same device")
-    if not torch.isfinite(gate_logits).all():
-        raise ValueError("gate_logits must be finite")
+    _require_finite("gate_logits", gate_logits)
 
     base = _quadratic_gaussian_spatial_features(pos, scales)
     profile_floor = torch.finfo(gate_logits.dtype).eps
@@ -4150,7 +5692,9 @@ def _factorized_moment_attention(
     spatial_features: torch.Tensor | None = None,
     spatial_key_features: torch.Tensor | None = None,
     reduction_backend: str = "outer_scatter",
-    feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+    feature_gemm_layout: (
+        PackedGraphLayout | _GraphPaddedLayout | _GraphRaggedLayout | None
+    ) = None,
     feature_gemm_layout_is_resolved: bool = False,
 ) -> torch.Tensor:
     if reduction_backend not in _GLOBAL_REDUCTION_BACKENDS:
@@ -4204,30 +5748,65 @@ def _factorized_moment_attention(
                 "spatial_key_features must match spatial_features shape"
             )
         spatial_key_features = spatial_key_features.to(dtype=reduction_dtype)
-    if reduction_backend == "feature_gemm":
+    if reduction_backend in {"feature_gemm", "auto"}:
         if graph_counts is None:
             graph_counts = torch.bincount(batch, minlength=num_graphs)
-        return _feature_gemm_moment_attention(
-            query_scalar,
-            key_scalar,
-            query_vector,
-            key_vector,
-            kernel_scale,
-            value,
-            batch,
-            num_graphs=num_graphs,
-            graph_counts=graph_counts,
-            balanced=balanced,
-            alignment_scale=alignment_scale,
-            alignment_dot_scale=alignment_dot_scale,
-            kernel_floor=kernel_floor,
-            kernel_floor_mode=kernel_floor_mode,
-            spatial_features=spatial_features,
-            spatial_key_features=spatial_key_features,
-            output_dtype=output_dtype,
-            padded_layout=feature_gemm_layout,
-            padded_layout_is_resolved=feature_gemm_layout_is_resolved,
-        )
+        if reduction_backend == "auto" and not isinstance(
+            feature_gemm_layout,
+            PackedGraphLayout,
+        ):
+            feature_gemm_layout = pack_graph_layout(
+                batch,
+                graph_counts=graph_counts,
+                assume_grouped=False,
+            )
+            feature_gemm_layout_is_resolved = True
+        execution_lane: str | None = None
+        if isinstance(feature_gemm_layout, PackedGraphLayout):
+            feature_width = (
+                query_scalar.shape[-1]
+                + 1
+                + query_vector.shape[-1]
+                + query_vector.shape[-1]
+                * (query_vector.shape[-1] + 1)
+                // 2
+                + (
+                    0
+                    if spatial_features is None
+                    else spatial_features.shape[-1]
+                )
+            )
+            execution_lane = feature_gemm_layout.select_lane(
+                backend=reduction_backend,
+                dtype=reduction_dtype,
+                device=query_scalar.device,
+                num_heads=query_scalar.shape[1],
+                feature_width=feature_width,
+                value_width=value.shape[-1],
+            )
+        if execution_lane != "outer_scatter":
+            return _feature_gemm_moment_attention(
+                query_scalar,
+                key_scalar,
+                query_vector,
+                key_vector,
+                kernel_scale,
+                value,
+                batch,
+                num_graphs=num_graphs,
+                graph_counts=graph_counts,
+                balanced=balanced,
+                alignment_scale=alignment_scale,
+                alignment_dot_scale=alignment_dot_scale,
+                kernel_floor=kernel_floor,
+                kernel_floor_mode=kernel_floor_mode,
+                spatial_features=spatial_features,
+                spatial_key_features=spatial_key_features,
+                output_dtype=output_dtype,
+                padded_layout=feature_gemm_layout,
+                padded_layout_is_resolved=feature_gemm_layout_is_resolved,
+                execution_lane=execution_lane,
+            )
     if balanced:
         row_scale = query_scalar.new_ones(query_scalar.shape[:2])
         key_mass = _structured_key_mass(
@@ -4718,8 +6297,7 @@ def _memory_assignments_and_coupling(
         if router_latent.shape[-1] <= 0 or router_latent.is_complex():
             raise ValueError("router_latent must be a nonempty real-valued tensor")
         invariant_basis = router_latent.to(device=key_scalar.device, dtype=dtype)
-        if not bool(torch.isfinite(invariant_basis).all().item()):
-            raise ValueError("router_latent must contain only finite values")
+        _require_finite("router_latent", invariant_basis)
         basis_index = torch.arange(
             invariant_basis.shape[-1],
             dtype=dtype,
@@ -5201,6 +6779,32 @@ def _vector_outer(value: torch.Tensor) -> torch.Tensor:
     return value.unsqueeze(-1) * value.unsqueeze(-2)
 
 
+@lru_cache(maxsize=None)
+def _strict_upper_pairs(dimension: int) -> tuple[tuple[int, int], ...]:
+    """Return immutable strict-upper index pairs without device tensors."""
+    if (
+        isinstance(dimension, bool)
+        or not isinstance(dimension, int)
+        or dimension <= 0
+    ):
+        raise ValueError("quadratic feature dimension must be positive")
+    return tuple(
+        (left, right)
+        for left in range(dimension)
+        for right in range(left + 1, dimension)
+    )
+
+
+def _strict_upper_products(value: torch.Tensor) -> torch.Tensor:
+    pairs = _strict_upper_pairs(value.shape[-1])
+    if not pairs:
+        return value.new_empty((*value.shape[:-1], 0))
+    return torch.stack(
+        tuple(value[..., left] * value[..., right] for left, right in pairs),
+        dim=-1,
+    )
+
+
 def _symmetric_quadratic_features(
     value: torch.Tensor,
     *,
@@ -5208,15 +6812,11 @@ def _symmetric_quadratic_features(
 ) -> torch.Tensor:
     """Return one side of a compressed factorization of ``(x.y)^2``."""
     dimension = value.shape[-1]
-    upper = torch.triu_indices(
-        dimension,
-        dimension,
-        offset=1,
-        device=value.device,
-    )
-    off_diagonal = (
-        value.index_select(-1, upper[0]) * value.index_select(-1, upper[1])
-    )
+    if dimension == 3:
+        x, y, z = value.unbind(dim=-1)
+        off_diagonal = torch.stack((x * y, x * z, y * z), dim=-1)
+    else:
+        off_diagonal = _strict_upper_products(value)
     if left_factor:
         off_diagonal = 2.0 * off_diagonal
     return torch.cat((value.square(), off_diagonal), dim=-1)
@@ -5233,15 +6833,11 @@ def _isometric_quadratic_features(value: torch.Tensor) -> torch.Tensor:
     kernel but is not norm preserving.
     """
     dimension = value.shape[-1]
-    upper = torch.triu_indices(
-        dimension,
-        dimension,
-        offset=1,
-        device=value.device,
-    )
-    off_diagonal = (
-        value.index_select(-1, upper[0]) * value.index_select(-1, upper[1])
-    )
+    if dimension == 3:
+        x, y, z = value.unbind(dim=-1)
+        off_diagonal = torch.stack((x * y, x * z, y * z), dim=-1)
+    else:
+        off_diagonal = _strict_upper_products(value)
     root_two = torch.full((), 2.0, dtype=value.dtype, device=value.device).sqrt()
     return torch.cat((value.square(), root_two * off_diagonal), dim=-1)
 
@@ -5351,8 +6947,11 @@ def _feature_gemm_moment_attention(
     spatial_features: torch.Tensor | None,
     spatial_key_features: torch.Tensor | None,
     output_dtype: torch.dtype,
-    padded_layout: _GraphPaddedLayout | _GraphRaggedLayout | None,
+    padded_layout: (
+        PackedGraphLayout | _GraphPaddedLayout | _GraphRaggedLayout | None
+    ),
     padded_layout_is_resolved: bool,
+    execution_lane: str | None = None,
 ) -> torch.Tensor:
     """Exact global transport without an ``N x H x F x V`` outer tensor."""
     query_features, key_features = _kernel_feature_pair(
@@ -5379,7 +6978,29 @@ def _feature_gemm_moment_attention(
         if padded_layout_is_resolved
         else _graph_feature_layout(batch, graph_counts, num_graphs)
     )
-    if isinstance(layout, _GraphRaggedLayout):
+    if isinstance(layout, PackedGraphLayout):
+        if execution_lane is None:
+            execution_lane = layout.select_lane(
+                backend="feature_gemm",
+                dtype=query_features.dtype,
+                device=query_features.device,
+                num_heads=query_features.shape[1],
+                feature_width=query_features.shape[-1],
+                value_width=value.shape[-1],
+            )
+        if execution_lane == "outer_scatter":
+            raise RuntimeError(
+                "outer-scatter fallback must be resolved before feature GEMM"
+            )
+        transported = _packed_feature_gemm_transport(
+            query_features,
+            key_features,
+            augmented_value,
+            layout,
+            lane=execution_lane,
+            balanced=balanced,
+        )
+    elif isinstance(layout, _GraphRaggedLayout):
         transported = _feature_gemm_by_graph(
             query_features,
             key_features,
@@ -5418,6 +7039,165 @@ def _feature_gemm_moment_attention(
     numerator = transported[..., :-1]
     denominator = transported[..., -1]
     return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
+
+
+def _packed_feature_gemm_transport(
+    query_features: torch.Tensor,
+    key_features: torch.Tensor,
+    value: torch.Tensor,
+    layout: PackedGraphLayout,
+    *,
+    lane: str,
+    balanced: bool,
+) -> torch.Tensor:
+    """Execute a cached direct/padded/bucketed exact feature GEMM."""
+    layout.validate_batch(layout.batch)
+    if lane == "direct":
+        if layout.num_graphs != 1:
+            raise ValueError("direct feature GEMM requires one graph")
+        mask = torch.ones(
+            (1, layout.num_nodes),
+            dtype=torch.bool,
+            device=query_features.device,
+        )
+        return _feature_bmm_block(
+            query_features.unsqueeze(0),
+            key_features.unsqueeze(0),
+            value.unsqueeze(0),
+            mask,
+            layout,
+            balanced=balanced,
+        ).squeeze(0)
+    if lane == "padded_bmm":
+        if layout.dense_mask is None:
+            raise ValueError("padded feature GEMM requires a dense layout")
+        padded = _feature_bmm_block(
+            layout.gather_dense(query_features),
+            layout.gather_dense(key_features),
+            layout.gather_dense(value),
+            layout.dense_mask,
+            layout,
+            balanced=balanced,
+        )
+        return layout.ungroup_nodes(padded[layout.dense_mask])
+    if lane == "bucket_bmm":
+        grouped_query = layout.group_nodes(query_features)
+        grouped_key = layout.group_nodes(key_features)
+        grouped_value = layout.group_nodes(value)
+        grouped_output = value.new_zeros(value.shape)
+        for bucket in layout.buckets:
+            block = _feature_bmm_block(
+                bucket.gather(grouped_query),
+                bucket.gather(grouped_key),
+                bucket.gather(grouped_value),
+                bucket.mask,
+                layout,
+                balanced=balanced,
+            )
+            grouped_output = grouped_output.index_copy(
+                0,
+                bucket.node_index[bucket.mask].to(dtype=torch.long),
+                block[bucket.mask],
+            )
+        return layout.ungroup_nodes(grouped_output)
+    if lane == "ragged_gemm":
+        grouped_query = layout.group_nodes(query_features)
+        grouped_key = layout.group_nodes(key_features)
+        grouped_value = layout.group_nodes(value)
+        graph_outputs = []
+        for start, count in layout.graph_spans:
+            mask = torch.ones(
+                (1, count),
+                dtype=torch.bool,
+                device=query_features.device,
+            )
+            graph_outputs.append(
+                _feature_bmm_block(
+                    grouped_query.narrow(0, start, count).unsqueeze(0),
+                    grouped_key.narrow(0, start, count).unsqueeze(0),
+                    grouped_value.narrow(0, start, count).unsqueeze(0),
+                    mask,
+                    layout,
+                    balanced=balanced,
+                ).squeeze(0)
+            )
+        return layout.ungroup_nodes(torch.cat(graph_outputs, dim=0))
+    raise ValueError(f"unknown cached feature GEMM lane: {lane}")
+
+
+def _feature_bmm_block(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    mask: torch.Tensor,
+    layout: PackedGraphLayout,
+    *,
+    balanced: bool,
+) -> torch.Tensor:
+    """Two explicit batched matrix multiplies over zero-padded graph blocks."""
+    if query.shape != key.shape or query.ndim != 4:
+        raise ValueError("query and key blocks must share shape (B, M, H, F)")
+    if value.ndim != 4 or value.shape[:3] != query.shape[:3]:
+        raise ValueError("value blocks must share graph/node/head dimensions")
+    if mask.shape != query.shape[:2]:
+        raise ValueError("feature block mask must have shape (B, M)")
+    feature_width = query.shape[-1]
+    value_width = value.shape[-1]
+    padded_feature_width, padded_value_width = layout.padded_widths(
+        feature_width=feature_width,
+        augmented_value_width=value_width,
+        dtype=query.dtype,
+        device=query.device,
+    )
+    if padded_feature_width != feature_width:
+        query = F.pad(query, (0, padded_feature_width - feature_width))
+        key = F.pad(key, (0, padded_feature_width - feature_width))
+    if padded_value_width != value_width:
+        value = F.pad(value, (0, padded_value_width - value_width))
+
+    batch_count, max_nodes, head_count, _ = query.shape
+    query_batched = query.permute(0, 2, 1, 3).reshape(
+        batch_count * head_count,
+        max_nodes,
+        padded_feature_width,
+    )
+    key_batched = key.permute(0, 2, 1, 3).reshape(
+        batch_count * head_count,
+        max_nodes,
+        padded_feature_width,
+    )
+    value_batched = value.permute(0, 2, 1, 3).reshape(
+        batch_count * head_count,
+        max_nodes,
+        padded_value_width,
+    )
+    if balanced:
+        query_sum = query_batched.sum(dim=1)
+        key_mass = (key_batched * query_sum.unsqueeze(1)).sum(dim=-1)
+        valid = (
+            mask.unsqueeze(1)
+            .expand(batch_count, head_count, max_nodes)
+            .reshape(batch_count * head_count, max_nodes)
+        )
+        safe_mass = torch.where(valid, key_mass, torch.ones_like(key_mass))
+        value_batched = (
+            value_batched
+            * safe_mass.reciprocal().mul(valid).unsqueeze(-1)
+        )
+    summary = torch.bmm(
+        key_batched.transpose(1, 2),
+        value_batched,
+    )
+    transported = torch.bmm(query_batched, summary)
+    return (
+        transported.reshape(
+            batch_count,
+            head_count,
+            max_nodes,
+            padded_value_width,
+        )
+        .permute(0, 2, 1, 3)[..., :value_width]
+    )
 
 
 def _feature_gemm_by_graph(
@@ -6011,34 +7791,46 @@ def _readout_metadata(
     return readout_mask, selected_batch, selected_counts
 
 
-def _validate_interaction_roles(
-    ligand_mask: torch.Tensor | None,
+def _validate_bipartite_roles(
+    selected_mask: torch.Tensor | None,
     batch: torch.Tensor,
     *,
     num_graphs: int,
+    compatibility_alias: bool = False,
 ) -> None:
-    if ligand_mask is None:
-        raise ValueError("interaction readout requires a ligand readout_mask")
-    _interaction_role_counts(ligand_mask, batch, num_graphs=num_graphs)
+    if selected_mask is None:
+        label = "interaction" if compatibility_alias else "bipartite"
+        raise ValueError(f"{label} readout requires a readout_mask")
+    _bipartite_role_counts(selected_mask, batch, num_graphs=num_graphs)
 
 
-def _interaction_role_counts(
-    ligand_mask: torch.Tensor,
+def _bipartite_role_counts(
+    selected_mask: torch.Tensor,
     batch: torch.Tensor,
     *,
     num_graphs: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if ligand_mask.dtype != torch.bool or ligand_mask.shape != batch.shape:
-        raise ValueError("interaction readout_mask must be boolean with shape (N,)")
-    if ligand_mask.device != batch.device:
-        raise ValueError("interaction readout_mask and batch must share a device")
-    ligand_counts = torch.bincount(batch[ligand_mask], minlength=num_graphs)
-    pocket_counts = torch.bincount(batch[~ligand_mask], minlength=num_graphs)
-    if bool((ligand_counts == 0).any().item()):
-        raise ValueError("interaction readout requires ligand nodes in every graph")
-    if bool((pocket_counts == 0).any().item()):
-        raise ValueError("interaction readout requires pocket nodes in every graph")
-    return ligand_counts, pocket_counts
+    if selected_mask.dtype != torch.bool or selected_mask.shape != batch.shape:
+        raise ValueError("bipartite readout_mask must be boolean with shape (N,)")
+    if selected_mask.device != batch.device:
+        raise ValueError("bipartite readout_mask and batch must share a device")
+    selected_counts = torch.bincount(
+        batch[selected_mask],
+        minlength=num_graphs,
+    )
+    context_counts = torch.bincount(
+        batch[~selected_mask],
+        minlength=num_graphs,
+    )
+    if bool((selected_counts == 0).any().item()):
+        raise ValueError(
+            "bipartite readout requires selected nodes in every graph"
+        )
+    if bool((context_counts == 0).any().item()):
+        raise ValueError(
+            "bipartite readout requires context nodes in every graph"
+        )
+    return selected_counts, context_counts
 
 
 def _parity_even_triple_features(polar_moments: torch.Tensor) -> torch.Tensor:
@@ -6204,6 +7996,33 @@ def _moment_dtype(*values: torch.Tensor) -> torch.dtype:
     )
 
 
+def _require_finite(name: str, value: torch.Tensor) -> None:
+    """Validate finiteness without a CUDA scalar synchronization."""
+
+    finite = torch.isfinite(value).all()
+    async_assert = getattr(torch, "_assert_async", None)
+    if value.device.type == "cuda" and async_assert is not None:
+        async_assert(finite, f"{name} must be finite")
+        return
+    if not bool(finite):
+        raise ValueError(f"{name} must be finite")
+
+
+def _require_index_range(
+    name: str,
+    value: torch.Tensor,
+    *,
+    upper_bound: int,
+) -> None:
+    valid = ((value >= 0) & (value < upper_bound)).all()
+    async_assert = getattr(torch, "_assert_async", None)
+    if value.device.type == "cuda" and async_assert is not None:
+        async_assert(valid, f"{name} must lie in [0, {upper_bound})")
+        return
+    if not bool(valid):
+        raise ValueError(f"{name} must lie in [0, {upper_bound})")
+
+
 def _validate_equivariant_input_tensor(
     name: str,
     value: torch.Tensor,
@@ -6214,8 +8033,7 @@ def _validate_equivariant_input_tensor(
         raise TypeError(f"{name} must be a floating point tensor")
     if value.device != reference.device:
         raise ValueError(f"{name} and node_feats must be on the same device")
-    if not torch.isfinite(value).all():
-        raise ValueError(f"{name} must be finite")
+    _require_finite(name, value)
 
 
 def _validate_whitened_global_read(config: EquivariantAttentionConfig) -> None:
@@ -6299,6 +8117,108 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.local_residual_rank <= 0:
         raise ValueError("local_residual_rank must be positive")
     if (
+        not isinstance(config.transient_l3_channels, int)
+        or isinstance(config.transient_l3_channels, bool)
+    ):
+        raise TypeError("transient_l3_channels must be an integer")
+    if config.transient_l3_channels <= 0:
+        raise ValueError("transient_l3_channels must be positive")
+    if (
+        not isinstance(config.num_node_roles, int)
+        or isinstance(config.num_node_roles, bool)
+    ):
+        raise TypeError("num_node_roles must be an integer")
+    if config.num_node_roles < 0:
+        raise ValueError("num_node_roles must be nonnegative")
+    if (
+        not isinstance(config.num_edge_relations, int)
+        or isinstance(config.num_edge_relations, bool)
+    ):
+        raise TypeError("num_edge_relations must be an integer")
+    if config.num_edge_relations < 0:
+        raise ValueError("num_edge_relations must be nonnegative")
+    if config.num_edge_relations == 0:
+        if config.relation_cutoffs is not None:
+            raise ValueError(
+                "relation_cutoffs requires positive num_edge_relations"
+            )
+    else:
+        if not config.use_sparse_low_rank_local_residual:
+            raise ValueError(
+                "typed relations require use_sparse_low_rank_local_residual"
+            )
+        if not isinstance(config.relation_cutoffs, tuple):
+            raise TypeError(
+                "relation_cutoffs must be a tuple when relations are enabled"
+            )
+        if len(config.relation_cutoffs) != config.num_edge_relations:
+            raise ValueError(
+                "relation_cutoffs length must equal num_edge_relations"
+            )
+        for relation_cutoff in config.relation_cutoffs:
+            if (
+                isinstance(relation_cutoff, bool)
+                or not isinstance(relation_cutoff, (int, float))
+                or not isfinite(float(relation_cutoff))
+                or not 0.0 < float(relation_cutoff) <= config.local_cutoff
+            ):
+                raise ValueError(
+                    "each relation cutoff must be finite, positive, and no "
+                    "larger than local_cutoff"
+                )
+    if not isinstance(config.distance_band_cutoffs, tuple):
+        raise TypeError("distance_band_cutoffs must be a tuple")
+    previous_band_cutoff = 0.0
+    for band_cutoff in config.distance_band_cutoffs:
+        if (
+            isinstance(band_cutoff, bool)
+            or not isinstance(band_cutoff, (int, float))
+            or not isfinite(float(band_cutoff))
+        ):
+            raise TypeError(
+                "distance-band cutoffs must be finite real numbers"
+            )
+        numeric_band_cutoff = float(band_cutoff)
+        if numeric_band_cutoff <= 0.0:
+            raise ValueError("distance-band cutoffs must be positive")
+        if numeric_band_cutoff <= previous_band_cutoff:
+            raise ValueError(
+                "distance-band cutoffs must be strictly increasing"
+            )
+        if numeric_band_cutoff > config.local_cutoff:
+            raise ValueError(
+                "distance-band cutoffs cannot exceed local_cutoff"
+            )
+        previous_band_cutoff = numeric_band_cutoff
+    if (
+        config.distance_band_cutoffs
+        and not config.use_sparse_low_rank_local_residual
+    ):
+        raise ValueError(
+            "distance bands require use_sparse_low_rank_local_residual"
+        )
+    if (
+        not isinstance(config.sparse_residual_complete_fallback_max_nodes, int)
+        or isinstance(config.sparse_residual_complete_fallback_max_nodes, bool)
+    ):
+        raise TypeError(
+            "sparse_residual_complete_fallback_max_nodes must be an integer"
+        )
+    if config.sparse_residual_complete_fallback_max_nodes <= 0:
+        raise ValueError(
+            "sparse_residual_complete_fallback_max_nodes must be positive"
+        )
+    if (
+        not isinstance(config.sparse_residual_score_limit, (int, float))
+        or isinstance(config.sparse_residual_score_limit, bool)
+    ):
+        raise TypeError("sparse_residual_score_limit must be a real number")
+    if (
+        not isfinite(float(config.sparse_residual_score_limit))
+        or not 0.5 <= float(config.sparse_residual_score_limit) <= 4.0
+    ):
+        raise ValueError("sparse_residual_score_limit must lie in [0.5, 4.0]")
+    if (
         not isinstance(config.angular_feature_rank, int)
         or isinstance(config.angular_feature_rank, bool)
     ):
@@ -6331,6 +8251,7 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "whitened_global_rank_gate",
         "use_global_tensor_value_transport",
         "use_sparse_low_rank_local_residual",
+        "use_transient_l3_workspace",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
@@ -6348,6 +8269,49 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.local_reduction_backend not in _LOCAL_REDUCTION_BACKENDS:
         choices = ", ".join(sorted(_LOCAL_REDUCTION_BACKENDS))
         raise ValueError(f"local_reduction_backend must be one of: {choices}")
+    if not isinstance(config.sparse_residual_backend, str):
+        raise TypeError("sparse_residual_backend must be a string")
+    if config.sparse_residual_backend not in _SPARSE_RESIDUAL_BACKENDS:
+        choices = ", ".join(sorted(_SPARSE_RESIDUAL_BACKENDS))
+        raise ValueError(f"sparse_residual_backend must be one of: {choices}")
+    if (
+        not isinstance(config.sparse_residual_stream_chunk_size, int)
+        or isinstance(config.sparse_residual_stream_chunk_size, bool)
+    ):
+        raise TypeError(
+            "sparse_residual_stream_chunk_size must be an integer"
+        )
+    if config.sparse_residual_stream_chunk_size <= 0:
+        raise ValueError(
+            "sparse_residual_stream_chunk_size must be positive"
+        )
+    if (
+        config.sparse_residual_backend != "materialized"
+        and not config.use_sparse_low_rank_local_residual
+    ):
+        raise ValueError(
+            "sparse_residual_backend requires sparse local residual"
+        )
+    for name, choices in (
+        (
+            "sparse_residual_normalization",
+            _SPARSE_RESIDUAL_NORMALIZATIONS,
+        ),
+        (
+            "sparse_residual_balancing",
+            _SPARSE_RESIDUAL_BALANCING_MODES,
+        ),
+        (
+            "sparse_residual_neighbor_policy",
+            _SPARSE_RESIDUAL_NEIGHBOR_POLICIES,
+        ),
+    ):
+        value = getattr(config, name)
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string")
+        if value not in choices:
+            valid = ", ".join(sorted(choices))
+            raise ValueError(f"{name} must be one of: {valid}")
     use_global_key_balancing = (
         config.use_key_balancing
         if config.use_global_key_balancing is None
@@ -6373,6 +8337,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
     if config.local_rbf_spacing not in _LOCAL_RBF_SPACINGS:
         choices = ", ".join(sorted(_LOCAL_RBF_SPACINGS))
         raise ValueError(f"local_rbf_spacing must be one of: {choices}")
+    if not isinstance(config.geometry_cache_mode, str):
+        raise TypeError("geometry_cache_mode must be a string")
+    if config.geometry_cache_mode not in _GEOMETRY_CACHE_MODES:
+        choices = ", ".join(sorted(_GEOMETRY_CACHE_MODES))
+        raise ValueError(f"geometry_cache_mode must be one of: {choices}")
     if not isinstance(config.readout_mode, str):
         raise TypeError("readout_mode must be a string")
     if config.readout_mode not in _READOUT_MODES:
@@ -6418,6 +8387,32 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                 raise TypeError("local_residual_layers must contain integers")
             if not 0 <= layer_index < config.num_layers:
                 raise ValueError("local_residual_layers contains an invalid index")
+    transient_l3_layers = config.transient_l3_layers
+    if transient_l3_layers is not None:
+        if not isinstance(transient_l3_layers, tuple):
+            raise TypeError("transient_l3_layers must be a tuple or None")
+        if not config.use_transient_l3_workspace:
+            raise ValueError(
+                "transient_l3_layers requires use_transient_l3_workspace"
+            )
+        if not transient_l3_layers:
+            raise ValueError("transient_l3_layers must not be empty")
+        if len(set(transient_l3_layers)) != len(transient_l3_layers):
+            raise ValueError(
+                "transient_l3_layers must not contain duplicates"
+            )
+        for layer_index in transient_l3_layers:
+            if not isinstance(layer_index, int) or isinstance(
+                layer_index,
+                bool,
+            ):
+                raise TypeError(
+                    "transient_l3_layers must contain integers"
+                )
+            if not 0 <= layer_index < config.num_layers:
+                raise ValueError(
+                    "transient_l3_layers contains an invalid index"
+                )
     if config.use_sparse_low_rank_local_residual:
         if any(local_head_counts):
             raise ValueError(
@@ -6428,21 +8423,26 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             raise ValueError(
                 "sparse low-rank local residual requires active global transport"
             )
+        if config.use_local_key_balancing is not None:
+            raise ValueError(
+                "use_local_key_balancing is not defined for the homogeneous "
+                "sparse residual; use sparse_residual_balancing='receiver'"
+            )
     if (
-        config.global_reduction_backend == "feature_gemm"
+        config.global_reduction_backend in {"feature_gemm", "auto"}
         and config.global_transport_mode != "learned"
     ):
         raise ValueError(
-            "feature_gemm global reduction requires learned global transport"
+            "feature_gemm/auto global reduction requires learned global transport"
         )
     if (
-        config.global_reduction_backend == "feature_gemm"
+        config.global_reduction_backend in {"feature_gemm", "auto"}
         and config.use_memory_interaction
         and config.global_memory_count > 1
     ):
         raise ValueError(
-            "feature_gemm global reduction is not registered with interacting "
-            "multi-memory transport"
+            "feature_gemm/auto global reduction is not registered with "
+            "interacting multi-memory transport"
         )
     if (
         config.use_multiscale_spatial_kernel
@@ -6700,6 +8700,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         config.memory_interaction_cutoff,
         positive=True,
     )
+    _float32_control(
+        "transient_l3_residual_scale_init",
+        config.transient_l3_residual_scale_init,
+        nonnegative=True,
+    )
     del eps, residual_scale
     if vector_init >= vector_max:
         raise ValueError(
@@ -6796,8 +8801,11 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         )
     if output.scalars + output.vectors + output.tensors <= 0:
         raise ValueError("output_irreps must include at least one term")
-    if config.readout_mode == "interaction" and output.scalars <= 0:
-        raise ValueError("interaction readout requires scalar output channels")
+    if (
+        config.readout_mode in {"bipartite", "interaction"}
+        and output.scalars <= 0
+    ):
+        raise ValueError("bipartite readout requires scalar output channels")
 
 
 def _float32_control(

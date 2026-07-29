@@ -14,11 +14,13 @@ downstream adapters or evaluation settings, not the ontology of the model.
 Inputs are an order-free set of positions and node features, with optional
 equivariant feature channels and optional sparse edges.
 
-The repository intentionally exposes one implementation,
+The repository intentionally exposes one end-to-end encoder,
 `EquivariantAttention`, with routing, multi-memory (HEMM), and radial-trace
-settings on `EquivariantAttentionConfig`. Earlier dense, rich, and
-backend-dependent model families were removed so mathematical changes can be
-tested against one stable contract.
+settings on `EquivariantAttentionConfig`. Reference tensor-product operators,
+generic heads, and task adapters are composable primitives rather than
+competing encoder families. Earlier dense, rich, and backend-dependent model
+families were removed so mathematical changes can be tested against one stable
+contract.
 
 ## Install and verify
 
@@ -82,7 +84,8 @@ model = EquivariantAttention(
         pairwise_residual_scale_init=0.1,
         # Optional per-local-layer invariant edge filters; default off.
         use_edge_conditioned_local_transport=False,
-        # Core pooling: mean | sum. Interaction is a task-specific extension.
+        # Graph pooling: mean | sum | bipartite.
+        # Legacy "interaction" is an exact compatibility alias for bipartite.
         readout_mode="mean",
     )
 )
@@ -113,6 +116,7 @@ model = EquivariantAttention(
         use_sparse_low_rank_local_residual=True,
         local_residual_rank=4,
         local_residual_layers=(1, 3, 5),
+        sparse_residual_neighbor_policy="require",
         global_reduction_backend="feature_gemm",
         local_reduction_backend="segment_csr",
     )
@@ -127,13 +131,74 @@ out = model(node_feats, pos, batch=batch, packed_neighbors=packed)
 
 The local edge latent has width `R`, transports an `R x D_head` scalar value
 payload plus fixed-coordinate equivariant lanes, does not persist across
-blocks, and never replaces global rank. The GEMM backend evaluates exactly the
+blocks, and never replaces global rank. Its positive normalization is
+`sum(raw * value) / (1 + sum(raw))`, so a singleton edge retains its smooth
+cutoff; an explicit local softmax remains an ablation. Candidate neighbors are
+required by default, preventing accidental complete-graph construction. The
+GEMM backend evaluates exactly the
 same scalar, constant, linear, quadratic, and optional spatial global feature
-kernel while removing the per-node `F x V` outer intermediate. Receiver CSR retains int32
-metadata when safe, supplies reverse rows for local key balancing, and is
-consumed directly when `packed_neighbors` is provided. All three controls
-remain explicit and default-off; the current evidence is mechanical/CPU only,
-not downstream accuracy or CUDA peak memory.
+kernel while removing the per-node `F x V` outer intermediate. Global `auto`
+uses cached graph layout to choose direct, padded/bucketed, ragged, or
+outer-scatter fallback without changing that kernel. Receiver CSR retains int32
+metadata when safe, supplies reverse rows for local key balancing, records
+degree/bucket/skew statistics, optionally carries an ELL view, and is consumed
+directly when `packed_neighbors` is provided. The receiver-streamed CSR/ELL
+implementations are PyTorch correctness references with FP32 accumulation;
+`segment_csr`/custom capability claims fall back truthfully when no live fused
+operator is registered, and excessive ELL padding under `auto` falls back to
+streamed CSR. All three controls remain explicit and default-off; the current
+evidence is mechanical, not downstream accuracy or a fused-kernel claim.
+
+`ArchitectureConfig` is the versioned structured boundary around the flat
+compatibility config. Its `representation`, `global_transport`, `local`, and
+`neighbor` groups serialize with a strict schema; `minimal`, `standard`,
+`chiral`, and `high_order` are frozen presets, while `expert` is the exact
+legacy round-trip mode. `ExecutionMetadata` separately records requested and
+effective global/local/cache/provider choices and every safe fallback. A
+receipt describes what was selected; it is not evidence that the selected
+backend is faster.
+
+`GraphSample` and `GraphBatch` can carry generic integer node roles and edge
+relations, named Boolean masks, an atom/point-to-coarse hierarchy, a cached
+global layout, and a packed sparse graph. The model treats roles and relations
+only as invariant scalar metadata. Generic masked pooling, hierarchy
+pool/broadcast, equivariant vector/coordinate heads, scalar-energy heads,
+conservative forces, and explicitly nonconservative direct-vector heads are
+available without any molecule/protein vocabulary.
+
+Biological vocabularies and scientific task contracts live under
+`equivariant_attention.sbdd`. That package currently supplies deterministic
+feature schemas, immutable data/split contracts, leakage audits, affinity/pose
+heads and losses, affinity/pose/screening metrics, and label-blind adapters
+that emit hierarchy IDs plus role, interface, and generic readout masks.
+`SBDDGraphReceipt` v2 hashes every model-visible annotation after canonical
+node/edge ordering. Exact and censored affinity labels retain their unit and
+direction through the task loss boundary; screening metrics are explicitly
+single-screen unless evaluated separately per campaign. It is not yet a raw
+PDB/mmCIF/RDKit parser, production
+neighbor builder, cluster generator, or end-to-end SBDD training pipeline.
+Existing ATOM3D-LBA/PDBBind code remains an evaluation adapter; overfit there
+is a wiring/capacity check, not affinity-generalization evidence.
+
+The current end-to-end receipt is intentionally only a smoke: one real
+ATOM3D-LBA ID30 train complex runs through roles/masks, four typed relations,
+distance bands, packed streamed CSR, global auto, transient `l=3`, and the
+generic selected/context bipartite readout on CPU and the named RTX PRO 6000.
+The five-update BF16 lane is finite and decreases
+its training loss; its determinant-`-1` O(3) check is hard-gated, and a
+strict-CUDA one-update lane also completes. See
+`artifacts/e2former-complete-followup-20260729/real-lba-*-smoke.json`. No
+validation, generalization, or backend-superiority claim follows from one
+train complex.
+
+A separate representative CUDA resource matrix completed 72/72 rows for six
+architecture arms over `N={128,512}`, `k={4,32}`, and
+uniform/skew/ragged exact-`E=kN` candidate graphs. It reports forward,
+optimizer-inclusive train step, peak allocation, backend dispatch, and
+separate graph-construction cost. The bounded width search did not meet the
+1% parameter target for five non-reference arms and each row has one timed
+repeat, so this is a mechanics receipt rather than a ranking. See
+`artifacts/e2former-complete-followup-20260729/architecture-matrix-cuda-representative.json`.
 
 For the exact three-layer `lgl` route, the separate opt-in
 `use_adaptive_multiscale_spatial_kernel=True` equips only the middle global
@@ -151,12 +216,24 @@ translation, batching, and node-permutation behavior. This opt-in path supports
 only reflection-even `2e`; it is not a general spherical-harmonic or arbitrary
 `l>2` implementation.
 
-The separate `IrrepLayout` and `TensorProductPlan` APIs can parse and plan
-arbitrary nonnegative angular degree/parity layouts at construction. They
-expose dimensions, stable slices, O(3)/SE(3) selection rules, and explicit
-executor binding. This is planning metadata, not an arbitrary-`l` numerical
-backend: `EquivariantAttentionConfig.hidden_irreps/output_irreps` still use the
-optimized Cartesian `0e/1o/2e` executor and reject unsupported channels.
+The separate `IrrepLayout`/`TensorProductPlan` APIs parse arbitrary
+nonnegative angular degree/parity layouts. `ExecutableTensorProductPlan` and
+`ReferenceTensorProduct` additionally provide a learned, serializable real-CG
+reference executor with explicit multiplicities, offsets, ordering,
+normalization, and coefficient dtype/device. Reference same-irrep mixing,
+irrep-wise RMS normalization, scalar gating, real spherical harmonics, and
+Clebsch--Gordan coefficients are available for correctness work. This still
+does not make the optimized model carrier arbitrary-`l`:
+`EquivariantAttentionConfig.hidden_irreps/output_irreps` remain Cartesian
+`0e/1o/2e`.
+
+The opt-in `high_order` structured profile is the one bounded exception in the
+live model. At each selected sparse refresh it forms `1o x Y2 -> 3o`,
+aggregates the `3o` lift and an independent `2e` edge summary at the receiver,
+then evaluates `3o x 2e -> 1o`. The `l=3` activation is discarded before the
+next block and never becomes persistent state or a checkpoint key. Explicit
+neighbors are required, and the current implementation is a PyTorch reference
+path rather than a custom performance kernel.
 
 Setting `use_global_tensor_value_transport=True` additionally transports the
 bounded persistent tensor as a value in every active global head. It reuses the
@@ -320,14 +397,18 @@ comparison was admitted. See the
 [v3 capability comparison](docs/ARCHITECTURE_V3_20260725.md) and
 [exact equations](docs/LAYER_MATH.md#optional-architecture-v3-angular-features).
 
-For protein-ligand affinity experiments, `readout_mode="interaction"` keeps the
-ligand mean prediction as a zero-initialized residual baseline and adds
-ligand, pocket, cross-interface, and parity-even triple-product features. It
-requires a Boolean ligand `readout_mask`; the complement is treated as pocket.
-The head is O(3)-invariant, translation invariant, and permutation consistent,
-but it is an experimental parity-aware readout rather than a parity-complete
-hidden backbone. The current 16-complex train-only diagnostic did not beat the
-mean readout, so the public default remains `"mean"`.
+`readout_mode="bipartite"` is a generic two-partition graph readout. A Boolean
+`readout_mask` marks selected nodes; its complement is context. The
+zero-initialized residual starts exactly at selected-node mean pooling, then
+can learn selected, context, directed cross-edge, and parity-even
+triple-product features. It is O(3)-invariant, translation invariant, and
+permutation consistent, but remains an experimental parity-aware readout
+rather than a parity-complete hidden backbone. An SBDD adapter may map ligand
+atoms to selected nodes and represented protein atoms to context, but the core
+does not know those meanings. Legacy `readout_mode="interaction"` constructs
+the same module with identical state keys and outputs for checkpoint/config
+compatibility only. The frozen 16-complex train-only diagnostic did not beat
+mean pooling, so the public default remains `"mean"`.
 
 For a route with local heads, callers may supply precomputed directed candidate
 edges without adding a neighbor-library dependency:

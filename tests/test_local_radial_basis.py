@@ -21,6 +21,7 @@ from equivariant_attention.moment import (
     EquivariantAttention,
     EquivariantAttentionConfig,
     _radial_basis,
+    _radial_basis_parameters,
 )
 
 NUM_RBF = 16
@@ -147,6 +148,88 @@ def test_single_basis_function_is_spacing_independent() -> None:
 
     assert squared.shape == (17, 1)
     assert torch.equal(squared, distance)
+
+
+@pytest.mark.parametrize("spacing", ["squared", "distance"])
+def test_precomputed_radial_parameters_match_dynamic_reference(
+    spacing: str,
+) -> None:
+    squared_distance = torch.linspace(0.0, 1.0, 37, dtype=torch.float64)
+    centers, widths = _radial_basis_parameters(
+        NUM_RBF,
+        spacing,
+        dtype=torch.float64,
+        device=torch.device("cpu"),
+    )
+
+    expected = _radial_basis(
+        squared_distance,
+        num_rbf=NUM_RBF,
+        spacing=spacing,
+    )
+    actual = _radial_basis(
+        squared_distance,
+        num_rbf=NUM_RBF,
+        spacing=spacing,
+        centers=centers,
+        widths=widths,
+    )
+
+    assert torch.equal(actual, expected)
+
+
+def test_model_forward_reuses_nonpersistent_geometry_constants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _model()
+    scalars, pos, batch = _inputs()
+    state_keys = tuple(model.state_dict())
+
+    assert "_local_rbf_centers" not in state_keys
+    assert "_local_rbf_widths" not in state_keys
+
+    def forbidden(*_args: object, **_kwargs: object) -> torch.Tensor:
+        raise AssertionError("forward must reuse precomputed geometry constants")
+
+    monkeypatch.setattr(torch, "linspace", forbidden)
+    monkeypatch.setattr(torch, "triu_indices", forbidden)
+
+    output = model(scalars, pos, batch=batch)
+
+    assert torch.isfinite(output["graph_scalars"]).all()
+
+
+def test_geometry_constant_buffers_follow_model_dtype_and_device() -> None:
+    model = _model().float()
+
+    assert model._local_rbf_centers.dtype == torch.float32
+    assert model._local_rbf_widths.dtype == torch.float32
+    model = model.double()
+    assert model._local_rbf_centers.dtype == torch.float64
+    assert model._local_rbf_widths.dtype == torch.float64
+    moved = model.to("meta")
+    assert moved._local_rbf_centers.device.type == "meta"
+    assert moved._local_rbf_widths.device.type == "meta"
+
+
+def test_rank_two_global_forward_uses_cached_python_upper_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _model(
+        local_head_counts=(0, 0),
+        use_gated_local_transport=False,
+        angular_feature_rank=2,
+    )
+    scalars, pos, batch = _inputs()
+
+    def forbidden(*_args: object, **_kwargs: object) -> torch.Tensor:
+        raise AssertionError("forward must not allocate triangular index tensors")
+
+    monkeypatch.setattr(torch, "triu_indices", forbidden)
+
+    output = model(scalars, pos, batch=batch)
+
+    assert torch.isfinite(output["graph_scalars"]).all()
 
 
 def test_distance_spacing_peaks_are_uniform_in_physical_radius() -> None:

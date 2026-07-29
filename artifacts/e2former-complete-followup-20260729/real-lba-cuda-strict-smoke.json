@@ -1,0 +1,201 @@
+{
+  "amp_dtype": "none",
+  "architecture": {
+    "config": {
+      "coordinate_updates": false,
+      "eps": 1e-12,
+      "global_transport": {
+        "global_memory_count": 1,
+        "kernel_floor": 1.0,
+        "kernel_floor_mode": "fixed",
+        "linear_kernel_init": 0.05,
+        "linear_kernel_max": 1.0,
+        "memory_assignment_scale": 2.5,
+        "memory_assignment_temperature": 1.0,
+        "memory_interaction_cutoff": 2.5,
+        "reduction_backend": "auto",
+        "transport_mode": "learned",
+        "use_adaptive_multiscale_spatial_kernel": false,
+        "use_alignment_linear_term": true,
+        "use_global_key_balancing": null,
+        "use_global_tensor_value_transport": false,
+        "use_key_balancing": true,
+        "use_memory_interaction": false,
+        "use_multiscale_spatial_kernel": false,
+        "use_radial_trace": false,
+        "use_whitened_global_read": false,
+        "vector_kernel_init": 0.05,
+        "vector_kernel_max": 1.0,
+        "whitened_global_rank_gate": false,
+        "whitened_global_ridge": 0.1
+      },
+      "local": {
+        "cartesian_tensor_product_local_layers": null,
+        "checkpoint_gated_local_mlp": false,
+        "distance_bands": [
+          3.0,
+          6.0
+        ],
+        "geometry_aware_local_layers": null,
+        "learn_local_radial_gate": false,
+        "local_cutoff": 6.0,
+        "local_head_counts": null,
+        "local_rbf_spacing": "squared",
+        "local_residual_rank": 4,
+        "normalize_edge_conditioned_local_by_sqrt_degree": false,
+        "num_rbf": 16,
+        "pairwise_residual_scale_init": 0.1,
+        "reduction_backend": "index_add",
+        "requested_backend": "auto",
+        "residual_layers": [
+          0
+        ],
+        "residual_stride": 1,
+        "sparse_residual_balancing": "receiver",
+        "sparse_residual_normalization": "positive",
+        "sparse_residual_score_limit": 3.0,
+        "sparse_residual_stream_chunk_size": 64,
+        "use_cartesian_tensor_product_local_transport": false,
+        "use_edge_conditioned_local_transport": false,
+        "use_gated_local_transport": false,
+        "use_geometry_aware_local_attention": false,
+        "use_grouped_invariant_normalization": false,
+        "use_local_key_balancing": null,
+        "use_pairwise_local_content": false,
+        "use_se3_axial_tensor_product": false,
+        "use_sparse_low_rank_local_residual": true
+      },
+      "neighbor": {
+        "coordinate_neighbor_policy": "error",
+        "geometry_cache_mode": "auto",
+        "num_edge_relations": 4,
+        "provider_kind": "precomputed",
+        "relation_cutoffs": [
+          6.0,
+          6.0,
+          6.0,
+          6.0
+        ],
+        "sparse_residual_complete_fallback_max_nodes": 256,
+        "sparse_residual_neighbor_policy": "require"
+      },
+      "node_dim": 140,
+      "num_heads": 4,
+      "num_layers": 2,
+      "profile": "high_order",
+      "readout_mode": "bipartite",
+      "representation": {
+        "angular_bandwidth": 2,
+        "hidden_irreps": "32x0e + 6x1o + 2x2e",
+        "input_irreps": "140x0e",
+        "input_tensor_dim": 0,
+        "input_vector_dim": 0,
+        "num_node_roles": 2,
+        "output_irreps": "1x0e",
+        "quartic_kernel_init": 0.01,
+        "quartic_kernel_max": 1.0,
+        "tensor_kernel_init": 0.05,
+        "tensor_kernel_max": 1.0,
+        "tensor_product_instructions": [],
+        "transient_max_degree": 3,
+        "transient_residual_scale_init": 0.05,
+        "transient_workspace_channels": 2,
+        "transient_workspace_layers": [
+          0
+        ],
+        "use_irrep_rms_normalization": true,
+        "use_quartic_kernel": false,
+        "use_static_tensor_carrier": false,
+        "use_tensor_product_kernel": true
+      },
+      "residual_scale_init": 0.1,
+      "scalar_content_mode": "unit",
+      "symmetry_group": "O3"
+    },
+    "schema": "equivariant_attention.architecture",
+    "schema_version": 1
+  },
+  "architecture_sha256": "ac0715a56782e4739f86eeaef6fadf111401b8df164b3764460439927c8d522a",
+  "claim_boundary": "train-only real-data wiring/capacity smoke; not validation, generalization, cold-target, affinity-SOTA, or architecture-superiority evidence",
+  "dataset": "ATOM3D-LBA ID30",
+  "device": "cuda",
+  "edge_count": 9306,
+  "elapsed_seconds": 0.996290284965653,
+  "execution": {
+    "architecture_profile": "high_order",
+    "device": "cuda",
+    "dtype": "float32",
+    "edge_count": 9306,
+    "effective_cache_mode": "compact",
+    "effective_global_lane": "direct",
+    "effective_local_backend": "streamed_csr",
+    "fallbacks": [],
+    "graph_structure": "direct",
+    "local_operation": "positive",
+    "neighbor_policy": "fixed_precomputed",
+    "node_count": 331,
+    "provider": {
+      "complexity": "precomputed",
+      "deterministic_selection": true,
+      "production_ready": true,
+      "provider": "PrecomputedNeighborProvider",
+      "supports_cell_list": false,
+      "supports_hard_learned_topk": false,
+      "supports_pbc": false,
+      "supports_skin": false
+    },
+    "requested_cache_mode": "auto",
+    "requested_global_lane": "auto",
+    "requested_local_backend": "auto",
+    "schema": "equivariant_attention.execution",
+    "schema_version": 1,
+    "symmetry_group": "O3"
+  },
+  "experiment": "generic_3d_high_order_real_lba_wiring_smoke",
+  "final_loss": 34.928096771240234,
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "indices": [
+    0
+  ],
+  "initial_loss": 34.928096771240234,
+  "learning_rate": 0.001,
+  "loss_decreased": false,
+  "losses": [
+    34.928096771240234
+  ],
+  "median_update_ms": 993.1151170167141,
+  "node_count": 331,
+  "o3_invariance_atol": 0.0001,
+  "o3_invariance_max_abs": 0.0,
+  "o3_invariance_passed": true,
+  "o3_test_transform_determinant": -1.0,
+  "parameter_count": 39993,
+  "peak_cuda_allocated_bytes": 93865472,
+  "peak_cuda_reserved_bytes": 117440512,
+  "relation_histogram": [
+    7432,
+    870,
+    514,
+    490
+  ],
+  "reproducibility": {
+    "cublas_workspace_config": ":4096:8",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "deterministic_algorithms": true,
+    "deterministic_warn_only": false,
+    "mode": "strict",
+    "seed": 20260729
+  },
+  "sample_ids": [
+    "atom3d-lba:train:0000000:2538ecf47a1b25d7"
+  ],
+  "schema_version": 1,
+  "split": "train",
+  "test_evaluated": false,
+  "update_samples_ms": [
+    993.1151170167141
+  ],
+  "updates": 1,
+  "validation_evaluated": false
+}
