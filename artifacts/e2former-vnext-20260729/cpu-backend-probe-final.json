@@ -1,0 +1,50 @@
+{
+  "environment": {
+    "device": "cpu",
+    "repeats": 21,
+    "threads": 1,
+    "torch_version": "2.12.1+cu130",
+    "warmup": 5
+  },
+  "global": {
+    "feature_gemm_over_outer_ratio": 0.10482507900100366,
+    "feature_gemm_train_step_seconds": 0.001804978004656732,
+    "forward_max_abs_error": 5.364418029785156e-07,
+    "heads": 4,
+    "nodes": 288,
+    "outer_train_step_seconds": 0.017218952008988708,
+    "spatial_feature_width": 40,
+    "value_width": 37
+  },
+  "hybrid": {
+    "active_sparse_layers": 2,
+    "baseline_saved_tensor_payload_bytes": 15484304,
+    "baseline_state_bytes": 612372,
+    "baseline_train_step_seconds": 0.01588977494975552,
+    "edges": 2048,
+    "gated_lgl_saved_tensor_payload_bytes": 24748228,
+    "gated_lgl_state_bytes": 641468,
+    "gated_lgl_train_step_seconds": 0.01928461401257664,
+    "local_rank": 4,
+    "nodes": 256,
+    "sparse_residual_over_baseline_ratio": 1.4479784044687851,
+    "sparse_residual_over_gated_lgl_ratio": 1.1930781173068932,
+    "sparse_residual_saved_tensor_payload_bytes": 23627596,
+    "sparse_residual_state_bytes": 661852,
+    "sparse_residual_train_step_seconds": 0.02300805097911507,
+    "sparse_saved_payload_over_baseline_ratio": 1.5259062338223275,
+    "sparse_saved_payload_over_gated_lgl_ratio": 0.9547186974356305,
+    "state_bytes_ratio": 1.0808005591372565,
+    "zero_init_forward_max_abs_error": 0.0
+  },
+  "local": {
+    "degree": 32,
+    "edges": 131072,
+    "forward_max_abs_error": 0.0,
+    "index_add_train_step_seconds": 0.001126790011767298,
+    "nodes": 4096,
+    "row_ptr_dtype_bits": 32,
+    "segment_csr_train_step_seconds": 0.0007233999785967171,
+    "segment_over_index_add_ratio": 0.6420007020315264
+  }
+}

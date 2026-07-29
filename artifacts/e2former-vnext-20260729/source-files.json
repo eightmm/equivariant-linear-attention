@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "base_git_sha": "e674278678b0b2e064a7b89560726a857ca3b841",
+  "working_tree": "task-scoped uncommitted implementation layered over preserved pre-existing adaptive-multiscale and persistent-2e work",
+  "files": [
+    {
+      "path": "src/equivariant_attention/moment.py",
+      "sha256": "093db0985da1487bbfbf9fde58fb9197b28efbfcfdb8271e77782f61430c35aa",
+      "role": "global backend, sparse residual, CSR execution, and configuration"
+    },
+    {
+      "path": "src/equivariant_attention/irreps.py",
+      "sha256": "9cdaa3c4a327e8de0775f717e9dd720cc9761237394a216e8fab65b5128049e4",
+      "role": "generic static irrep layout and tensor-product planning"
+    },
+    {
+      "path": "src/equivariant_attention/neighbors.py",
+      "sha256": "19965374d8985d8f836960179c98dde414b3c39814108d0a1af3d792290a0c4e",
+      "role": "packed receiver and reverse CSR graph"
+    },
+    {
+      "path": "src/equivariant_attention/training.py",
+      "sha256": "b4459fd3774ea1d6775be6106f84da1bec8039e8300692561687a71b947a9a8c",
+      "role": "configuration wiring and packed-neighbor forwarding"
+    },
+    {
+      "path": "src/equivariant_attention/benchmarking.py",
+      "sha256": "3b28ecbad71f715708f64c4c4945887dca6dd715d943f033adf41c4a19a4755c",
+      "role": "optional packed graph batch metadata"
+    },
+    {
+      "path": "src/equivariant_attention/inference.py",
+      "sha256": "99bfb0a2f5c8d416162eaf0db0f5962a3d2512650198c0bb293860d906ffde08",
+      "role": "public representation metadata preservation"
+    },
+    {
+      "path": "src/equivariant_attention/__init__.py",
+      "sha256": "3c2f094517530b0e58d1d0de30098ae8ea3b9bc83797c48be4727d3fe06a474c",
+      "role": "public API exports"
+    },
+    {
+      "path": "scripts/probe_vnext_backends.py",
+      "sha256": "3bf26f519bd4fce5f34541854b014bfd161b0f6ad7e8d3c8739c33a8be599071",
+      "role": "bounded CPU mechanics diagnostic"
+    },
+    {
+      "path": "tests/test_sparse_low_rank_residual.py",
+      "sha256": "c76a1eda56b71151e3bbff8322916fb852270764829b227f7098afe4ca05f8ea",
+      "role": "homogeneous residual contracts"
+    },
+    {
+      "path": "tests/test_global_feature_gemm.py",
+      "sha256": "b49c4fb5b51535350f52565ce2b41192d06e85a0fd16fd5d3231b38dafc155a9",
+      "role": "exact backend value and gradient contracts"
+    },
+    {
+      "path": "tests/test_key_balancing_split.py",
+      "sha256": "e686d4185c1eed19a449882344441a2cdaec723546a7ffeb424de77f375d4393",
+      "role": "local/global balancing compatibility"
+    },
+    {
+      "path": "tests/test_packed_neighbors.py",
+      "sha256": "4a66f3b9ed254810a09854d6a697f03a03c59571b0b42b6f80cf535244f1b5b0",
+      "role": "packing, ordering, dtype, value, and gradient contracts"
+    },
+    {
+      "path": "tests/test_irrep_layout.py",
+      "sha256": "95be95a1a4386bb54562f726a1f8750cc9fc49b2f4db106ca8590e947ebc38ff",
+      "role": "static irrep planner and executor boundary"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "c2ae632f243aebef90dab1d6f4d73a84e1405b7b4b4d7f12acdb959d07ee65e2",
+      "role": "locked Python environment"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "bc1cdf5e04f8dbe75495715cc5e5a4d2772315b710015ecaac1d8e097206fcef",
+      "role": "package and test configuration"
+    }
+  ]
+}

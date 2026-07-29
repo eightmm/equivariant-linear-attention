@@ -17,9 +17,18 @@
 | `kernel_floor_mode` | `fixed` | fixed or graph-size-scaled positive kernel baseline |
 | `use_alignment_linear_term` | true | false removes only `beta * (q dot k)` and retains the `beta` constant |
 | `use_key_balancing` | true | exactly one key-balancing cycle when true |
+| `use_local_key_balancing` | `None` | optional local-only override; `None` inherits `use_key_balancing` |
+| `use_global_key_balancing` | `None` | optional global-only override; `None` inherits `use_key_balancing` |
 | `local_head_counts` | `None` | `None` means all-global; otherwise a length-`num_layers` tuple with each entry in `[0, num_heads]` |
 | `global_transport_mode` | `learned` | `learned`, exact graph-mean `uniform`, or attention-residual `none` |
+| `global_reduction_backend` | `outer_scatter` | exact `outer_scatter` compatibility backend or exact explicit-feature `feature_gemm`; GEMM requires learned transport |
+| `local_reduction_backend` | `index_add` | compatibility `index_add` or receiver-CSR `segment_csr` |
+| `use_sparse_low_rank_local_residual` | false | add an edge-state-free separable sparse residual without removing any global head; requires an all-global base route and active global transport |
+| `local_residual_rank` | 4 | positive invariant edge rank for the sparse residual |
+| `local_residual_layers` | `None` | `None` refreshes every block; otherwise a nonempty unique tuple of block indices |
 | `use_multiscale_spatial_kernel` | false | opt-in ten-feature/head spatial kernel; requires all-global learned transport and no memory interaction |
+| `use_adaptive_multiscale_spatial_kernel` | false | opt-in content-adaptive four-scale spatial kernel in the middle global stage of exact three-layer LGL |
+| `use_global_tensor_value_transport` | false | opt-in exact global transport of persistent `2e` values; requires hidden `2e`, an active global mode, and at least one global head |
 | `use_cartesian_tensor_product_local_transport` | false | opt-in native Cartesian `2e x 1o -> 1o`, `2e x 0e -> 2e`, and `1o x 1o -> 2e` local paths; requires gated local transport and persistent `2e` |
 | `use_static_tensor_carrier` | false | compact local-only `2e` carrier; requires hidden `2e` multiplicity equal to `num_heads` |
 | `cartesian_tensor_product_local_layers` | `None` | tuple of local-stage indices; `None` selects every local stage when CTP is enabled |
@@ -48,6 +57,37 @@ broadcasts the exact graph mean of the same moment sufficient statistics.
 `none` bypasses the attention updater in all-global blocks and keeps only the
 pointwise FFN; it does not execute global geometry preprocessing.
 
+The sparse low-rank residual defines the homogeneous hybrid route. Every block
+keeps `num_heads` global heads; the selected residual layers independently add
+an `O(E R D_head)` transported scalar payload plus fixed 3/5-coordinate
+equivariant payloads. At fixed head width this is `O(E R)`. Node projections
+are computed before edge gathering, the edge latent has width
+`local_residual_rank`, aggregation is receiver-normalized, and no edge state
+persists across blocks. Separate
+rank-to-head output maps are zero-initialized inside a forked RNG context, so
+enabled construction preserves all common initialization and initially
+computes the incumbent function. It cannot be combined with nonzero
+`local_head_counts`; legacy LGL remains a separate compatibility/evidence
+route.
+
+`global_reduction_backend="feature_gemm"` is an equation-preserving execution
+choice for ordinary learned global transport. It concatenates the content,
+constant, linear vector, isometric quadratic, and optional spatial feature
+blocks and computes graph-wise `Phi_K^T V` / `Phi_Q S` products. It supports
+one-cycle global key balancing, fixed and unbalanced inverse-graph-size
+baselines, distinct adaptive spatial query/key features, and widened
+persistent-`2e` value payloads. Interacting multi-memory transport remains on
+its existing backend.
+
+`local_reduction_backend="segment_csr"` sorts retained COO edges
+receiver-major once per geometry build, stores int32 offsets when safe, and
+supplies reverse sender rows for generic local key balancing. A supplied
+`PackedNeighborGraph` instead consumes its receiver and optional reverse plan
+directly; cutoff filtering restricts those plans in linear time without
+resorting. Gated, edge-conditioned, pairwise-content, generic local, and
+sparse-residual receiver sums consume the CSR metadata. `packed_neighbors=`
+and `edge_index=` are mutually exclusive.
+
 `use_multiscale_spatial_kernel=True` adds a fixed-rank positive spatial
 dot-product kernel to each global head. The four-head default uses log-spaced
 scales `[0.125, 0.25, 0.5, 1.0]` and ten degree-two Gaussian-Taylor features
@@ -57,6 +97,31 @@ node-pair tensor, or new learned parameter is created. Coordinate-updating
 models recompute the spatial features after every coordinate step. This first
 route is rejected with local heads, uniform/disabled global transport, or
 memory interaction. The option remains off by default.
+
+`use_adaptive_multiscale_spatial_kernel=True` is a separate LGL-only research
+path. The fully global middle layer uses scales `[0.125, 0.25, 0.5, 1.0]` for
+every head. An invariant scalar projection produces separate query/key scale
+logits. With `p=softmax(logits)` and `epsilon=finfo(dtype).eps`,
+`sqrt((p+epsilon)/(1+4*epsilon))` multiplies all ten components at a scale
+before the four blocks are concatenated. The epsilon floor prevents
+softmax-underflow NaNs while preserving unit squared profile mass and logit
+shift invariance. The resulting query/key spatial features retain the existing
+exact segmented factorization and add a nonnegative term at fixed `O(4N)` rank
+overhead; the incumbent kernel floor keeps the full denominator positive. The
+flag requires exact three-layer
+`local_head_counts=(H,0,H)`, learned global transport, and excludes the fixed
+spatial kernel, interacting memory, and whitened global read.
+
+`use_global_tensor_value_transport=True` appends the bounded head-space
+persistent tensor as five additional value coordinates in every active global
+head. The existing factorized numerator and denominator therefore compute
+`sum_j A_ijh W_to H_j^(2e)` without a pair tensor. The generic carrier consumes
+the result through its existing head-to-`2e` gated residual map; the static
+carrier uses its identity head layout and bounded residual directly. It adds no
+parameter or checkpoint key and supports learned and uniform global transport.
+The option is rejected without hidden `2e`, with
+`global_transport_mode="none"`, or on an all-local route. It remains off by
+default.
 
 `inverse_graph_size` keeps the compatibility-oriented option name but scales
 the full shifted positive global baseline `(c + beta + delta*beta*t)` by
@@ -79,12 +144,17 @@ strictly positive denominator contract. This does not apply to the scale-first
 local cutoff and memory geometry controls, whose subnormal behavior has
 separate finite-value and gradient tests.
 
-The static CTP fields do not make the parser arbitrary-irrep capable. The
-current backend accepts scalar `0e`, polar-vector `1o`, and reflection-even
-symmetric-traceless `2e` only. Parity-odd irreps and `l>2` remain rejected.
+The generic `IrrepLayout`/`TensorProductPlan` planner accepts arbitrary
+nonnegative `l` and `e/o` labels, canonicalizes multiplicities/slices, and
+applies O(3)/SE(3) selection rules at construction. This does not widen the
+numerical model backend: `CartesianIrreps` still accepts only scalar `0e`,
+polar-vector `1o`, and reflection-even symmetric-traceless `2e`; parity-odd
+model channels and `l>2` execution remain rejected.
 `use_static_tensor_carrier=True` is an execution specialization for
 `C2 == num_heads`; it carries the compact tensor state unchanged through
-global-only stages and updates it in local stages.
+global-only stages and updates it in local stages by default. Enabling global
+tensor value transport additionally lets an active global stage update this
+static carrier through the same five-coordinate factorized read.
 
 The geometry-aware fields are also statically compiled. `O3` retains
 reflection covariance. `SE3` permits the axial `l=1` component of

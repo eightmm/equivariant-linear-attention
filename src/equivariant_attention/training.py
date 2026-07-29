@@ -66,6 +66,15 @@ def build_regression_model(
     use_whitened_global_read: bool = False,
     whitened_global_ridge: float = 0.1,
     whitened_global_rank_gate: bool = False,
+    use_adaptive_multiscale_spatial_kernel: bool = False,
+    use_global_tensor_value_transport: bool = False,
+    use_local_key_balancing: bool | None = None,
+    use_global_key_balancing: bool | None = None,
+    global_reduction_backend: str = "outer_scatter",
+    local_reduction_backend: str = "index_add",
+    use_sparse_low_rank_local_residual: bool = False,
+    local_residual_rank: int = 4,
+    local_residual_layers: tuple[int, ...] | None = None,
 ) -> nn.Module:
     if (
         isinstance(hidden_tensor_dim, bool)
@@ -139,6 +148,21 @@ def build_regression_model(
             coordinate_updates=coordinate_updates,
             coordinate_neighbor_policy=coordinate_neighbor_policy,
             use_multiscale_spatial_kernel=use_multiscale_spatial_kernel,
+            use_adaptive_multiscale_spatial_kernel=(
+                use_adaptive_multiscale_spatial_kernel
+            ),
+            use_global_tensor_value_transport=(
+                use_global_tensor_value_transport
+            ),
+            use_local_key_balancing=use_local_key_balancing,
+            use_global_key_balancing=use_global_key_balancing,
+            global_reduction_backend=global_reduction_backend,
+            local_reduction_backend=local_reduction_backend,
+            use_sparse_low_rank_local_residual=(
+                use_sparse_low_rank_local_residual
+            ),
+            local_residual_rank=local_residual_rank,
+            local_residual_layers=local_residual_layers,
         )
     )
     _zero_init_linear(model.scalar_out)
@@ -149,7 +173,7 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
     readout_kwargs = (
         {} if batch.readout_mask is None else {"readout_mask": batch.readout_mask}
     )
-    if batch.edge_index is None:
+    if batch.edge_index is None and batch.packed_neighbors is None:
         out = model(
             batch.node_feats,
             batch.pos,
@@ -157,12 +181,18 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
             **readout_kwargs,
         )
     else:
+        sparse_kwargs = {
+            "edge_index_is_validated": batch.edge_index_is_validated,
+        }
+        if batch.edge_index is not None:
+            sparse_kwargs["edge_index"] = batch.edge_index
+        if batch.packed_neighbors is not None:
+            sparse_kwargs["packed_neighbors"] = batch.packed_neighbors
         out = model(
             batch.node_feats,
             batch.pos,
             batch=batch.batch,
-            edge_index=batch.edge_index,
-            edge_index_is_validated=batch.edge_index_is_validated,
+            **sparse_kwargs,
             **readout_kwargs,
         )
     return out["graph_scalars"].reshape(batch.target.shape[0], -1)

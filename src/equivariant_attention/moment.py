@@ -12,17 +12,21 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
-from .irreps import CartesianIrreps
+from .irreps import CartesianIrreps, IrrepLayout, TensorProductPlan
+from .neighbors import PackedNeighborGraph
 
 
 _MEMORY_ROUTER_DIM = 8
 _MEMORY_ROUTER_LOGIT_SCALE = 4.0
 _GLOBAL_TRANSPORT_MODES = frozenset({"learned", "uniform", "none"})
+_GLOBAL_REDUCTION_BACKENDS = frozenset({"outer_scatter", "feature_gemm"})
+_LOCAL_REDUCTION_BACKENDS = frozenset({"index_add", "segment_csr"})
 _SCALAR_CONTENT_MODES = frozenset({"bounded", "unit"})
 _COORDINATE_NEIGHBOR_POLICIES = frozenset({"error", "fixed", "rebuild"})
 _LOCAL_RBF_SPACINGS = frozenset({"squared", "distance"})
 _READOUT_MODES = frozenset({"interaction", "mean", "sum"})
 _SYMMETRY_GROUPS = frozenset({"O3", "SE3"})
+_ADAPTIVE_SPATIAL_SCALES = (0.125, 0.25, 0.5, 1.0)
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,12 @@ class _LocalGeometry:
     nonself_rbf: torch.Tensor
     nonself_cutoff: torch.Tensor
     nonself_tensor_features: torch.Tensor
+    row_ptr: torch.Tensor | None = None
+    reverse_order: torch.Tensor | None = None
+    reverse_row_ptr: torch.Tensor | None = None
+    nonself_row_ptr: torch.Tensor | None = None
+    nonself_reverse_order: torch.Tensor | None = None
+    nonself_reverse_row_ptr: torch.Tensor | None = None
 
     def _base(self) -> tuple[torch.Tensor, ...]:
         return (
@@ -209,6 +219,15 @@ class EquivariantAttentionConfig:
     use_whitened_global_read: bool = False
     whitened_global_ridge: float = 0.1
     whitened_global_rank_gate: bool = False
+    use_adaptive_multiscale_spatial_kernel: bool = False
+    use_global_tensor_value_transport: bool = False
+    use_local_key_balancing: bool | None = None
+    use_global_key_balancing: bool | None = None
+    global_reduction_backend: str = "outer_scatter"
+    local_reduction_backend: str = "index_add"
+    use_sparse_low_rank_local_residual: bool = False
+    local_residual_rank: int = 4
+    local_residual_layers: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +243,28 @@ _CARTESIAN_TENSOR_PRODUCT_LOCAL_PATHS = (
     _CartesianTensorProductPath("tensor_passthrough", "2e", "0e", "2e"),
     _CartesianTensorProductPath("vector_direction", "1o", "1o", "2e"),
 )
+
+_CARTESIAN_TENSOR_PRODUCT_EXECUTORS = {
+    ("1o", "0e", "1o"): "vector_passthrough",
+    ("1o", "1o", "2e"): "vector_direction",
+    ("2e", "0e", "2e"): "tensor_passthrough",
+    ("2e", "1o", "1o"): "tensor_direction",
+}
+
+
+def _cartesian_tensor_product_plan(
+    symmetry_group: str,
+) -> TensorProductPlan:
+    if symmetry_group not in _SYMMETRY_GROUPS:
+        raise ValueError("unsupported symmetry group for Cartesian plan")
+    # These polar/even executors form an O(3)-valid subset even when the
+    # enclosing model chooses the less restrictive SE(3) contract.
+    return TensorProductPlan.compile(
+        "1x1o + 1x2e",
+        "1x0e + 1x1o",
+        output="1x1o + 1x2e",
+        symmetry_group="O3",
+    ).bind_executors(_CARTESIAN_TENSOR_PRODUCT_EXECUTORS)
 
 
 class EquivariantAttention(nn.Module):
@@ -246,7 +287,36 @@ class EquivariantAttention(nn.Module):
         self.symmetry = config.symmetry_group
         self.hidden_irreps = CartesianIrreps.parse(config.hidden_irreps)
         self.output_irreps = CartesianIrreps.parse(config.output_irreps)
+        input_terms = [f"{config.node_dim}x0e"]
+        if config.input_vector_dim:
+            input_terms.append(f"{config.input_vector_dim}x1o")
+        if config.input_tensor_dim:
+            input_terms.append(f"{config.input_tensor_dim}x2e")
+        self.input_irreps = IrrepLayout.parse(" + ".join(input_terms))
+        self.hidden_irrep_layout = IrrepLayout.parse(str(self.hidden_irreps))
+        self.workspace_irreps = IrrepLayout.parse(f"{config.num_heads}x2e")
+        self.output_irrep_layout = IrrepLayout.parse(str(self.output_irreps))
+        self.tensor_product_plan = (
+            _cartesian_tensor_product_plan(config.symmetry_group)
+            if config.use_cartesian_tensor_product_local_transport
+            else None
+        )
         local_head_counts = config.local_head_counts or (0,) * config.num_layers
+        use_local_key_balancing = (
+            config.use_key_balancing
+            if config.use_local_key_balancing is None
+            else config.use_local_key_balancing
+        )
+        use_global_key_balancing = (
+            config.use_key_balancing
+            if config.use_global_key_balancing is None
+            else config.use_global_key_balancing
+        )
+        local_residual_layers = (
+            tuple(range(config.num_layers))
+            if config.local_residual_layers is None
+            else config.local_residual_layers
+        )
         tensor_product_local_layers = (
             tuple(
                 layer_index
@@ -324,10 +394,17 @@ class EquivariantAttention(nn.Module):
                     kernel_floor_mode=config.kernel_floor_mode,
                     use_alignment_linear_term=config.use_alignment_linear_term,
                     use_key_balancing=config.use_key_balancing,
+                    use_local_key_balancing=use_local_key_balancing,
+                    use_global_key_balancing=use_global_key_balancing,
                     local_head_count=local_head_counts[layer_index],
                     global_transport_mode=config.global_transport_mode,
+                    global_reduction_backend=config.global_reduction_backend,
                     use_multiscale_spatial_kernel=(
                         config.use_multiscale_spatial_kernel
+                    ),
+                    use_adaptive_multiscale_spatial_kernel=(
+                        config.use_adaptive_multiscale_spatial_kernel
+                        and layer_index == 1
                     ),
                     local_cutoff=config.local_cutoff,
                     num_rbf=config.num_rbf,
@@ -380,6 +457,14 @@ class EquivariantAttention(nn.Module):
                     ),
                     whitened_global_ridge=config.whitened_global_ridge,
                     whitened_global_rank_gate=config.whitened_global_rank_gate,
+                    use_global_tensor_value_transport=(
+                        config.use_global_tensor_value_transport
+                    ),
+                    use_sparse_low_rank_local_residual=(
+                        config.use_sparse_low_rank_local_residual
+                        and layer_index in local_residual_layers
+                    ),
+                    local_residual_rank=config.local_residual_rank,
                     residual_scale_init=layer_scale,
                     eps=config.eps,
                 )
@@ -440,6 +525,7 @@ class EquivariantAttention(nn.Module):
         batch: torch.Tensor | None = None,
         *,
         edge_index: torch.Tensor | None = None,
+        packed_neighbors: PackedNeighborGraph | None = None,
         edge_index_is_validated: bool = False,
         readout_mask: torch.Tensor | None = None,
         node_vectors: torch.Tensor | None = None,
@@ -447,17 +533,42 @@ class EquivariantAttention(nn.Module):
     ) -> dict[str, torch.Tensor]:
         if not isinstance(edge_index_is_validated, bool):
             raise TypeError("edge_index_is_validated must be boolean")
-        if edge_index is None and edge_index_is_validated:
-            raise ValueError("validated edge mode requires edge_index")
+        if packed_neighbors is not None and not isinstance(
+            packed_neighbors, PackedNeighborGraph
+        ):
+            raise TypeError("packed_neighbors must be a PackedNeighborGraph")
+        if edge_index is not None and packed_neighbors is not None:
+            raise ValueError("edge_index and packed_neighbors are mutually exclusive")
+        if edge_index is None and packed_neighbors is None and edge_index_is_validated:
+            raise ValueError(
+                "validated edge mode requires edge_index or packed_neighbors"
+            )
         node_feats, pos, batch, num_graphs, graph_counts = self._check_inputs(
             node_feats,
             pos,
             batch,
         )
+        if packed_neighbors is not None:
+            if packed_neighbors.num_nodes != node_feats.shape[0]:
+                raise ValueError(
+                    "packed_neighbors num_nodes must match model inputs"
+                )
+            if packed_neighbors.device != node_feats.device:
+                raise ValueError(
+                    "packed_neighbors and model inputs must use the same device"
+                )
         node_vectors, node_tensors = self._check_equivariant_inputs(
             node_feats,
             node_vectors,
             node_tensors,
+        )
+        feature_gemm_layout_is_resolved = (
+            self.config.global_reduction_backend == "feature_gemm"
+        )
+        feature_gemm_layout = (
+            _graph_feature_layout(batch, graph_counts, num_graphs)
+            if feature_gemm_layout_is_resolved
+            else None
         )
         pool_mask, pool_batch, pool_counts = _readout_metadata(
             readout_mask,
@@ -496,13 +607,22 @@ class EquivariantAttention(nn.Module):
         transient_tensor = pos.new_zeros((pos.shape[0], self.config.num_heads, 5))
         local_geometry = None
         has_local_heads = any(layer.local_head_count for layer in self.layers)
-        if edge_index is not None and not (
-            has_local_heads or self.interaction_readout is not None
+        has_sparse_local_residual = any(
+            layer.sparse_low_rank_local_residual is not None for layer in self.layers
+        )
+        needs_layer_local_geometry = has_local_heads or has_sparse_local_residual
+        has_external_neighbors = edge_index is not None or packed_neighbors is not None
+        if has_external_neighbors and not (
+            needs_layer_local_geometry or self.interaction_readout is not None
         ):
-            raise ValueError("edge_index requires local heads or interaction readout")
+            raise ValueError(
+                "edge_index or packed_neighbors requires local heads/local "
+                "transport, sparse local residual, or interaction readout"
+            )
         resolved_edge_index = edge_index
+        resolved_packed_neighbors = packed_neighbors
         resolved_edge_index_is_validated = edge_index_is_validated
-        if self.config.coordinate_updates and edge_index is not None:
+        if self.config.coordinate_updates and has_external_neighbors:
             if self.config.coordinate_neighbor_policy == "error":
                 raise ValueError(
                     "coordinate_updates with external sparse candidates requires "
@@ -510,8 +630,9 @@ class EquivariantAttention(nn.Module):
                 )
             if self.config.coordinate_neighbor_policy == "rebuild":
                 resolved_edge_index = None
+                resolved_packed_neighbors = None
                 resolved_edge_index_is_validated = False
-        if has_local_heads and not self.config.coordinate_updates:
+        if needs_layer_local_geometry and not self.config.coordinate_updates:
             local_geometry = _local_geometry(
                 pos,
                 batch,
@@ -521,7 +642,11 @@ class EquivariantAttention(nn.Module):
                 rbf_spacing=self.config.local_rbf_spacing,
                 graph_counts=graph_counts,
                 edge_index=resolved_edge_index,
+                packed_neighbors=resolved_packed_neighbors,
                 edge_index_is_validated=resolved_edge_index_is_validated,
+                build_receiver_csr=(
+                    self.config.local_reduction_backend == "segment_csr"
+                ),
             )
         normalized_pos: torch.Tensor | None = None
         global_scalar_input: torch.Tensor | None = None
@@ -538,9 +663,16 @@ class EquivariantAttention(nn.Module):
                         rbf_spacing=self.config.local_rbf_spacing,
                         graph_counts=graph_counts,
                         edge_index=resolved_edge_index,
+                        packed_neighbors=resolved_packed_neighbors,
                         edge_index_is_validated=(resolved_edge_index_is_validated),
+                        build_receiver_csr=(
+                            self.config.local_reduction_backend == "segment_csr"
+                        ),
                     )
-                    if layer.local_head_count
+                    if (
+                        layer.local_head_count
+                        or layer.sparse_low_rank_local_residual is not None
+                    )
                     else None
                 )
                 normalized_pos = None
@@ -601,9 +733,19 @@ class EquivariantAttention(nn.Module):
                 ) = layer(
                     *layer_args,
                     persistent_tensor=persistent_tensor,
+                    feature_gemm_layout=feature_gemm_layout,
+                    feature_gemm_layout_is_resolved=(
+                        feature_gemm_layout_is_resolved
+                    ),
                 )
             else:
-                scalars, vectors, transient_tensor = layer(*layer_args)
+                scalars, vectors, transient_tensor = layer(
+                    *layer_args,
+                    feature_gemm_layout=feature_gemm_layout,
+                    feature_gemm_layout_is_resolved=(
+                        feature_gemm_layout_is_resolved
+                    ),
+                )
             if layer_index < len(self.coordinate_updaters):
                 pos = pos + self.coordinate_updaters[layer_index](
                     scalars,
@@ -643,6 +785,7 @@ class EquivariantAttention(nn.Module):
                 num_graphs=num_graphs,
                 graph_counts=graph_counts,
                 edge_index=resolved_edge_index,
+                packed_neighbors=resolved_packed_neighbors,
                 edge_index_is_validated=resolved_edge_index_is_validated,
             ).to(dtype=graph_scalars.dtype)
         output = {
@@ -877,9 +1020,13 @@ class _EquivariantMomentLayer(nn.Module):
         kernel_floor_mode: str,
         use_alignment_linear_term: bool,
         use_key_balancing: bool,
+        use_local_key_balancing: bool,
+        use_global_key_balancing: bool,
         local_head_count: int,
         global_transport_mode: str,
+        global_reduction_backend: str,
         use_multiscale_spatial_kernel: bool,
+        use_adaptive_multiscale_spatial_kernel: bool,
         local_cutoff: float,
         num_rbf: int,
         local_rbf_spacing: str,
@@ -913,6 +1060,9 @@ class _EquivariantMomentLayer(nn.Module):
         use_whitened_global_read: bool = False,
         whitened_global_ridge: float = 0.1,
         whitened_global_rank_gate: bool = False,
+        use_global_tensor_value_transport: bool = False,
+        use_sparse_low_rank_local_residual: bool = False,
+        local_residual_rank: int = 4,
     ) -> None:
         super().__init__()
         self.scalars = scalars
@@ -926,12 +1076,20 @@ class _EquivariantMomentLayer(nn.Module):
         self.kernel_floor = kernel_floor
         self.kernel_floor_mode = kernel_floor_mode
         self.use_alignment_linear_term = use_alignment_linear_term
-        self.use_key_balancing = use_key_balancing
+        # Keep the legacy diagnostic attribute as a global alias. Explicit
+        # local/global controls inherit ``use_key_balancing`` at model build.
+        self.use_key_balancing = use_global_key_balancing
+        self.use_local_key_balancing = use_local_key_balancing
+        self.use_global_key_balancing = use_global_key_balancing
         self.local_head_count = local_head_count
         self.global_head_count = num_heads - local_head_count
         self.global_transport_mode = global_transport_mode
+        self.global_reduction_backend = global_reduction_backend
         self.has_active_global_transport = (
             self.global_head_count > 0 and global_transport_mode != "none"
+        )
+        self.use_global_tensor_value_transport = (
+            use_global_tensor_value_transport
         )
         spatial_scales = (
             torch.logspace(-3.0, 0.0, num_heads, base=2.0)
@@ -943,6 +1101,26 @@ class _EquivariantMomentLayer(nn.Module):
             spatial_scales,
             persistent=False,
         )
+        adaptive_spatial_scales = (
+            torch.tensor(_ADAPTIVE_SPATIAL_SCALES)
+            if use_adaptive_multiscale_spatial_kernel
+            else None
+        )
+        self.register_buffer(
+            "_adaptive_spatial_scales",
+            adaptive_spatial_scales,
+            persistent=False,
+        )
+        self.adaptive_spatial_gate: nn.Linear | None = None
+        if use_adaptive_multiscale_spatial_kernel:
+            scale_count = len(_ADAPTIVE_SPATIAL_SCALES)
+            with torch.random.fork_rng(devices=[]):
+                self.adaptive_spatial_gate = nn.Linear(
+                    scalars,
+                    2 * num_heads * scale_count,
+                )
+            nn.init.zeros_(self.adaptive_spatial_gate.weight)
+            nn.init.zeros_(self.adaptive_spatial_gate.bias)
         self.local_cutoff = local_cutoff
         self.num_rbf = num_rbf
         self.local_rbf_spacing = local_rbf_spacing
@@ -996,6 +1174,22 @@ class _EquivariantMomentLayer(nn.Module):
                     ),
                     use_se3_axial_tensor_product=use_se3_axial_tensor_product,
                     residual_scale_init=residual_scale_init,
+                )
+        self.sparse_low_rank_local_residual = None
+        if use_sparse_low_rank_local_residual:
+            # Candidate-only modules must not shift incumbent initialization.
+            with torch.random.fork_rng(devices=[]):
+                self.sparse_low_rank_local_residual = (
+                    _SparseLowRankLocalResidual(
+                        scalars=scalars,
+                        vectors=vectors,
+                        tensors=tensors,
+                        num_heads=num_heads,
+                        rank=local_residual_rank,
+                        num_rbf=num_rbf,
+                        residual_scale_init=residual_scale_init,
+                        eps=eps,
+                    )
                 )
 
         self.norm = nn.LayerNorm(scalars)
@@ -1168,6 +1362,8 @@ class _EquivariantMomentLayer(nn.Module):
         local_pairwise_content: _LocalPairwiseContent | None = None,
         *,
         persistent_tensor: torch.Tensor | None = None,
+        feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+        feature_gemm_layout_is_resolved: bool = False,
     ) -> tuple[torch.Tensor, ...]:
         if self.tensors:
             if persistent_tensor is None:
@@ -1199,8 +1395,13 @@ class _EquivariantMomentLayer(nn.Module):
             self._normalize_non_scalars(vectors, persistent_tensor)
         )
         bounded_vectors = _bounded_irrep(normalized_vectors, self.eps)
-        static_carrier_active = (
-            self.use_static_tensor_carrier and self.local_head_count > 0
+        static_carrier_active = self.use_static_tensor_carrier and (
+            self.local_head_count > 0
+            or self.sparse_low_rank_local_residual is not None
+            or (
+                self.use_global_tensor_value_transport
+                and self.has_active_global_transport
+            )
         )
         bounded_persistent_tensor = (
             _bounded_st_tensor(normalized_persistent_tensor)
@@ -1378,7 +1579,7 @@ class _EquivariantMomentLayer(nn.Module):
                             raw_pos,
                             batch,
                             num_graphs=num_graphs,
-                            balanced=self.use_key_balancing,
+                            balanced=self.use_local_key_balancing,
                             alignment_scale=alignment_scale[local],
                             alignment_dot_scale=alignment_dot_scale[local],
                             kernel_floor=self.kernel_floor,
@@ -1403,6 +1604,7 @@ class _EquivariantMomentLayer(nn.Module):
                         radial_trace_gate[:, local],
                         use_radial_trace=self.use_radial_trace,
                         num_nodes=n_nodes,
+                        local_geometry=local_geometry,
                     )
                 if local_pairwise_content is not None:
                     if local_geometry is None:
@@ -1443,6 +1645,31 @@ class _EquivariantMomentLayer(nn.Module):
                         if self._spatial_scales is not None
                         else None
                     )
+                    spatial_key_features = None
+                    if self._adaptive_spatial_scales is not None:
+                        if self.adaptive_spatial_gate is None:
+                            raise RuntimeError(
+                                "adaptive spatial scales require a scale gate"
+                            )
+                        scale_count = self._adaptive_spatial_scales.numel()
+                        gate_logits = self.adaptive_spatial_gate(s_norm).reshape(
+                            n_nodes,
+                            2,
+                            self.num_heads,
+                            scale_count,
+                        )
+                        spatial_features = _adaptive_multiscale_spatial_features(
+                            global_pos,
+                            self._adaptive_spatial_scales,
+                            gate_logits[:, 0],
+                        )
+                        spatial_key_features = (
+                            _adaptive_multiscale_spatial_features(
+                                global_pos,
+                                self._adaptive_spatial_scales,
+                                gate_logits[:, 1],
+                            )
+                        )
                     memory_router_latent = None
                     if self.use_memory_interaction and self.global_memory_count > 1:
                         memory_router_latent = torch.tanh(
@@ -1488,7 +1715,7 @@ class _EquivariantMomentLayer(nn.Module):
                             batch,
                             num_graphs=num_graphs,
                             graph_counts=graph_counts,
-                            balanced=self.use_key_balancing,
+                            balanced=self.use_global_key_balancing,
                             alignment_scale=alignment_scale[global_heads],
                             alignment_dot_scale=alignment_dot_scale[global_heads],
                             kernel_floor=self.kernel_floor,
@@ -1502,6 +1729,7 @@ class _EquivariantMomentLayer(nn.Module):
                             use_radial_trace=self.use_radial_trace,
                             global_transport_mode=self.global_transport_mode,
                             spatial_features=spatial_features,
+                            spatial_key_features=spatial_key_features,
                             whitened_ridge=whitened_ridge,
                             whitened_scalar_mix=(
                                 None
@@ -1514,6 +1742,16 @@ class _EquivariantMomentLayer(nn.Module):
                                 else self.whitened_vector_mix[global_heads]
                             ),
                             whitened_rank_gate=self.whitened_global_rank_gate,
+                            persistent_tensor_value=(
+                                None
+                                if not self.use_global_tensor_value_transport
+                                else persistent_tensor_heads[:, global_heads]
+                            ),
+                            reduction_backend=self.global_reduction_backend,
+                            feature_gemm_layout=feature_gemm_layout,
+                            feature_gemm_layout_is_resolved=(
+                                feature_gemm_layout_is_resolved
+                            ),
                         )
                     )
 
@@ -1525,6 +1763,36 @@ class _EquivariantMomentLayer(nn.Module):
             scalar_message, vector_base, relative, tensor, radial_trace = (
                 torch.cat(values, dim=1)
                 for values in zip(*message_groups, strict=True)
+            )
+        if self.sparse_low_rank_local_residual is not None:
+            if local_geometry is None:
+                raise RuntimeError("sparse local residual requires local geometry")
+            sparse_messages = self.sparse_low_rank_local_residual(
+                s_norm,
+                bounded_vectors,
+                local_geometry,
+                num_nodes=n_nodes,
+                persistent_tensor=bounded_persistent_tensor,
+            )
+            (
+                scalar_message,
+                vector_base,
+                relative,
+                tensor,
+                radial_trace,
+            ) = (
+                base + sparse
+                for base, sparse in zip(
+                    (
+                        scalar_message,
+                        vector_base,
+                        relative,
+                        tensor,
+                        radial_trace,
+                    ),
+                    sparse_messages,
+                    strict=True,
+                )
             )
         scalar_message = scalar_message.reshape(n_nodes, self.scalars)
         moment_q1 = q1.to(dtype=moment_dtype)
@@ -1798,7 +2066,8 @@ class _EdgeConditionedLocalTransport(nn.Module):
                 relative,
                 tensor,
                 cutoff_mass,
-            ) = _fused_index_sum(
+            ) = _local_receiver_sum(
+                local_geometry,
                 receiver,
                 num_nodes,
                 scalar_edge_message,
@@ -1813,7 +2082,8 @@ class _EdgeConditionedLocalTransport(nn.Module):
             relative = relative * inverse_sqrt_mass[:, None, None]
             tensor = tensor * inverse_sqrt_mass[:, None, None]
         else:
-            scalar_message, vector_base, relative, tensor = _fused_index_sum(
+            scalar_message, vector_base, relative, tensor = _local_receiver_sum(
+                local_geometry,
                 receiver,
                 num_nodes,
                 scalar_edge_message,
@@ -1873,6 +2143,7 @@ class _SparseGeometryAwareLocalAttention(nn.Module):
         cutoff: torch.Tensor,
         edge_latent: torch.Tensor,
         num_nodes: int,
+        receiver_offsets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         dtype = _moment_dtype(
             scalar_heads,
@@ -1951,7 +2222,7 @@ class _SparseGeometryAwareLocalAttention(nn.Module):
                 * axial_value
             )
         scalar_message, vector_message, relative_message, tensor_message = (
-            _fused_index_sum(
+            _receiver_sum(
                 receiver,
                 num_nodes,
                 edge_weight * scalar_value,
@@ -1962,6 +2233,7 @@ class _SparseGeometryAwareLocalAttention(nn.Module):
                 edge_weight
                 * value_gates[..., 2, None]
                 * (sender_tensor + tensor_basis),
+                offsets=receiver_offsets,
             )
         )
         scalar_message = _stable_layer_norm(
@@ -1982,6 +2254,178 @@ class _SparseGeometryAwareLocalAttention(nn.Module):
     def _softclip(self, value: torch.Tensor) -> torch.Tensor:
         limit = value.new_tensor(self.softclip_limit)
         return limit * torch.tanh(value / limit)
+
+
+class _SparseLowRankLocalResidual(nn.Module):
+    """Separable local correction: `O(E R D_head)`, or `O(E R)` at fixed width.
+
+    Node projections are evaluated once. Edges carry only rank-``R` invariant
+    weights and canonical scalar/vector/relative/`2e` values; no learned edge
+    state or hidden-width edge MLP survives between layers.
+    """
+
+    def __init__(
+        self,
+        *,
+        scalars: int,
+        vectors: int,
+        tensors: int,
+        num_heads: int,
+        rank: int,
+        num_rbf: int,
+        residual_scale_init: float,
+        eps: float,
+    ) -> None:
+        super().__init__()
+        if scalars % num_heads:
+            raise ValueError("scalars must be divisible by num_heads")
+        self.scalars = scalars
+        self.vectors = vectors
+        self.tensors = tensors
+        self.num_heads = num_heads
+        self.rank = rank
+        self.head_dim = scalars // num_heads
+        self.eps = eps
+
+        self.scalar_query = nn.Linear(scalars, rank)
+        self.scalar_key = nn.Linear(scalars, rank)
+        self.radial_key = nn.Linear(num_rbf, rank, bias=False)
+        self.vector_query = _ChannelMix(vectors, rank)
+        self.vector_key = _ChannelMix(vectors, rank)
+        self.vector_query_gate = nn.Linear(scalars, rank)
+        self.vector_key_gate = nn.Linear(scalars, rank)
+        self.angular_mix = nn.Parameter(torch.full((rank,), 0.1))
+        self.direction_mix = nn.Parameter(torch.full((rank, 2), 0.1))
+
+        self.scalar_value = nn.Linear(scalars, rank * self.head_dim)
+        self.vector_value = _ChannelMix(vectors, rank)
+        self.relative_gate = nn.Linear(scalars, rank)
+        self.tensor_gate = nn.Linear(scalars, rank)
+        self.radial_trace_gate = nn.Linear(scalars, rank)
+        self.tensor_value = _ChannelMix(tensors, rank) if tensors else None
+
+        self.scalar_out = _ChannelMix(rank, num_heads)
+        self.vector_out = _ChannelMix(rank, num_heads)
+        self.relative_out = _ChannelMix(rank, num_heads)
+        self.tensor_out = _ChannelMix(rank, num_heads)
+        self.radial_trace_out = _ChannelMix(rank, num_heads)
+        for output in (
+            self.scalar_out,
+            self.vector_out,
+            self.relative_out,
+            self.tensor_out,
+            self.radial_trace_out,
+        ):
+            nn.init.zeros_(output.weight)
+        self.residual_scale = nn.Parameter(
+            torch.tensor(float(residual_scale_init))
+        )
+
+    def forward(
+        self,
+        scalars: torch.Tensor,
+        vectors: torch.Tensor,
+        local_geometry: _LocalGeometryInput,
+        *,
+        num_nodes: int,
+        persistent_tensor: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        receiver, sender, displacement, squared_distance, rbf = (
+            _nonself_local_geometry(local_geometry)
+        )
+        dtype = _moment_dtype(scalars, vectors, displacement)
+        scalar_query = self.scalar_query(scalars)
+        scalar_key = self.scalar_key(scalars)
+        vector_query = self.vector_query(vectors) * torch.tanh(
+            self.vector_query_gate(scalars)
+        ).unsqueeze(-1)
+        vector_key = self.vector_key(vectors) * torch.tanh(
+            self.vector_key_gate(scalars)
+        ).unsqueeze(-1)
+        direction = displacement.to(dtype=dtype).unsqueeze(1)
+        receiver_vector = vector_query[receiver].to(dtype=dtype)
+        sender_vector = vector_key[sender].to(dtype=dtype)
+        angular = (receiver_vector * sender_vector).sum(dim=-1)
+        receiver_axis = (receiver_vector * direction).sum(dim=-1)
+        sender_axis = (sender_vector * direction).sum(dim=-1)
+        edge_latent = torch.tanh(
+            scalar_query[receiver].to(dtype=dtype)
+            + scalar_key[sender].to(dtype=dtype)
+            + self.radial_key(rbf.to(dtype=scalars.dtype)).to(dtype=dtype)
+            + self.angular_mix.to(dtype=dtype)[None, :] * angular
+            + self.direction_mix.to(dtype=dtype)[None, :, 0] * receiver_axis
+            + self.direction_mix.to(dtype=dtype)[None, :, 1] * sender_axis
+        )
+        cutoff = _nonself_cutoff(
+            local_geometry,
+            squared_distance,
+            dtype=dtype,
+        )
+        raw_weight = cutoff[:, None] * torch.sigmoid(edge_latent)
+        weight_mass = _local_receiver_sum(
+            local_geometry,
+            receiver,
+            num_nodes,
+            raw_weight,
+        )[0]
+        weight = raw_weight / weight_mass[receiver].clamp_min(
+            torch.finfo(dtype).tiny
+        )
+
+        scalar_value = self.scalar_value(scalars).reshape(
+            num_nodes,
+            self.rank,
+            self.head_dim,
+        )
+        vector_value = self.vector_value(vectors)
+        relative_gate = torch.tanh(self.relative_gate(scalars))
+        tensor_gate = torch.tanh(self.tensor_gate(scalars))
+        radial_gate = torch.tanh(self.radial_trace_gate(scalars))
+        tensor_basis = _nonself_tensor_features(
+            local_geometry,
+            displacement,
+            dtype=dtype,
+        ).unsqueeze(1)
+        tensor_edge = tensor_gate[sender].to(dtype=dtype).unsqueeze(-1) * tensor_basis
+        if self.tensor_value is not None:
+            if persistent_tensor is None:
+                raise ValueError(
+                    "persistent_tensor is required for sparse residual 2e values"
+                )
+            tensor_edge = tensor_edge + self.tensor_value(
+                persistent_tensor
+            )[sender].to(dtype=dtype)
+
+        (
+            scalar_rank,
+            vector_rank,
+            relative_rank,
+            tensor_rank,
+            radial_rank,
+        ) = _local_receiver_sum(
+            local_geometry,
+            receiver,
+            num_nodes,
+            weight.unsqueeze(-1)
+            * scalar_value[sender].to(dtype=dtype),
+            weight.unsqueeze(-1)
+            * vector_value[sender].to(dtype=dtype),
+            weight.unsqueeze(-1)
+            * relative_gate[sender].to(dtype=dtype).unsqueeze(-1)
+            * direction,
+            weight.unsqueeze(-1) * tensor_edge,
+            weight
+            * radial_gate[sender].to(dtype=dtype)
+            * squared_distance.to(dtype=dtype).unsqueeze(-1),
+        )
+        scale = self.residual_scale.to(dtype=dtype)
+        return (
+            scale * self.scalar_out(scalar_rank),
+            scale * self.vector_out(vector_rank),
+            scale * self.relative_out(relative_rank),
+            scale * self.tensor_out(tensor_rank),
+            scale * self.radial_trace_out(radial_rank.unsqueeze(-1)).squeeze(-1),
+        )
 
 
 class _GatedEquivariantLocalTransport(nn.Module):
@@ -2037,6 +2481,11 @@ class _GatedEquivariantLocalTransport(nn.Module):
             _CARTESIAN_TENSOR_PRODUCT_LOCAL_PATHS
             if use_cartesian_tensor_product_local_transport
             else ()
+        )
+        self.tensor_product_plan = (
+            _cartesian_tensor_product_plan("O3")
+            if use_cartesian_tensor_product_local_transport
+            else None
         )
         hidden_dim = max(32, 2 * self.head_dim)
         edge_input_dim = 2 * self.head_dim + num_rbf + 5
@@ -2212,7 +2661,8 @@ class _GatedEquivariantLocalTransport(nn.Module):
             tensor,
             cutoff_mass,
             effective_degree,
-        ) = _fused_index_sum(
+        ) = _local_receiver_sum(
+            local_geometry,
             receiver,
             num_nodes,
             edge_weight * (scalar_edge * torch.sigmoid(scalar_gate)).to(dtype=dtype),
@@ -2263,6 +2713,11 @@ class _GatedEquivariantLocalTransport(nn.Module):
                 cutoff=cutoff,
                 edge_latent=edge_latent,
                 num_nodes=num_nodes,
+                receiver_offsets=(
+                    local_geometry.nonself_row_ptr
+                    if isinstance(local_geometry, _LocalGeometry)
+                    else None
+                ),
             )
             scalar_message = scalar_message + geometry_scalar
             vector_base = vector_base + geometry_vector
@@ -2403,7 +2858,8 @@ class _LocalPairwiseContent(nn.Module):
             edge_content.to(dtype=reduction_dtype) * cutoff_weight[:, None, None]
         )
 
-        aggregated, cutoff_mass, effective_degree = _fused_index_sum(
+        aggregated, cutoff_mass, effective_degree = _local_receiver_sum(
+            local_geometry,
             receiver,
             num_nodes,
             weighted_content,
@@ -2469,6 +2925,7 @@ class _InteractionReadout(nn.Module):
         graph_counts: torch.Tensor,
         edge_index: torch.Tensor | None,
         edge_index_is_validated: bool,
+        packed_neighbors: PackedNeighborGraph | None = None,
     ) -> torch.Tensor:
         ligand_counts, pocket_counts = _interaction_role_counts(
             ligand_mask,
@@ -2501,6 +2958,7 @@ class _InteractionReadout(nn.Module):
             rbf_spacing=self.rbf_spacing,
             graph_counts=graph_counts,
             edge_index=edge_index,
+            packed_neighbors=packed_neighbors,
             edge_index_is_validated=edge_index_is_validated,
         )
         cross = ligand_mask[receiver] & ~ligand_mask[sender] & (receiver != sender)
@@ -2649,10 +3107,15 @@ def _global_moment_messages(
     use_radial_trace: bool,
     global_transport_mode: str = "learned",
     spatial_features: torch.Tensor | None = None,
+    spatial_key_features: torch.Tensor | None = None,
     whitened_ridge: float | None = None,
     whitened_scalar_mix: torch.Tensor | None = None,
     whitened_vector_mix: torch.Tensor | None = None,
     whitened_rank_gate: bool = False,
+    persistent_tensor_value: torch.Tensor | None = None,
+    reduction_backend: str = "outer_scatter",
+    feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+    feature_gemm_layout_is_resolved: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if whitened_ridge is not None and (
         whitened_scalar_mix is None or whitened_vector_mix is None
@@ -2661,7 +3124,9 @@ def _global_moment_messages(
     if whitened_ridge is not None and global_transport_mode != "learned":
         raise ValueError("the whitened global read requires learned transport")
     if whitened_ridge is not None and (
-        spatial_features is not None or use_memory_interaction
+        spatial_features is not None
+        or spatial_key_features is not None
+        or use_memory_interaction
     ):
         raise ValueError(
             "the whitened global read excludes spatial features and memory "
@@ -2675,7 +3140,9 @@ def _global_moment_messages(
         raise ValueError("spatial features require learned global transport")
     if spatial_features is not None and use_memory_interaction:
         raise ValueError("spatial features cannot use memory interaction")
-    moment_dtype = _moment_dtype(
+    if spatial_key_features is not None and spatial_features is None:
+        raise ValueError("spatial key features require spatial query features")
+    moment_values = [
         query_scalar,
         key_scalar,
         query_vector,
@@ -2683,7 +3150,20 @@ def _global_moment_messages(
         scalar_value,
         vector_value,
         pos,
-    )
+    ]
+    if persistent_tensor_value is not None:
+        expected_tensor_shape = (
+            query_scalar.shape[0],
+            query_scalar.shape[1],
+            5,
+        )
+        if persistent_tensor_value.shape != expected_tensor_shape:
+            raise ValueError(
+                "persistent_tensor_value must have shape "
+                f"{expected_tensor_shape}"
+            )
+        moment_values.append(persistent_tensor_value)
+    moment_dtype = _moment_dtype(*moment_values)
     num_heads = query_scalar.shape[1]
     pos = pos.to(dtype=moment_dtype)
     pos_h = pos.unsqueeze(1).expand(-1, num_heads, -1)
@@ -2709,6 +3189,10 @@ def _global_moment_messages(
                 * pos_h.square().sum(dim=-1, keepdim=True),
             ]
         )
+    persistent_tensor_offset: int | None = None
+    if persistent_tensor_value is not None:
+        persistent_tensor_offset = sum(part.shape[-1] for part in value_parts)
+        value_parts.append(persistent_tensor_value.to(dtype=moment_dtype))
     value = torch.cat(value_parts, dim=-1)
     if global_transport_mode == "uniform":
         if use_memory_interaction:
@@ -2767,6 +3251,10 @@ def _global_moment_messages(
             kernel_floor_mode=kernel_floor_mode,
             graph_counts=graph_counts,
             spatial_features=spatial_features,
+            spatial_key_features=spatial_key_features,
+            reduction_backend=reduction_backend,
+            feature_gemm_layout=feature_gemm_layout,
+            feature_gemm_layout_is_resolved=feature_gemm_layout_is_resolved,
         )
 
     offset = scalar_value.shape[-1]
@@ -2807,6 +3295,13 @@ def _global_moment_messages(
         + st_pos * tensor_mass.unsqueeze(-1)
         - 2.0 * _symmetric_traceless_cross_features(tensor_position, pos_h)
     )
+    if persistent_tensor_offset is not None:
+        tensor = (
+            tensor
+            + transported[
+                ..., persistent_tensor_offset : persistent_tensor_offset + 5
+            ]
+        )
     if use_radial_trace:
         radial_mass = transported[..., offset + 16]
         radial_first = transported[..., offset + 17 : offset + 20]
@@ -2861,6 +3356,7 @@ def _local_moment_messages(
     *,
     use_radial_trace: bool,
     num_nodes: int,
+    local_geometry: _LocalGeometryInput | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     dtype = _moment_dtype(
         weights,
@@ -2872,41 +3368,77 @@ def _local_moment_messages(
     )
     weights = weights.to(dtype=dtype)
     displacement = displacement.to(dtype=dtype)
-    scalar_message = _edge_sum(
-        weights,
-        scalar_value[sender].to(dtype=dtype),
-        receiver,
-        num_nodes,
-    )
-    vector_base = _edge_sum(
-        weights,
-        vector_value[sender].to(dtype=dtype),
-        receiver,
-        num_nodes,
-    )
-    relative = _edge_sum(
-        weights,
-        relative_gate[sender].to(dtype=dtype).unsqueeze(-1) * displacement.unsqueeze(1),
-        receiver,
-        num_nodes,
-    )
-    tensor = _edge_sum(
-        weights,
-        tensor_gate[sender].to(dtype=dtype).unsqueeze(-1)
-        * _symmetric_traceless_features(displacement).unsqueeze(1),
-        receiver,
-        num_nodes,
-    )
+    if (
+        isinstance(local_geometry, _LocalGeometry)
+        and local_geometry.row_ptr is not None
+    ):
+        expanded_weights = weights.unsqueeze(-1)
+        (
+            scalar_message,
+            vector_base,
+            relative,
+            tensor,
+        ) = _receiver_sum(
+            receiver,
+            num_nodes,
+            expanded_weights * scalar_value[sender].to(dtype=dtype),
+            expanded_weights * vector_value[sender].to(dtype=dtype),
+            expanded_weights
+            * relative_gate[sender].to(dtype=dtype).unsqueeze(-1)
+            * displacement.unsqueeze(1),
+            expanded_weights
+            * tensor_gate[sender].to(dtype=dtype).unsqueeze(-1)
+            * _symmetric_traceless_features(displacement).unsqueeze(1),
+            offsets=local_geometry.row_ptr,
+        )
+    else:
+        scalar_message = _edge_sum(
+            weights,
+            scalar_value[sender].to(dtype=dtype),
+            receiver,
+            num_nodes,
+        )
+        vector_base = _edge_sum(
+            weights,
+            vector_value[sender].to(dtype=dtype),
+            receiver,
+            num_nodes,
+        )
+        relative = _edge_sum(
+            weights,
+            relative_gate[sender].to(dtype=dtype).unsqueeze(-1)
+            * displacement.unsqueeze(1),
+            receiver,
+            num_nodes,
+        )
+        tensor = _edge_sum(
+            weights,
+            tensor_gate[sender].to(dtype=dtype).unsqueeze(-1)
+            * _symmetric_traceless_features(displacement).unsqueeze(1),
+            receiver,
+            num_nodes,
+        )
     if use_radial_trace:
         radial_value = radial_trace_gate[sender].to(dtype=dtype) * squared_distance.to(
             dtype=dtype
         ).unsqueeze(-1)
-        radial_trace = _edge_sum(
-            weights,
-            radial_value,
-            receiver,
-            num_nodes,
-        )
+        if (
+            isinstance(local_geometry, _LocalGeometry)
+            and local_geometry.row_ptr is not None
+        ):
+            radial_trace = _receiver_sum(
+                receiver,
+                num_nodes,
+                weights * radial_value,
+                offsets=local_geometry.row_ptr,
+            )[0]
+        else:
+            radial_trace = _edge_sum(
+                weights,
+                radial_value,
+                receiver,
+                num_nodes,
+            )
     else:
         radial_trace = weights.new_zeros((num_nodes, weights.shape[1]))
     return scalar_message, vector_base, relative, tensor, radial_trace
@@ -3024,6 +3556,46 @@ def _fused_index_sum(
     return tuple(output for output in outputs if output is not None)
 
 
+def _local_receiver_sum(
+    geometry: _LocalGeometryInput,
+    index: torch.Tensor,
+    num_segments: int,
+    *values: torch.Tensor,
+) -> tuple[torch.Tensor, ...]:
+    """Use receiver CSR when present, otherwise retain the incumbent index-add."""
+    offsets = (
+        geometry.nonself_row_ptr
+        if isinstance(geometry, _LocalGeometry)
+        else None
+    )
+    return _receiver_sum(
+        index,
+        num_segments,
+        *values,
+        offsets=offsets,
+    )
+
+
+def _receiver_sum(
+    index: torch.Tensor,
+    num_segments: int,
+    *values: torch.Tensor,
+    offsets: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, ...]:
+    if offsets is None:
+        return _fused_index_sum(index, num_segments, *values)
+    if offsets.shape != (num_segments + 1,):
+        raise RuntimeError("receiver CSR shape does not match node count")
+    return tuple(
+        torch.segment_reduce(
+            value,
+            reduce="sum",
+            offsets=offsets,
+        )
+        for value in values
+    )
+
+
 def _local_attention_weights(
     query_scalar: torch.Tensor,
     key_scalar: torch.Tensor,
@@ -3098,18 +3670,43 @@ def _local_attention_weights(
     )
     weighted = kernel * radial_gate
     num_nodes = query_scalar.shape[0]
+    csr_geometry = (
+        local_geometry if isinstance(local_geometry, _LocalGeometry) else None
+    )
     if balanced:
-        key_mass = weighted.new_zeros((num_nodes, weighted.shape[1])).index_add(
+        if (
+            csr_geometry is not None
+            and csr_geometry.reverse_order is not None
+            and csr_geometry.reverse_row_ptr is not None
+        ):
+            key_mass = torch.segment_reduce(
+                weighted[csr_geometry.reverse_order],
+                reduce="sum",
+                offsets=csr_geometry.reverse_row_ptr,
+            )
+        else:
+            key_mass = weighted.new_zeros(
+                (num_nodes, weighted.shape[1])
+            ).index_add(
+                0,
+                sender,
+                weighted,
+            )
+        weighted = weighted / key_mass[sender]
+    if csr_geometry is not None and csr_geometry.row_ptr is not None:
+        denominator = torch.segment_reduce(
+            weighted,
+            reduce="sum",
+            offsets=csr_geometry.row_ptr,
+        )
+    else:
+        denominator = weighted.new_zeros(
+            (num_nodes, weighted.shape[1])
+        ).index_add(
             0,
-            sender,
+            receiver,
             weighted,
         )
-        weighted = weighted / key_mass[sender]
-    denominator = weighted.new_zeros((num_nodes, weighted.shape[1])).index_add(
-        0,
-        receiver,
-        weighted,
-    )
     weights = weighted / denominator[receiver]
     return (
         receiver,
@@ -3130,9 +3727,32 @@ def _local_geometry(
     rbf_spacing: str = "squared",
     graph_counts: torch.Tensor | None = None,
     edge_index: torch.Tensor | None = None,
+    packed_neighbors: PackedNeighborGraph | None = None,
     edge_index_is_validated: bool = False,
+    build_receiver_csr: bool = False,
 ) -> _LocalGeometry:
-    if edge_index is None:
+    if edge_index is not None and packed_neighbors is not None:
+        raise ValueError("edge_index and packed_neighbors are mutually exclusive")
+    packed_reverse_order: torch.Tensor | None = None
+    if packed_neighbors is not None:
+        if packed_neighbors.num_nodes != pos.shape[0]:
+            raise ValueError("packed_neighbors num_nodes must match positions")
+        if packed_neighbors.device != pos.device:
+            raise ValueError(
+                "packed_neighbors and positions must use the same device"
+            )
+        receiver = packed_neighbors.receiver_index().to(dtype=torch.long)
+        sender = packed_neighbors.sender.to(dtype=torch.long)
+        if receiver.numel() and not torch.equal(
+            batch[receiver],
+            batch[sender],
+        ):
+            raise ValueError("packed_neighbors must not connect different graphs")
+        if packed_neighbors.reverse_edge_order is not None:
+            packed_reverse_order = packed_neighbors.reverse_edge_order.to(
+                dtype=torch.long
+            )
+    elif edge_index is None:
         if graph_counts is None:
             graph_counts = torch.bincount(batch, minlength=num_graphs)
         receiver, sender = _batched_complete_graph_edges(batch, graph_counts)
@@ -3149,6 +3769,8 @@ def _local_geometry(
                 num_nodes=pos.shape[0],
                 device=pos.device,
             )
+    candidate_receiver = receiver
+    candidate_sender = sender
     cutoff_tensor = pos.new_full((), float(cutoff))
     candidate_displacement = pos[sender] - pos[receiver]
     candidate_distance = _stable_vector_norm(candidate_displacement).squeeze(-1)
@@ -3156,19 +3778,100 @@ def _local_geometry(
     receiver = receiver[inside]
     sender = sender[inside]
     displacement = candidate_displacement[inside] / cutoff_tensor
+    if (
+        build_receiver_csr
+        and receiver.numel()
+        and packed_neighbors is None
+    ):
+        receiver_order = torch.argsort(receiver, stable=True)
+        receiver = receiver[receiver_order]
+        sender = sender[receiver_order]
+        displacement = displacement[receiver_order]
     squared_distance = displacement.square().sum(dim=-1)
     rbf = _radial_basis(squared_distance, num_rbf=num_rbf, spacing=rbf_spacing)
+    row_ptr = None
+    if build_receiver_csr:
+        row_ptr = (
+            _filtered_csr_row_ptr(packed_neighbors.row_ptr, inside)
+            if packed_neighbors is not None
+            else _receiver_csr_row_ptr(receiver, pos.shape[0])
+        )
+    reverse_order = None
+    if build_receiver_csr:
+        if packed_reverse_order is None:
+            reverse_order = torch.argsort(sender, stable=True)
+        else:
+            # The packed reverse plan indexes the unfiltered receiver-major
+            # edges. Restrict it to cutoff survivors and map those positions
+            # into the filtered forward arrays without sorting again.
+            forward_to_filtered = inside.to(dtype=torch.long).cumsum(dim=0) - 1
+            retained_reverse = packed_reverse_order[
+                inside[packed_reverse_order]
+            ]
+            reverse_order = forward_to_filtered[retained_reverse]
+    reverse_row_ptr = None
+    if reverse_order is not None:
+        reverse_row_ptr = (
+            _filtered_csr_row_ptr(
+                packed_neighbors.reverse_row_ptr,
+                inside[packed_reverse_order],
+            )
+            if (
+                packed_neighbors is not None
+                and packed_neighbors.reverse_row_ptr is not None
+                and packed_reverse_order is not None
+            )
+            else _receiver_csr_row_ptr(sender[reverse_order], pos.shape[0])
+        )
     nonself = receiver != sender
+    candidate_nonself = candidate_receiver != candidate_sender
+    retained_nonself = inside & candidate_nonself
     nonself_displacement = displacement[nonself]
     nonself_squared_distance = squared_distance[nonself]
+    nonself_receiver = receiver[nonself]
+    nonself_sender = sender[nonself]
+    nonself_row_ptr = None
+    if build_receiver_csr:
+        nonself_row_ptr = (
+            _filtered_csr_row_ptr(
+                packed_neighbors.row_ptr,
+                retained_nonself,
+            )
+            if packed_neighbors is not None
+            else _receiver_csr_row_ptr(nonself_receiver, pos.shape[0])
+        )
+    nonself_reverse_order = None
+    if reverse_order is not None:
+        filtered_to_nonself = nonself.to(dtype=torch.long).cumsum(dim=0) - 1
+        retained_nonself_reverse = reverse_order[nonself[reverse_order]]
+        nonself_reverse_order = filtered_to_nonself[
+            retained_nonself_reverse
+        ]
+    nonself_reverse_row_ptr = None
+    if nonself_reverse_order is not None:
+        nonself_reverse_row_ptr = (
+            _filtered_csr_row_ptr(
+                packed_neighbors.reverse_row_ptr,
+                retained_nonself[packed_reverse_order],
+            )
+            if (
+                packed_neighbors is not None
+                and packed_neighbors.reverse_row_ptr is not None
+                and packed_reverse_order is not None
+            )
+            else _receiver_csr_row_ptr(
+                nonself_sender[nonself_reverse_order],
+                pos.shape[0],
+            )
+        )
     return _LocalGeometry(
         receiver=receiver,
         sender=sender,
         displacement=displacement,
         squared_distance=squared_distance,
         rbf=rbf,
-        nonself_receiver=receiver[nonself],
-        nonself_sender=sender[nonself],
+        nonself_receiver=nonself_receiver,
+        nonself_sender=nonself_sender,
         nonself_displacement=nonself_displacement,
         nonself_squared_distance=nonself_squared_distance,
         nonself_rbf=rbf[nonself],
@@ -3178,7 +3881,49 @@ def _local_geometry(
         nonself_tensor_features=_symmetric_traceless_features(
             nonself_displacement
         ),
+        row_ptr=row_ptr,
+        reverse_order=reverse_order,
+        reverse_row_ptr=reverse_row_ptr,
+        nonself_row_ptr=nonself_row_ptr,
+        nonself_reverse_order=nonself_reverse_order,
+        nonself_reverse_row_ptr=nonself_reverse_row_ptr,
     )
+
+
+def _receiver_csr_row_ptr(receiver: torch.Tensor, num_nodes: int) -> torch.Tensor:
+    counts = torch.bincount(receiver.to(dtype=torch.long), minlength=num_nodes)
+    row_ptr = torch.cat([counts.new_zeros(1), counts.cumsum(dim=0)])
+    int32_max = torch.iinfo(torch.int32).max
+    index_dtype = (
+        torch.int32
+        if num_nodes <= int32_max and receiver.numel() <= int32_max
+        else torch.int64
+    )
+    return row_ptr.to(dtype=index_dtype)
+
+
+def _filtered_csr_row_ptr(
+    row_ptr: torch.Tensor | None,
+    keep: torch.Tensor,
+) -> torch.Tensor:
+    """Restrict an existing CSR row plan without receiver sorting or bincount."""
+    if row_ptr is None:
+        raise RuntimeError("filtered CSR requires an existing row pointer")
+    prefix = torch.cat(
+        [
+            torch.zeros(1, dtype=torch.long, device=keep.device),
+            keep.to(dtype=torch.long).cumsum(dim=0),
+        ]
+    )
+    row_ptr_long = row_ptr.to(dtype=torch.long)
+    counts = prefix[row_ptr_long[1:]] - prefix[row_ptr_long[:-1]]
+    filtered = torch.cat(
+        [
+            counts.new_zeros(1),
+            counts.cumsum(dim=0),
+        ]
+    )
+    return filtered.to(dtype=row_ptr.dtype)
 
 
 def _radial_basis(
@@ -3356,6 +4101,36 @@ def _quadratic_gaussian_spatial_features(
     return gaussian.unsqueeze(-1) * polynomial
 
 
+def _adaptive_multiscale_spatial_features(
+    pos: torch.Tensor,
+    scales: torch.Tensor,
+    gate_logits: torch.Tensor,
+) -> torch.Tensor:
+    """Concatenate a finite-gradient positive profile over fixed spatial scales."""
+    if gate_logits.ndim != 3:
+        raise ValueError("gate_logits must have shape (nodes, heads, scales)")
+    if gate_logits.shape[0] != pos.shape[0]:
+        raise ValueError("gate_logits and pos must have the same node count")
+    if gate_logits.shape[-1] != scales.numel():
+        raise ValueError("gate_logits scale count must match scales")
+    if not torch.is_floating_point(gate_logits):
+        raise TypeError("gate_logits must be a floating point tensor")
+    if gate_logits.device != pos.device:
+        raise ValueError("gate_logits and pos must use the same device")
+    if not torch.isfinite(gate_logits).all():
+        raise ValueError("gate_logits must be finite")
+
+    base = _quadratic_gaussian_spatial_features(pos, scales)
+    profile_floor = torch.finfo(gate_logits.dtype).eps
+    probabilities = F.softmax(gate_logits, dim=-1)
+    probabilities = (probabilities + profile_floor) / (
+        1.0 + scales.numel() * profile_floor
+    )
+    scale_weights = probabilities.sqrt().to(dtype=base.dtype)
+    gated = scale_weights.unsqueeze(-1) * base.unsqueeze(1)
+    return gated.flatten(start_dim=-2)
+
+
 def _factorized_moment_attention(
     query_scalar: torch.Tensor,
     key_scalar: torch.Tensor,
@@ -3373,7 +4148,14 @@ def _factorized_moment_attention(
     kernel_floor_mode: str = "fixed",
     graph_counts: torch.Tensor | None = None,
     spatial_features: torch.Tensor | None = None,
+    spatial_key_features: torch.Tensor | None = None,
+    reduction_backend: str = "outer_scatter",
+    feature_gemm_layout: _GraphPaddedLayout | _GraphRaggedLayout | None = None,
+    feature_gemm_layout_is_resolved: bool = False,
 ) -> torch.Tensor:
+    if reduction_backend not in _GLOBAL_REDUCTION_BACKENDS:
+        choices = ", ".join(sorted(_GLOBAL_REDUCTION_BACKENDS))
+        raise ValueError(f"reduction_backend must be one of: {choices}")
     if balanced and kernel_floor_mode == "inverse_graph_size":
         raise ValueError(
             "inverse_graph_size kernel floor is not registered with key balancing"
@@ -3386,6 +4168,7 @@ def _factorized_moment_attention(
         key_vector,
         value,
         *(() if spatial_features is None else (spatial_features,)),
+        *(() if spatial_key_features is None else (spatial_key_features,)),
     )
     query_scalar = query_scalar.to(dtype=reduction_dtype)
     key_scalar = key_scalar.to(dtype=reduction_dtype)
@@ -3408,6 +4191,43 @@ def _factorized_moment_attention(
                 "spatial_features must have shape (nodes, heads, features)"
             )
         spatial_features = spatial_features.to(dtype=reduction_dtype)
+    if spatial_key_features is None:
+        spatial_key_features = spatial_features
+    elif spatial_features is None:
+        raise ValueError("spatial key features require spatial query features")
+    else:
+        if (
+            spatial_key_features.ndim != 3
+            or spatial_key_features.shape != spatial_features.shape
+        ):
+            raise ValueError(
+                "spatial_key_features must match spatial_features shape"
+            )
+        spatial_key_features = spatial_key_features.to(dtype=reduction_dtype)
+    if reduction_backend == "feature_gemm":
+        if graph_counts is None:
+            graph_counts = torch.bincount(batch, minlength=num_graphs)
+        return _feature_gemm_moment_attention(
+            query_scalar,
+            key_scalar,
+            query_vector,
+            key_vector,
+            kernel_scale,
+            value,
+            batch,
+            num_graphs=num_graphs,
+            graph_counts=graph_counts,
+            balanced=balanced,
+            alignment_scale=alignment_scale,
+            alignment_dot_scale=alignment_dot_scale,
+            kernel_floor=kernel_floor,
+            kernel_floor_mode=kernel_floor_mode,
+            spatial_features=spatial_features,
+            spatial_key_features=spatial_key_features,
+            output_dtype=output_dtype,
+            padded_layout=feature_gemm_layout,
+            padded_layout_is_resolved=feature_gemm_layout_is_resolved,
+        )
     if balanced:
         row_scale = query_scalar.new_ones(query_scalar.shape[:2])
         key_mass = _structured_key_mass(
@@ -3426,8 +4246,11 @@ def _factorized_moment_attention(
             graph_counts=graph_counts,
         )
         if spatial_features is not None:
+            if spatial_key_features is None:
+                raise RuntimeError("spatial key features are missing")
             key_mass = key_mass + _spatial_key_mass(
                 spatial_features,
+                spatial_key_features,
                 row_scale,
                 batch,
                 num_graphs,
@@ -3456,8 +4279,11 @@ def _factorized_moment_attention(
         graph_counts=graph_counts,
     )
     if spatial_features is not None:
+        if spatial_key_features is None:
+            raise RuntimeError("spatial key features are missing")
         transported = transported + _spatial_transport(
             spatial_features,
+            spatial_key_features,
             key_scale,
             augmented_value,
             batch,
@@ -4000,25 +4826,27 @@ def _bounded_square_fraction(distance: torch.Tensor, scale: float) -> torch.Tens
 
 
 def _spatial_key_mass(
-    features: torch.Tensor,
+    query_features: torch.Tensor,
+    key_features: torch.Tensor,
     row_scale: torch.Tensor,
     batch: torch.Tensor,
     num_graphs: int,
 ) -> torch.Tensor:
-    weighted_features = features * row_scale.unsqueeze(-1)
+    weighted_features = query_features * row_scale.unsqueeze(-1)
     if num_graphs == 1:
         summary = weighted_features.sum(dim=0)
-        return torch.einsum("nhf,hf->nh", features, summary)
+        return torch.einsum("nhf,hf->nh", key_features, summary)
     summary = _segment_sum(
         weighted_features,
         batch,
         num_graphs,
     )
-    return torch.einsum("nhf,nhf->nh", features, summary[batch])
+    return torch.einsum("nhf,nhf->nh", key_features, summary[batch])
 
 
 def _spatial_transport(
-    features: torch.Tensor,
+    query_features: torch.Tensor,
+    key_features: torch.Tensor,
     key_scale: torch.Tensor,
     value: torch.Tensor,
     batch: torch.Tensor,
@@ -4028,16 +4856,16 @@ def _spatial_transport(
     if num_graphs == 1:
         summary = torch.einsum(
             "nhf,nhv->hfv",
-            features,
+            key_features,
             weighted_value,
         )
-        return torch.einsum("nhf,hfv->nhv", features, summary)
+        return torch.einsum("nhf,hfv->nhv", query_features, summary)
     summary = _segment_sum(
-        features.unsqueeze(-1) * weighted_value.unsqueeze(-2),
+        key_features.unsqueeze(-1) * weighted_value.unsqueeze(-2),
         batch,
         num_graphs,
     )
-    return torch.einsum("nhf,nhfv->nhv", features, summary[batch])
+    return torch.einsum("nhf,nhfv->nhv", query_features, summary[batch])
 
 
 def _structured_key_mass(
@@ -4453,6 +5281,180 @@ def _kernel_feature_map(
     )
 
 
+def _kernel_feature_pair(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    alignment_scale: torch.Tensor,
+    alignment_dot_scale: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    kernel_floor: float,
+    kernel_floor_mode: str,
+    graph_counts: torch.Tensor,
+    spatial_features: torch.Tensor | None,
+    spatial_key_features: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build one exact, shared-coordinate feature map for the global kernel."""
+    graph_scale = _pair_graph_scale(
+        query_scalar,
+        batch,
+        kernel_floor_mode,
+        graph_counts,
+    )
+    baseline = graph_scale * (
+        query_scalar.new_full((1, 1), float(kernel_floor))
+        + alignment_scale.unsqueeze(0)
+    )
+    linear = graph_scale * alignment_dot_scale.unsqueeze(0)
+    baseline_root = baseline.clamp_min(0.0).sqrt().unsqueeze(-1)
+    linear_root = linear.clamp_min(0.0).sqrt().unsqueeze(-1)
+    quadratic_root = kernel_scale.clamp_min(0.0).sqrt()[None, :, None]
+    query_parts = [
+        query_scalar,
+        baseline_root,
+        linear_root * query_vector,
+        quadratic_root * _isometric_quadratic_features(query_vector),
+    ]
+    key_parts = [
+        key_scalar,
+        baseline_root,
+        linear_root * key_vector,
+        quadratic_root * _isometric_quadratic_features(key_vector),
+    ]
+    if spatial_features is not None:
+        if spatial_key_features is None:
+            raise RuntimeError("spatial key features are missing")
+        query_parts.append(spatial_features)
+        key_parts.append(spatial_key_features)
+    return torch.cat(query_parts, dim=-1), torch.cat(key_parts, dim=-1)
+
+
+def _feature_gemm_moment_attention(
+    query_scalar: torch.Tensor,
+    key_scalar: torch.Tensor,
+    query_vector: torch.Tensor,
+    key_vector: torch.Tensor,
+    kernel_scale: torch.Tensor,
+    value: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    graph_counts: torch.Tensor,
+    balanced: bool,
+    alignment_scale: torch.Tensor,
+    alignment_dot_scale: torch.Tensor,
+    kernel_floor: float,
+    kernel_floor_mode: str,
+    spatial_features: torch.Tensor | None,
+    spatial_key_features: torch.Tensor | None,
+    output_dtype: torch.dtype,
+    padded_layout: _GraphPaddedLayout | _GraphRaggedLayout | None,
+    padded_layout_is_resolved: bool,
+) -> torch.Tensor:
+    """Exact global transport without an ``N x H x F x V`` outer tensor."""
+    query_features, key_features = _kernel_feature_pair(
+        query_scalar,
+        key_scalar,
+        query_vector,
+        key_vector,
+        kernel_scale,
+        alignment_scale,
+        alignment_dot_scale,
+        batch,
+        kernel_floor=kernel_floor,
+        kernel_floor_mode=kernel_floor_mode,
+        graph_counts=graph_counts,
+        spatial_features=spatial_features,
+        spatial_key_features=spatial_key_features,
+    )
+    augmented_value = torch.cat(
+        [value, value.new_ones((*value.shape[:-1], 1))],
+        dim=-1,
+    )
+    layout = (
+        padded_layout
+        if padded_layout_is_resolved
+        else _graph_feature_layout(batch, graph_counts, num_graphs)
+    )
+    if isinstance(layout, _GraphRaggedLayout):
+        transported = _feature_gemm_by_graph(
+            query_features,
+            key_features,
+            augmented_value,
+            layout,
+            balanced=balanced,
+        )
+    else:
+        if layout is None:
+            raise RuntimeError("feature GEMM layout resolution failed")
+        query_padded = _pad_by_graph(query_features, layout)
+        key_padded = _pad_by_graph(key_features, layout)
+        value_padded = _pad_by_graph(augmented_value, layout)
+        if balanced:
+            query_sum = query_padded.sum(dim=1)
+            key_mass_padded = torch.einsum(
+                "gmhf,ghf->gmh",
+                key_padded,
+                query_sum,
+            )
+            key_mass = _unpad_by_graph(key_mass_padded, layout)
+            key_scale = key_mass.reciprocal()
+            value_padded = _pad_by_graph(
+                key_scale.unsqueeze(-1) * augmented_value,
+                layout,
+            )
+        summary = torch.einsum(
+            "gmhf,gmhv->ghfv",
+            key_padded,
+            value_padded,
+        )
+        transported = _unpad_by_graph(
+            torch.einsum("gmhf,ghfv->gmhv", query_padded, summary),
+            layout,
+        )
+    numerator = transported[..., :-1]
+    denominator = transported[..., -1]
+    return (numerator / denominator.unsqueeze(-1)).to(dtype=output_dtype)
+
+
+def _feature_gemm_by_graph(
+    query_features: torch.Tensor,
+    key_features: torch.Tensor,
+    value: torch.Tensor,
+    layout: _GraphRaggedLayout,
+    *,
+    balanced: bool,
+) -> torch.Tensor:
+    """Ragged exact GEMM after one graph grouping and one inverse permutation."""
+    graph_query_all = query_features.index_select(0, layout.order)
+    graph_key_all = key_features.index_select(0, layout.order)
+    graph_value_all = value.index_select(0, layout.order)
+    graph_outputs: list[torch.Tensor] = []
+    start = 0
+    for count in layout.counts:
+        graph_query = graph_query_all.narrow(0, start, count)
+        graph_key = graph_key_all.narrow(0, start, count)
+        graph_value = graph_value_all.narrow(0, start, count)
+        if balanced:
+            query_sum = graph_query.sum(dim=0)
+            key_mass = torch.einsum("nhf,hf->nh", graph_key, query_sum)
+            graph_value = key_mass.reciprocal().unsqueeze(-1) * graph_value
+        summary = torch.einsum("nhf,nhv->hfv", graph_key, graph_value)
+        graph_outputs.append(
+            torch.einsum("nhf,hfv->nhv", graph_query, summary)
+        )
+        start += count
+    sorted_output = torch.cat(graph_outputs, dim=0)
+    return value.new_zeros(value.shape).index_copy(
+        0,
+        layout.order,
+        sorted_output,
+    )
+
+
 def _whitened_global_read(
     query_scalar: torch.Tensor,
     key_scalar: torch.Tensor,
@@ -4584,6 +5586,50 @@ class _GraphPaddedLayout:
     position: torch.Tensor
     max_nodes: int
     num_graphs: int
+
+
+@dataclass(frozen=True)
+class _GraphRaggedLayout:
+    """One stable graph grouping for unequal-size per-graph GEMMs."""
+
+    order: torch.Tensor
+    counts: tuple[int, ...]
+    num_graphs: int
+
+
+def _graph_feature_layout(
+    batch: torch.Tensor,
+    graph_counts: torch.Tensor,
+    num_graphs: int,
+    *,
+    maximum_padding_ratio: float = 8.0,
+) -> _GraphPaddedLayout | _GraphRaggedLayout:
+    """Choose padded or slice-based GEMM without graph-by-node rescans."""
+    max_nodes = int(graph_counts.max())
+    node_count = batch.shape[0]
+    if num_graphs * max_nodes <= maximum_padding_ratio * max(node_count, 1):
+        padded = _graph_padded_layout(
+            batch,
+            graph_counts,
+            num_graphs,
+            maximum_padding_ratio=maximum_padding_ratio,
+        )
+        if padded is None:
+            raise RuntimeError("nonempty graph batch did not produce a padded layout")
+        return padded
+    grouped = bool(
+        batch.numel() < 2 or (batch[1:] >= batch[:-1]).all().item()
+    )
+    order = (
+        torch.arange(batch.shape[0], device=batch.device)
+        if grouped
+        else torch.argsort(batch, stable=True)
+    )
+    return _GraphRaggedLayout(
+        order=order,
+        counts=tuple(int(value) for value in graph_counts.tolist()),
+        num_graphs=num_graphs,
+    )
 
 
 def _graph_padded_layout(
@@ -5192,7 +6238,12 @@ def _validate_whitened_global_read(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "use_whitened_global_read requires learned global transport"
         )
-    if config.use_key_balancing:
+    use_global_key_balancing = (
+        config.use_key_balancing
+        if config.use_global_key_balancing is None
+        else config.use_global_key_balancing
+    )
+    if use_global_key_balancing:
         raise ValueError(
             "use_whitened_global_read is not registered with key balancing; the "
             "balanced key scale would have to enter the key feature map"
@@ -5201,7 +6252,10 @@ def _validate_whitened_global_read(config: EquivariantAttentionConfig) -> None:
         raise ValueError(
             "use_whitened_global_read requires the fixed kernel baseline"
         )
-    if config.use_multiscale_spatial_kernel:
+    if (
+        config.use_multiscale_spatial_kernel
+        or config.use_adaptive_multiscale_spatial_kernel
+    ):
         raise ValueError(
             "use_whitened_global_read excludes the multiscale spatial kernel in "
             "this packet because its feature block is not proven isometric"
@@ -5238,6 +6292,13 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         if value < 0:
             raise ValueError(f"{name} must be nonnegative")
     if (
+        not isinstance(config.local_residual_rank, int)
+        or isinstance(config.local_residual_rank, bool)
+    ):
+        raise TypeError("local_residual_rank must be an integer")
+    if config.local_residual_rank <= 0:
+        raise ValueError("local_residual_rank must be positive")
+    if (
         not isinstance(config.angular_feature_rank, int)
         or isinstance(config.angular_feature_rank, bool)
     ):
@@ -5265,11 +6326,33 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         "use_radial_trace",
         "coordinate_updates",
         "use_multiscale_spatial_kernel",
+        "use_adaptive_multiscale_spatial_kernel",
         "use_whitened_global_read",
         "whitened_global_rank_gate",
+        "use_global_tensor_value_transport",
+        "use_sparse_low_rank_local_residual",
     ):
         if not isinstance(getattr(config, name), bool):
             raise TypeError(f"{name} must be a bool")
+    for name in ("use_local_key_balancing", "use_global_key_balancing"):
+        value = getattr(config, name)
+        if value is not None and not isinstance(value, bool):
+            raise TypeError(f"{name} must be a bool or None")
+    if not isinstance(config.global_reduction_backend, str):
+        raise TypeError("global_reduction_backend must be a string")
+    if config.global_reduction_backend not in _GLOBAL_REDUCTION_BACKENDS:
+        choices = ", ".join(sorted(_GLOBAL_REDUCTION_BACKENDS))
+        raise ValueError(f"global_reduction_backend must be one of: {choices}")
+    if not isinstance(config.local_reduction_backend, str):
+        raise TypeError("local_reduction_backend must be a string")
+    if config.local_reduction_backend not in _LOCAL_REDUCTION_BACKENDS:
+        choices = ", ".join(sorted(_LOCAL_REDUCTION_BACKENDS))
+        raise ValueError(f"local_reduction_backend must be one of: {choices}")
+    use_global_key_balancing = (
+        config.use_key_balancing
+        if config.use_global_key_balancing is None
+        else config.use_global_key_balancing
+    )
     if not isinstance(config.global_transport_mode, str):
         raise TypeError("global_transport_mode must be a string")
     if config.global_transport_mode not in _GLOBAL_TRANSPORT_MODES:
@@ -5317,6 +6400,57 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
                     "each local_head_counts value must lie between zero and num_heads"
                 )
         local_head_counts = config.local_head_counts
+    residual_layers = config.local_residual_layers
+    if residual_layers is not None:
+        if not isinstance(residual_layers, tuple):
+            raise TypeError("local_residual_layers must be a tuple or None")
+        if not config.use_sparse_low_rank_local_residual:
+            raise ValueError(
+                "local_residual_layers requires "
+                "use_sparse_low_rank_local_residual"
+            )
+        if not residual_layers:
+            raise ValueError("local_residual_layers must not be empty")
+        if len(set(residual_layers)) != len(residual_layers):
+            raise ValueError("local_residual_layers must not contain duplicates")
+        for layer_index in residual_layers:
+            if not isinstance(layer_index, int) or isinstance(layer_index, bool):
+                raise TypeError("local_residual_layers must contain integers")
+            if not 0 <= layer_index < config.num_layers:
+                raise ValueError("local_residual_layers contains an invalid index")
+    if config.use_sparse_low_rank_local_residual:
+        if any(local_head_counts):
+            raise ValueError(
+                "sparse low-rank local residual requires local_head_counts "
+                "to keep every base head global"
+            )
+        if config.global_transport_mode == "none":
+            raise ValueError(
+                "sparse low-rank local residual requires active global transport"
+            )
+    if (
+        config.global_reduction_backend == "feature_gemm"
+        and config.global_transport_mode != "learned"
+    ):
+        raise ValueError(
+            "feature_gemm global reduction requires learned global transport"
+        )
+    if (
+        config.global_reduction_backend == "feature_gemm"
+        and config.use_memory_interaction
+        and config.global_memory_count > 1
+    ):
+        raise ValueError(
+            "feature_gemm global reduction is not registered with interacting "
+            "multi-memory transport"
+        )
+    if (
+        config.use_multiscale_spatial_kernel
+        and config.use_adaptive_multiscale_spatial_kernel
+    ):
+        raise ValueError(
+            "fixed and adaptive multiscale spatial kernels are mutually exclusive"
+        )
     if config.use_multiscale_spatial_kernel:
         if any(local_head_counts):
             raise ValueError(
@@ -5329,6 +6463,25 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         if config.use_memory_interaction:
             raise ValueError(
                 "use_multiscale_spatial_kernel cannot use memory interaction"
+            )
+    if config.use_adaptive_multiscale_spatial_kernel:
+        registered_lgl = (config.num_heads, 0, config.num_heads)
+        if config.num_layers != 3 or local_head_counts != registered_lgl:
+            raise ValueError(
+                "use_adaptive_multiscale_spatial_kernel requires three-layer LGL"
+            )
+        if config.global_transport_mode != "learned":
+            raise ValueError(
+                "adaptive multiscale spatial kernel requires learned global "
+                "transport"
+            )
+        if config.use_memory_interaction:
+            raise ValueError(
+                "adaptive multiscale spatial kernel cannot use memory interaction"
+            )
+        if config.use_whitened_global_read:
+            raise ValueError(
+                "adaptive multiscale spatial kernel cannot use whitened global read"
             )
     if config.use_whitened_global_read:
         _validate_whitened_global_read(config)
@@ -5491,9 +6644,13 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
             )
     if config.kernel_floor_mode not in {"fixed", "inverse_graph_size"}:
         raise ValueError("kernel_floor_mode must be 'fixed' or 'inverse_graph_size'")
-    if config.kernel_floor_mode == "inverse_graph_size" and config.use_key_balancing:
+    if (
+        config.kernel_floor_mode == "inverse_graph_size"
+        and use_global_key_balancing
+    ):
         raise ValueError(
-            "inverse_graph_size kernel floor is not registered with key balancing"
+            "inverse_graph_size kernel floor is not registered with global key "
+            "balancing"
         )
 
     eps = _float32_control("eps", config.eps, positive=True)
@@ -5597,6 +6754,23 @@ def _validate_config(config: EquivariantAttentionConfig) -> None:
         raise ValueError("hidden scalar channels must be divisible by num_heads")
     if config.use_tensor_product_kernel and hidden.tensors <= 0:
         raise ValueError("tensor-product kernel requires persistent 2e hidden channels")
+    if config.use_global_tensor_value_transport and hidden.tensors <= 0:
+        raise ValueError(
+            "global tensor value transport requires persistent 2e hidden channels"
+        )
+    if (
+        config.use_global_tensor_value_transport
+        and config.global_transport_mode == "none"
+    ):
+        raise ValueError(
+            "global tensor value transport requires active global transport"
+        )
+    if config.use_global_tensor_value_transport and all(
+        local_heads == config.num_heads for local_heads in local_head_counts
+    ):
+        raise ValueError(
+            "global tensor value transport requires at least one global head"
+        )
     if (
         config.use_cartesian_tensor_product_local_transport
         and hidden.tensors <= 0

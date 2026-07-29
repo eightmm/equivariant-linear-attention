@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C-VNEXT-1",
+      "text": "The explicit-feature GEMM backend computes the same configured factorized global attention function as the incumbent outer/scatter backend for the covered scalar, spatial, batching, graph-size, and value-width cases.",
+      "permitted_inference": "Bounded software and numerical-equivalence claim; not a universal floating-point identity proof.",
+      "status": "supported",
+      "required_support": 2,
+      "required_evidence": [
+        "forward and input-gradient comparisons in tests/test_global_feature_gemm.py",
+        "two one-thread CPU diagnostic runs with a reported float32 error bound"
+      ],
+      "dependencies": [
+        "task-scoped moment.py implementation",
+        "current positive kernel coefficients and feature layout"
+      ],
+      "falsifier": "A covered configuration exceeds its numerical tolerance or produces a different input gradient.",
+      "uncertainty": "Mixed precision, CUDA kernels, and configurations outside the tested feature construction remain unmeasured.",
+      "next_action": "Profile CUDA train steps before considering automatic backend selection."
+    },
+    {
+      "id": "C-VNEXT-2",
+      "text": "The opt-in homogeneous sparse low-rank residual preserves the covered O(3), translation, permutation, batching, compatibility, and gradient contracts while keeping all global heads active.",
+      "permitted_inference": "Implementation-contract claim for the registered Cartesian 0e/1o/2e numerical path.",
+      "status": "supported",
+      "required_support": 2,
+      "required_evidence": [
+        "tests/test_sparse_low_rank_residual.py",
+        "repository fast gate"
+      ],
+      "dependencies": [
+        "stable sparse candidate topology",
+        "rank-R separable local implementation"
+      ],
+      "falsifier": "Any covered transformation, batch-isolation, zero-initialization, two-step wake-up, or no-dense-pair test fails.",
+      "uncertainty": "The source and tests establish the implemented mechanics, not downstream usefulness or an asymptotic lower-bound proof.",
+      "next_action": "Run a matched real-task ablation only after a CUDA train-step resource gate."
+    },
+    {
+      "id": "C-VNEXT-3",
+      "text": "Packed receiver CSR and optional reverse CSR are consumed by the model without resorting, reproduce the covered COO receiver reductions in values and gradients, and retain compact int32 metadata when the graph range permits it.",
+      "permitted_inference": "Bounded implementation and representation claim.",
+      "status": "supported",
+      "required_support": 2,
+      "required_evidence": [
+        "tests/test_packed_neighbors.py",
+        "one-thread CPU reduction diagnostics"
+      ],
+      "dependencies": [
+        "stable edge ordering",
+        "torch.segment_reduce semantics in the recorded runtime"
+      ],
+      "falsifier": "Round-trip, reverse-row consistency, no-resort cutoff restriction, dtype, receiver sum, model output, or input-gradient equivalence fails.",
+      "uncertainty": "CUDA segment-reduction speed and very large graphs requiring int64 are not measured.",
+      "next_action": "Measure external packing cost and a CUDA forward/backward crossover before default promotion."
+    },
+    {
+      "id": "C-VNEXT-4",
+      "text": "The generic IrrepLayout and TensorProductPlan can describe arbitrary nonnegative angular momentum and parity and statically select triangle/parity-compatible paths, while unavailable numerical executors fail explicitly.",
+      "permitted_inference": "Static metadata and planning claim only.",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": [
+        "tests/test_irrep_layout.py"
+      ],
+      "dependencies": [
+        "registered executor table",
+        "canonical Cartesian production backend"
+      ],
+      "falsifier": "Parsing, canonical layout, triangle/parity filtering, or missing-executor behavior violates the tested contract.",
+      "uncertainty": "This is not a production-generic arbitrary-l equivariant numerical model and does not execute l>=3 tensor products.",
+      "next_action": "Add numerical executors only with a concrete task and resource justification."
+    },
+    {
+      "id": "C-VNEXT-5",
+      "text": "On the two post-review one-thread CPU diagnostics, feature GEMM and prepacked receiver reduction were faster than their comparison operators, while the homogeneous sparse residual was slower than both all-global and gated-LGL controls and only slightly reduced saved-tensor payload versus gated LGL.",
+      "permitted_inference": "Descriptive, workload-specific CPU operator evidence.",
+      "status": "supported",
+      "required_support": 2,
+      "required_evidence": [
+        "cpu-backend-probe-post-review.json",
+        "cpu-backend-probe-post-review-repeat.json"
+      ],
+      "dependencies": [
+        "PyTorch 2.12.1+cu130 CPU runtime",
+        "one thread and the recorded graph shapes"
+      ],
+      "falsifier": "The saved metric files do not contain the reported ratios or a same-recipe rerun reverses the directional result.",
+      "uncertainty": "The receiver result excludes CSR construction; hybrid timing includes parameter/input backward but no optimizer. Two same-machine diagnostics do not establish GPU, large-N, mixed-precision, production, or end-to-end performance.",
+      "next_action": "Use synchronized CUDA forward/backward/peak-allocation profiles if compute is authorized."
+    },
+    {
+      "id": "C-VNEXT-6",
+      "text": "This run does not establish improved QM9, LBA, PDBBind, point-cloud, or other downstream accuracy, nor a CUDA latency or memory advantage.",
+      "permitted_inference": "Explicit evidence-boundary statement.",
+      "status": "supported",
+      "required_support": 1,
+      "required_evidence": [
+        "protocol non-goals and CPU-only compute record"
+      ],
+      "dependencies": [],
+      "falsifier": "A separately registered downstream or CUDA run is completed and linked.",
+      "uncertainty": "Downstream utility remains unknown rather than negative.",
+      "next_action": "Treat all new numerical paths as opt-in until a preregistered real-data and CUDA gate is completed."
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "environment": {
+    "device": "cpu",
+    "repeats": 21,
+    "threads": 1,
+    "torch_version": "2.12.1+cu130",
+    "warmup": 5
+  },
+  "global": {
+    "feature_gemm_forward_input_backward_seconds": 0.0017557879909873009,
+    "feature_gemm_over_outer_ratio": 0.1154931671449016,
+    "forward_max_abs_error": 5.364418029785156e-07,
+    "heads": 4,
+    "nodes": 288,
+    "outer_forward_input_backward_seconds": 0.015202526992652565,
+    "spatial_feature_width": 40,
+    "timing_scope": "forward plus gradients with respect to every tensor input",
+    "value_width": 37
+  },
+  "hybrid": {
+    "active_sparse_layers": 2,
+    "baseline_forward_parameter_backward_seconds": 0.016859398980159312,
+    "baseline_saved_tensor_payload_bytes": 15484304,
+    "baseline_state_bytes": 612372,
+    "edges": 2048,
+    "gated_lgl_forward_parameter_backward_seconds": 0.021414043963886797,
+    "gated_lgl_saved_tensor_payload_bytes": 24748228,
+    "gated_lgl_state_bytes": 641468,
+    "local_rank": 4,
+    "nodes": 256,
+    "sparse_residual_forward_parameter_backward_seconds": 0.024223527987487614,
+    "sparse_residual_over_baseline_ratio": 1.436796650698797,
+    "sparse_residual_over_gated_lgl_ratio": 1.1311982000381995,
+    "sparse_residual_saved_tensor_payload_bytes": 23627596,
+    "sparse_residual_state_bytes": 661852,
+    "sparse_saved_payload_over_baseline_ratio": 1.5259062338223275,
+    "sparse_saved_payload_over_gated_lgl_ratio": 0.9547186974356305,
+    "state_bytes_ratio": 1.0808005591372565,
+    "timing_scope": "forward plus full parameter and input backward; excludes optimizer",
+    "zero_init_forward_max_abs_error": 0.0
+  },
+  "local": {
+    "degree": 32,
+    "edges": 131072,
+    "forward_max_abs_error": 0.0,
+    "index_add_forward_input_backward_seconds": 0.001120886008720845,
+    "measurement_scope": "prepacked reduction only; excludes CSR construction",
+    "nodes": 4096,
+    "row_ptr_dtype_bits": 32,
+    "segment_csr_forward_input_backward_seconds": 0.0007064949604682624,
+    "segment_over_index_add_ratio": 0.6303004542580689
+  }
+}

@@ -49,8 +49,13 @@ class _AutocastInferenceModule(nn.Module):
             "attention_kind",
             "symmetry",
             "config",
+            "input_irreps",
             "hidden_irreps",
+            "hidden_irrep_layout",
+            "workspace_irreps",
             "output_irreps",
+            "output_irrep_layout",
+            "tensor_product_plan",
         ):
             if hasattr(model, name):
                 setattr(self, name, getattr(model, name))

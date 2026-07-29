@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "run_id": "e2former-vnext-20260729",
+  "executions": [
+    {
+      "id": "E-001",
+      "command": "uv run pytest -q <architecture-focused files including a nonexistent tests/test_training.py>",
+      "status": "failed",
+      "exit_code": 4,
+      "failure_class": "command_scope_error",
+      "outcome": "Pytest stopped before collection because tests/test_training.py does not exist. The command scope was corrected; no scientific result was inferred."
+    },
+    {
+      "id": "E-002",
+      "command": "uv run python scripts/probe_vnext_backends.py --warmup 5 --repeats 21 --threads 1 --output artifacts/e2former-vnext-20260729/cpu-backend-probe.json",
+      "status": "failed_then_corrected",
+      "exit_code": 1,
+      "failure_class": "probe_script_bug",
+      "outcome": "The first probe reduced max() over empty vector/tensor outputs for scalar-only output irreps. The diagnostic reducer was restricted to nonempty outputs before the saved successful run."
+    },
+    {
+      "id": "E-003",
+      "command": "uv run python scripts/probe_vnext_backends.py --warmup 5 --repeats 21 --threads 1 --output artifacts/e2former-vnext-20260729/cpu-backend-probe.json",
+      "status": "completed",
+      "exit_code": 0,
+      "output": "cpu-backend-probe.json",
+      "outcome": "One-thread CPU forward/input-backward mechanics diagnostics completed; the later review narrowed the timing labels."
+    },
+    {
+      "id": "E-004",
+      "command": "uv run python scripts/probe_vnext_backends.py --warmup 5 --repeats 21 --threads 1 --output artifacts/e2former-vnext-20260729/cpu-backend-probe-final.json",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 3.0755,
+      "output": "cpu-backend-probe-final.json",
+      "outcome": "A second same-recipe diagnostic preserved every directional result and the exact saved-tensor/state byte counts."
+    },
+    {
+      "id": "E-005",
+      "command": "git diff --check && bash scripts/check.sh fast",
+      "status": "failed",
+      "exit_code": 1,
+      "duration_seconds": 19.1068,
+      "outcome": "771 tests passed and one existing error-message regex failed. The new message was changed to retain the legacy phrase local heads."
+    },
+    {
+      "id": "E-006",
+      "command": "uv run pytest -q tests/test_sparse_edge_api.py::test_precomputed_edges_are_rejected_without_local_heads && bash scripts/check.sh fast",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 21.0261,
+      "outcome": "Targeted regression passed; repository gate passed with 772 tests, 88.83% coverage, Ruff, compileall, and CPU float64 ML smoke."
+    },
+    {
+      "id": "E-007",
+      "command": "independent read-only subagent review of current diff, tests, protocol, and CPU probe",
+      "status": "findings",
+      "exit_code": 0,
+      "outcome": "Two blocking findings: packed CSR was unpacked and rebuilt in the model hot path, and ragged feature GEMM performed O(GN) batch rescans. Two nonblocking findings narrowed timing scope and O(E R D_head) complexity."
+    },
+    {
+      "id": "E-008",
+      "command": "uv run pytest -q <post-review focused files using two guessed filenames>",
+      "status": "failed",
+      "exit_code": 4,
+      "failure_class": "command_scope_error",
+      "outcome": "Pytest stopped before collection; repository file discovery supplied the correct filenames."
+    },
+    {
+      "id": "E-009",
+      "command": "uv run pytest -q tests/test_sparse_low_rank_residual.py tests/test_global_feature_gemm.py tests/test_key_balancing_split.py tests/test_packed_neighbors.py tests/test_irrep_layout.py tests/test_gated_local_transport.py tests/test_edge_conditioned_local.py tests/test_pairwise_local_content.py && uv run ruff check . && git diff --check",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 2.2179,
+      "outcome": "102 focused tests passed; Ruff and diff whitespace checks passed."
+    },
+    {
+      "id": "E-010",
+      "command": "uv run python scripts/probe_vnext_backends.py --warmup 5 --repeats 21 --threads 1 --output artifacts/e2former-vnext-20260729/cpu-backend-probe-post-review.json",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 3.1588,
+      "output": "cpu-backend-probe-post-review.json",
+      "outcome": "Post-review timing labels distinguish input backward, full parameter backward, optimizer exclusion, and prepacked reduction scope."
+    },
+    {
+      "id": "E-011",
+      "command": "uv run python scripts/probe_vnext_backends.py --warmup 5 --repeats 21 --threads 1 --output artifacts/e2former-vnext-20260729/cpu-backend-probe-post-review-repeat.json",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 3.1471,
+      "output": "cpu-backend-probe-post-review-repeat.json",
+      "outcome": "Same-recipe repeat preserved every directional timing result and exact byte counts."
+    },
+    {
+      "id": "E-012",
+      "command": "bash scripts/check.sh fast",
+      "status": "failed",
+      "exit_code": 1,
+      "duration_seconds": 19.1588,
+      "failure_class": "compatibility_regression",
+      "outcome": "774 tests passed; one direct InteractionReadout call required a backward-compatible packed_neighbors default."
+    },
+    {
+      "id": "E-013",
+      "command": "uv run pytest -q tests/test_readout_mask.py::test_interaction_readout_supports_direct_bfloat16_forward_and_backward && bash scripts/check.sh fast",
+      "status": "completed",
+      "exit_code": 0,
+      "duration_seconds": 21.6661,
+      "outcome": "Targeted regression and repository gate passed: 775 tests, 88.86% coverage, Ruff, compileall, and CPU float64 ML smoke."
+    }
+  ]
+}

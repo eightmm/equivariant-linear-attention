@@ -10,6 +10,36 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.20 -> v0.21 (2026-07-29) — add the opt-in homogeneous
+  full-global plus rank-`R` sparse residual, exact explicit-feature GEMM global
+  reduction, receiver/reverse CSR local reduction, independent local/global
+  key balancing, and degree-unbounded static irrep planning metadata. impact:
+  local refresh no longer consumes global heads or requires a rigid LGL depth;
+  the ordinary global kernel can avoid `N x H x F x V` node outers; compact
+  int32 CSR feeds `segment_reduce`; unsupported numerical tensor-product paths
+  fail explicitly while the live backend remains Cartesian `0e/1o/2e`.
+  Disabled state/RNG/output compatibility, symmetry/permutation/batch/gradient
+  contracts, exact backend value/gradient equivalence, and bounded CPU
+  mechanics pass. No CUDA, downstream-accuracy, or default-promotion claim is
+  made.
+- [model] v0.19 -> v0.20 (2026-07-28) — add opt-in exact global value
+  transport for persistent reflection-even `2e` states. impact: bounded
+  head-space tensors are appended as five value coordinates to the existing
+  factorized global numerator/denominator, so remote tensor senders can update
+  receiver tensors under learned or uniform transport without a new parameter,
+  checkpoint key, or `N x N` hot-path tensor. Dense-reference, remote-sender,
+  reflection, translation, permutation, graph-isolation, static-carrier,
+  radial-offset, gradient, and disabled-bitwise contracts pass; no downstream
+  accuracy, GPU efficiency, or default-promotion claim is made.
+- [model] v0.18 -> v0.19 (2026-07-28) — add an opt-in content-adaptive
+  four-scale spatial feature kernel to the fully global middle stage of exact
+  three-layer LGL. impact: separate invariant query/key scale profiles retain a
+  nonnegative exactly factorized `O(N)` spatial term with a positive full
+  denominator, separate a registered degree-two point-cloud moment collision,
+  and use `1.0016x` counterbalanced CPU forward latency and `1.0130x` state
+  bytes at `N=512,E=4096`. A dtype-epsilon profile floor prevents
+  softmax-underflow NaNs; no downstream accuracy or default promotion is
+  claimed.
 - [eval] v0.14 -> v0.15 (2026-07-28) — add a full-state/schema-matched
   frozen-mix control for whitened-read training and rerun the bounded QM9
   safety smoke plus official ID30 seeds 41--43 confirmation. impact: exposes

@@ -1,0 +1,205 @@
+{
+  "covered_artifacts": [
+    {
+      "path": "protocol.md",
+      "sha256": "f7ef7b0aa097d5b8af23adb3a67daa79c2be29671d13de9b6d94e8174c02caf4"
+    },
+    {
+      "path": "shared-feedback-summary.md",
+      "sha256": "9af6f6cd031fdf2150c7bd345b107fa17b18d50c33a5970c3eeca91319b732b0"
+    },
+    {
+      "path": "claim-register.json",
+      "sha256": "4c0bf2e1969ac7ed9630403ff38d64055d21be3404a23a8eee5ab6e49fae5fc2"
+    },
+    {
+      "path": "compute-environment.json",
+      "sha256": "8740745734bbfaaeded90fb9ae52c4fe6e8c25f7a8dfd9ec6eb58d771b26cf7e"
+    },
+    {
+      "path": "source-files.json",
+      "sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b"
+    },
+    {
+      "path": "execution-log.json",
+      "sha256": "5f08e05327938fcf5bc24eebe42a6a489514bd8a54e655c5f1f759ca64e2a34c"
+    },
+    {
+      "path": "cpu-backend-probe.json",
+      "sha256": "849ada867ddf50d0153785e4940b27abd59e578793baddd7e14de87ca28758bf"
+    },
+    {
+      "path": "cpu-backend-probe-final.json",
+      "sha256": "167efd8afb353325f653d611e3ea3d9407d7e9fed6b366e47b9c88a94d6ffe5c"
+    },
+    {
+      "path": "cpu-backend-probe-post-review.json",
+      "sha256": "71d98b8deb8cce8982855222949a4fcee5eb4621d7a1d478a890f8aa54f87fef"
+    },
+    {
+      "path": "cpu-backend-probe-post-review-repeat.json",
+      "sha256": "eba1e4263a74c0709f9f553af2d634c71599e7c3da69cc328cbc97eb37d6655d"
+    },
+    {
+      "path": "reference-use-ledger.json",
+      "sha256": "08d65f6ed738a88c33c7724b036cf1bacefd657b4a70a1d7d8a8940148c3b30f"
+    },
+    {
+      "path": "report.md",
+      "sha256": "06243c5f18fca454f112525ba32efdc19c211956c59c0b921aa0f9be1600d1ff"
+    }
+  ],
+  "covered_claim_ids": [
+    "C-VNEXT-1",
+    "C-VNEXT-2",
+    "C-VNEXT-3",
+    "C-VNEXT-4",
+    "C-VNEXT-5",
+    "C-VNEXT-6"
+  ],
+  "findings": [
+    {
+      "affected_claim_id": "C-VNEXT-3",
+      "code": "packed-csr-hotpath-rebuild",
+      "evidence": [
+        {
+          "artifact_path": "execution-log.json",
+          "artifact_sha256": "5f08e05327938fcf5bc24eebe42a6a489514bd8a54e655c5f1f759ca64e2a34c",
+          "json_pointer": "/executions/6/outcome"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/0"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/2"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/11"
+        }
+      ],
+      "id": "F-001",
+      "message": "The original implementation unpacked supplied CSR metadata and rebuilt receiver/reverse ordering in the model hot path. The corrected implementation consumes receiver-major plans directly, linearly restricts receiver and reverse row pointers after cutoff filtering, and semantically validates that reverse rows equal sender[reverse_edge_order].",
+      "owner": "producer",
+      "required_action": "Retain the no-resort cutoff regression and reverse-row semantic validation; keep the no-resort claim scoped to supplied plans.",
+      "residual_risk": "If reverse CSR is not supplied when sender-major grouping is needed, constructing sender order is outside the supplied-plan no-resort guarantee.",
+      "resolution_status": "resolved",
+      "severity": "major"
+    },
+    {
+      "affected_claim_id": "C-VNEXT-1",
+      "code": "ragged-feature-gemm-graph-node-rescan",
+      "evidence": [
+        {
+          "artifact_path": "execution-log.json",
+          "artifact_sha256": "5f08e05327938fcf5bc24eebe42a6a489514bd8a54e655c5f1f759ca64e2a34c",
+          "json_pointer": "/executions/6/outcome"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/0"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/9"
+        }
+      ],
+      "id": "F-002",
+      "message": "The original ragged fallback performed one full-batch scan and full-size output update per graph. The corrected path creates one stable graph grouping, slices contiguous graph ranges by recorded counts, concatenates graph outputs once, and restores original node order once while retaining covered forward and backward equivalence.",
+      "owner": "producer",
+      "required_action": "Retain the unsorted highly-ragged backward regression that forbids per-graph batch rescans.",
+      "residual_risk": "The ragged implementation still uses a Python loop over graphs and has not been profiled on CUDA.",
+      "resolution_status": "resolved",
+      "severity": "major"
+    },
+    {
+      "affected_claim_id": "C-VNEXT-5",
+      "code": "timing-scope-underdeclared",
+      "evidence": [
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/7"
+        },
+        {
+          "artifact_path": "cpu-backend-probe-post-review.json",
+          "artifact_sha256": "71d98b8deb8cce8982855222949a4fcee5eb4621d7a1d478a890f8aa54f87fef",
+          "json_pointer": "/hybrid/timing_scope"
+        },
+        {
+          "artifact_path": "cpu-backend-probe-post-review.json",
+          "artifact_sha256": "71d98b8deb8cce8982855222949a4fcee5eb4621d7a1d478a890f8aa54f87fef",
+          "json_pointer": "/local/measurement_scope"
+        },
+        {
+          "artifact_path": "cpu-backend-probe-post-review-repeat.json",
+          "artifact_sha256": "eba1e4263a74c0709f9f553af2d634c71599e7c3da69cc328cbc97eb37d6655d",
+          "json_pointer": "/hybrid/timing_scope"
+        }
+      ],
+      "id": "F-003",
+      "message": "The earlier hybrid timing did not establish full model-parameter backward and did not clearly separate optimizer and packing scope. The current probe uses loss.backward() with model parameters and differentiable inputs, explicitly excludes the optimizer, and labels the receiver comparison as prepacked reduction-only.",
+      "owner": "producer",
+      "required_action": "Continue reporting optimizer, topology construction, device, and backward scope with future timing results.",
+      "residual_risk": "Saved-tensor payload is not allocator peak memory, and an optimizer-inclusive end-to-end train step remains unmeasured.",
+      "resolution_status": "resolved",
+      "severity": "minor"
+    },
+    {
+      "affected_claim_id": "C-VNEXT-2",
+      "code": "sparse-complexity-width-omission",
+      "evidence": [
+        {
+          "artifact_path": "protocol.md",
+          "artifact_sha256": "f7ef7b0aa097d5b8af23adb3a67daa79c2be29671d13de9b6d94e8174c02caf4",
+          "line_range": "33-36"
+        },
+        {
+          "artifact_path": "report.md",
+          "artifact_sha256": "06243c5f18fca454f112525ba32efdc19c211956c59c0b921aa0f9be1600d1ff",
+          "line_range": "15-20"
+        },
+        {
+          "artifact_path": "source-files.json",
+          "artifact_sha256": "1549a2bd1ee15501e163f497c7b6ebd0690f8be0a8b82f145a48a01089ff7c6b",
+          "json_pointer": "/files/0"
+        }
+      ],
+      "id": "F-004",
+      "message": "The earlier O(E R) description omitted the E by R by D_head scalar payload. The implementation contract, public architecture documentation, report, and source docstring now state O(E R D_head), narrowing O(E R) to fixed head width.",
+      "owner": "producer",
+      "required_action": "Preserve the D_head qualification in future complexity and scaling claims.",
+      "residual_risk": "Node-projection and fixed-coordinate lane costs remain additional terms and should be included in workload-specific performance models.",
+      "resolution_status": "resolved",
+      "severity": "minor"
+    }
+  ],
+  "fingerprint": "82039db635b5e26bb8621c57bf493d2386f6643c1ffacb5d14f2aabe0484b375",
+  "independent": true,
+  "limitations": [
+    "This is a record and method review only. No reproduction mode is asserted; saved numerical diagnostics were hash-audited rather than independently regenerated in a separate workspace.",
+    "The focused software inspection covered the registered CPU float64/float32 mechanics, but CUDA, mixed precision, very large int64 graphs, allocator peak memory, and optimizer-inclusive end-to-end steps remain unverified.",
+    "The two performance records are same-machine one-thread CPU diagnostics. Receiver timing excludes packing and cutoff construction, and therefore does not establish an end-to-end sparse-backend crossover.",
+    "The packed reverse no-resort guarantee applies when a valid reverse plan is supplied. Absence of that optional plan may require construction of sender-major ordering.",
+    "IrrepLayout and TensorProductPlan provide generic static metadata and selection rules, not arbitrary-l numerical execution.",
+    "No downstream QM9, LBA, PDBBind, protein, molecule, material, or point-cloud accuracy claim was evaluated in this packet.",
+    "The reviewer identity and organizational independence are attestations and are not authenticated by the packet runtime."
+  ],
+  "packet_fingerprint": "a25f4678369823e7e8acb25a260340a4c6c4f11a94c41963de7bb9bc4e0544a3",
+  "review_id": "review-a25f4678369823e7e8ac",
+  "review_modes": [
+    "method",
+    "record"
+  ],
+  "review_task_id": "review-task-a25f4678369823e7e8ac",
+  "reviewer": "codex-subagent-vnext-independent-review",
+  "schema_version": 1,
+  "status": "passed"
+}

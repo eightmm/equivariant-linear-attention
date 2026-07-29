@@ -1,10 +1,18 @@
 # Equivariant Linear Attention
 
 A focused PyTorch prototype of one O(3)-equivariant local/global attention
-architecture for 3D graphs. The model keeps scalar and polar-vector states and
-transports relative first and symmetric-traceless second moments through a
-bounded degree-2 kernel. Global heads use exact structured factorization; local
-heads use same-graph cutoff edges.
+architecture for unordered 3D point clouds and optional sparse 3D graphs. The
+model keeps scalar and polar-vector states and transports relative first and
+symmetric-traceless second moments through a bounded degree-2 kernel. Global
+heads use exact structured factorization; local heads may use same-graph cutoff
+edges.
+
+The core architecture is domain-agnostic. It does not require bonds, residues,
+ligand/pocket identities, semantic segments, or a task-specific node mask.
+Molecules, proteins, protein--ligand complexes, QM9, and ATOM3D-LBA are
+downstream adapters or evaluation settings, not the ontology of the model.
+Inputs are an order-free set of positions and node features, with optional
+equivariant feature channels and optional sparse edges.
 
 The repository intentionally exposes one implementation,
 `EquivariantAttention`, with routing, multi-memory (HEMM), and radial-trace
@@ -55,6 +63,16 @@ model = EquivariantAttention(
         use_radial_trace=False,
         # Optional no-edge multi-scale Euclidean kernel; default off.
         use_multiscale_spatial_kernel=False,
+        # Optional adaptive four-scale middle-global LGL kernel; default off.
+        use_adaptive_multiscale_spatial_kernel=False,
+        # Equation-preserving global execution backend; compatibility default.
+        global_reduction_backend="outer_scatter",  # or feature_gemm
+        # Homogeneous full-global + sparse rank-R residual; default off.
+        use_sparse_low_rank_local_residual=False,
+        local_residual_rank=4,
+        local_residual_layers=None,
+        # Receiver reduction backend; compatibility default.
+        local_reduction_backend="index_add",  # or segment_csr
         # Optional latent-coordinate refinement; disabled by default.
         coordinate_updates=False,
         # External sparse candidates + moving coordinates must choose a policy.
@@ -64,7 +82,7 @@ model = EquivariantAttention(
         pairwise_residual_scale_init=0.1,
         # Optional per-local-layer invariant edge filters; default off.
         use_edge_conditioned_local_transport=False,
-        # mean | sum | ligand-pocket interaction residual.
+        # Core pooling: mean | sum. Interaction is a task-specific extension.
         readout_mode="mean",
     )
 )
@@ -79,12 +97,84 @@ print(out["graph_vectors"].shape)  # (2, 1, 3)
 print(out["graph_tensors"].shape)  # (2, 1, 3, 3)
 ```
 
+The E2Former-informed vNext route keeps all global heads in every block and
+adds an independent low-rank sparse residual at selected layers:
+
+```python
+from equivariant_attention import pack_neighbor_graph
+
+model = EquivariantAttention(
+    EquivariantAttentionConfig(
+        node_dim=16,
+        hidden_irreps="64x0e + 4x1o",
+        num_layers=6,
+        num_heads=4,
+        local_head_counts=(0,) * 6,
+        use_sparse_low_rank_local_residual=True,
+        local_residual_rank=4,
+        local_residual_layers=(1, 3, 5),
+        global_reduction_backend="feature_gemm",
+        local_reduction_backend="segment_csr",
+    )
+)
+packed = pack_neighbor_graph(
+    edge_index,
+    num_nodes=node_feats.shape[0],
+    build_reverse=True,
+)
+out = model(node_feats, pos, batch=batch, packed_neighbors=packed)
+```
+
+The local edge latent has width `R`, transports an `R x D_head` scalar value
+payload plus fixed-coordinate equivariant lanes, does not persist across
+blocks, and never replaces global rank. The GEMM backend evaluates exactly the
+same scalar, constant, linear, quadratic, and optional spatial global feature
+kernel while removing the per-node `F x V` outer intermediate. Receiver CSR retains int32
+metadata when safe, supplies reverse rows for local key balancing, and is
+consumed directly when `packed_neighbors` is provided. All three controls
+remain explicit and default-off; the current evidence is mechanical/CPU only,
+not downstream accuracy or CUDA peak memory.
+
+For the exact three-layer `lgl` route, the separate opt-in
+`use_adaptive_multiscale_spatial_kernel=True` equips only the middle global
+stage with four content-adaptive spatial scales. Nonnegative invariant
+query/key scale profiles multiply the existing positive Gaussian--Taylor
+features, so their concatenated dot product is still evaluated by exact
+segmented sufficient statistics without an `N x N` tensor. This is an
+implemented research candidate, not a promoted default or a downstream
+accuracy claim.
+
 Adding hidden channels such as `hidden_irreps="64x0e + 4x1o + 4x2e"` carries a
 persistent symmetric-traceless Cartesian rank-2 state through every block.
 Invariant gates couple it to scalar/vector updates while preserving O(3),
 translation, batching, and node-permutation behavior. This opt-in path supports
 only reflection-even `2e`; it is not a general spherical-harmonic or arbitrary
 `l>2` implementation.
+
+The separate `IrrepLayout` and `TensorProductPlan` APIs can parse and plan
+arbitrary nonnegative angular degree/parity layouts at construction. They
+expose dimensions, stable slices, O(3)/SE(3) selection rules, and explicit
+executor binding. This is planning metadata, not an arbitrary-`l` numerical
+backend: `EquivariantAttentionConfig.hidden_irreps/output_irreps` still use the
+optimized Cartesian `0e/1o/2e` executor and reject unsupported channels.
+
+Setting `use_global_tensor_value_transport=True` additionally transports the
+bounded persistent tensor as a value in every active global head. It reuses the
+existing exact factorized numerator/denominator, adds only five fixed value
+coordinates per head, and introduces no pair tensor or new checkpoint
+parameter:
+
+```python
+EquivariantAttentionConfig(
+    node_dim=node_dim,
+    hidden_irreps="64x0e + 4x1o + 4x2e",
+    num_heads=4,
+    use_global_tensor_value_transport=True,
+)
+```
+
+This is an opt-in architecture capability; downstream accuracy and GPU
+train-step efficiency have not yet been established.
 
 The opt-in static Cartesian tensor-product local path additionally lets a
 gated local stage execute `2e x 1o -> 1o`, `2e x 0e -> 2e`, and

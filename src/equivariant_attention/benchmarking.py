@@ -7,6 +7,8 @@ from typing import Sequence
 import torch
 from torch.utils.data import Dataset
 
+from .neighbors import PackedNeighborGraph
+
 
 @dataclass(frozen=True)
 class GraphSample:
@@ -28,6 +30,7 @@ class GraphBatch:
     edge_index: torch.Tensor | None = None
     edge_index_is_validated: bool = False
     readout_mask: torch.Tensor | None = None
+    packed_neighbors: PackedNeighborGraph | None = None
 
     def to(
         self,
@@ -61,6 +64,11 @@ class GraphBatch:
                 None
                 if self.readout_mask is None
                 else self.readout_mask.to(device=device)
+            ),
+            packed_neighbors=(
+                None
+                if self.packed_neighbors is None
+                else self.packed_neighbors.to(device)
             ),
         )
 

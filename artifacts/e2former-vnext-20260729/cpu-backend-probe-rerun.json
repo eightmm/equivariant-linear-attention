@@ -1,0 +1,45 @@
+{
+  "environment": {
+    "device": "cpu",
+    "repeats": 7,
+    "threads": 1,
+    "torch_version": "2.12.1+cu130",
+    "warmup": 2
+  },
+  "global": {
+    "feature_gemm_over_outer_ratio": 0.11470993720058482,
+    "feature_gemm_train_step_seconds": 0.0017770429840311408,
+    "forward_max_abs_error": 5.364418029785156e-07,
+    "heads": 4,
+    "nodes": 288,
+    "outer_train_step_seconds": 0.015491621976252645,
+    "spatial_feature_width": 40,
+    "value_width": 37
+  },
+  "hybrid": {
+    "active_sparse_layers": 2,
+    "baseline_state_bytes": 612372,
+    "baseline_train_step_seconds": 0.015625122003257275,
+    "edges": 2048,
+    "gated_lgl_state_bytes": 641468,
+    "gated_lgl_train_step_seconds": 0.018887608021032065,
+    "local_rank": 4,
+    "nodes": 256,
+    "sparse_residual_over_baseline_ratio": 1.4947574175464096,
+    "sparse_residual_over_gated_lgl_ratio": 1.236565635438267,
+    "sparse_residual_state_bytes": 661852,
+    "sparse_residual_train_step_seconds": 0.023355767014436424,
+    "state_bytes_ratio": 1.0808005591372565,
+    "zero_init_forward_max_abs_error": 0.0
+  },
+  "local": {
+    "degree": 32,
+    "edges": 131072,
+    "forward_max_abs_error": 0.0,
+    "index_add_train_step_seconds": 0.0011371090076863766,
+    "nodes": 4096,
+    "row_ptr_dtype_bits": 32,
+    "segment_csr_train_step_seconds": 0.0007185559952631593,
+    "segment_over_index_add_ratio": 0.6319147860108612
+  }
+}

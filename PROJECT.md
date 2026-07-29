@@ -2,6 +2,46 @@
 
 ## Status
 
+- The 2026-07-29 E2Former-informed vNext mechanics packet is implemented and
+  remains **opt-in / not promoted**. It replaces the rigid architectural
+  assumption that a block must give up global heads to become local with a
+  homogeneous update: every block retains all exact global heads, while
+  selected layers add an edge-state-free rank-`R` sparse residual. The same
+  packet adds an exact explicit-feature GEMM global reduction, independent
+  local/global key-balancing controls, compact receiver/reverse CSR metadata
+  with an explicit `segment_reduce` lane, and a degree-unbounded static
+  `IrrepLayout`/`TensorProductPlan` planning API. The numerical model backend
+  remains the optimized Cartesian `0e/1o/2e` executor; parser/planner support
+  is not arbitrary-`l` numerical support. All numerical paths are default-off
+  and common parameters, RNG state, state schema, and outputs remain exactly
+  compatible when disabled. Across two post-review same-recipe one-thread CPU
+  mechanics probes (PyTorch 2.12.1, 21 repeats), explicit-feature GEMM used
+  `0.113--0.115x` the forward-plus-input-backward time of outer/scatter for
+  `N=288,H=4,F_spatial=40,V=37`; a prepacked receiver-reduction microbenchmark
+  used `0.630--0.637x` the index-add time at `N=4096,k=32`, excluding packing
+  and cutoff work. The two-refresh rank-4 homogeneous candidate used
+  `1.131x` the gated LGL forward-plus-full-parameter/input-backward time and
+  `0.955x` its saved-tensor payload at `N=256,E=2048`, excluding the optimizer,
+  because it deliberately retains three global transports instead of one.
+  These are CPU operator diagnostics, not CUDA, memory-peak, or
+  downstream-accuracy evidence. Triton, ELL,
+  threshold-based auto-dispatch, and numerical `l>=3` execution remain
+  deferred.
+- Exact global persistent-`2e` value transport is implemented as an opt-in
+  architecture capability. `use_global_tensor_value_transport=True` projects
+  the bounded hidden tensor to head multiplicity, appends its five coordinates
+  to the existing factorized global value payload, and feeds the transported
+  result through either the generic projected/gated tensor residual or the
+  static carrier's direct bounded residual. This closes the concrete gap where
+  a remote sender tensor could influence global scores but could not travel as
+  a value. The route adds no parameter or checkpoint key, retains fixed-width
+  `O(N)` work with no `N x N` hot-path tensor, supports learned and uniform
+  transport plus the static carrier, and remains off by default.
+  Dense-reference, remote-sender, full `O(3)` including reflection,
+  translation, permutation, graph-isolation, radial-offset, finite-gradient,
+  and bitwise-disabled contracts are registered in
+  `tests/test_global_tensor_value_transport.py`. No accuracy or GPU-efficiency
+  claim is attached.
 - The 2026-07-28 follow-up **rejects promotion of the whitened global read**.
   The original QM9 comparison first failed (`0.696559` versus `0.640651 eV`)
   and exposed a more important evaluation confound: merely adding the
@@ -800,13 +840,42 @@
 
 - Name: equivariant-linear-attention
 - Type: PyTorch ML research prototype
-- Goal: develop one mixed-connectivity, multi-memory factorized
-  moment-attention architecture for 3D structural graphs, with narrow and
-  testable O(3), locality, degeneration, and evaluation contracts.
+- Goal: develop one domain-agnostic, mixed-connectivity, factorized
+  moment-attention architecture for unordered 3D point clouds and optional
+  sparse 3D graphs, with narrow and testable symmetry, locality, scaling,
+  degeneration, and evaluation contracts.
 - Users/workflow: research and development from Python scripts and tests.
 - Non-goals: multiple public attention families, production training
-  infrastructure, chirality-sensitive prediction, or unvalidated
-  protein/ligand segment semantics.
+  infrastructure, guaranteed chirality-sensitive prediction, or embedding
+  molecule-, protein-, pocket-, or ligand-specific semantics into the core
+  transport.
+
+## Core Problem and Domain Boundary
+
+- Scientific object: a finite unordered set
+  `{(x_i, h_i, optional irreps_i)}` in three-dimensional space, optionally
+  augmented by a sparse directed graph. Input order has no meaning.
+- Required core information: positions, node features, and graph/batch
+  membership. Chemical bonds, residue IDs, ligand/pocket masks, semantic
+  segments, and task-specific pooling masks are optional adapter information,
+  never required model ontology.
+- Core symmetry: node outputs are permutation equivariant and graph outputs
+  are permutation invariant. Geometry is translation consistent and uses a
+  selectable O(3) or SE(3) contract. The default remains O(3).
+- Connectivity: the factorized global route works without an edge list. A
+  local route may consume geometry-only neighbors or externally supplied graph
+  edges. The internal complete-pair neighbor fallback is small-graph
+  compatibility behavior, not part of a scalable point-cloud claim.
+- Complexity target: fixed-rank global transport is `O(N)` in node count and
+  materializes no `N x N` tensor; optional local transport is `O(E)`. A
+  scalable hybrid must keep local degree bounded so `E=O(N)`.
+- Domain boundary: molecules, proteins, protein--ligand complexes, materials,
+  and generic point clouds are downstream datasets. Their featurizers, label
+  heads, masks, and split policies belong outside the core transport. Results
+  on QM9 or ATOM3D-LBA are evidence probes, not a redefinition of the model.
+- Experimental memory banks, interaction readouts, and segment-aware features
+  remain opt-in research adapters. They do not define the architecture goal or
+  its default path.
 
 ## One-Architecture Contract
 
@@ -842,6 +911,65 @@
   Scale-first local/memory geometry controls retain separately tested support
   for positive subnormal values.
 
+## Architecture-Level Next Direction
+
+The next architecture is now a homogeneous sparse-plus-low-rank global block,
+not another fixed three-letter routing pattern:
+
+```text
+H_(t+1) = FFN_t(H_t + G_t(H_t, X) + I[t in R] S_t(H_t, X, E))
+```
+
+- `G_t` keeps all `H` exact factorized global heads in every block. It remains
+  fixed-rank `O(N)` and never constructs an `N x N` attention tensor.
+- `S_t` is the new separable local residual. Node-wise scalar/vector/value
+  projections are evaluated once. Each retained edge forms only `R`
+  invariant logits from receiver/key content, RBF geometry, vector inner
+  products, and projections onto the edge direction. Positive cutoff-weighted
+  rank lanes are receiver-normalized and aggregate scalar values, polar
+  vectors, relative directions, transient `2e` edge quadrupoles, optional
+  persistent `2e` values, and radial traces. Rank-to-head output maps are
+  zero-initialized, so enabling the lane begins as the exact incumbent
+  function and wakes deeper parameters after the first optimizer update. The
+  scalar payload is `E x R x D_head`, hence general local work is
+  `O(E R D_head)` and becomes `O(E R)` only at fixed head width.
+- `local_residual_layers=None` refreshes every block; an explicit tuple makes
+  local refresh periodic without reducing global rank. Legacy
+  `local_head_counts` and LGL remain compatibility/evidence routes and cannot
+  be combined with the homogeneous residual.
+- `global_reduction_backend="feature_gemm"` concatenates the scalar,
+  constant, linear-`1o`, isometric quadratic, and optional distinct spatial
+  query/key feature blocks. Graph-wise GEMM computes
+  `Phi_K^T V` followed by `Phi_Q S`, eliminating the incumbent
+  `N x H x F x V` per-node outer while reproducing the same defined kernel,
+  denominator, and one-cycle key balancing. Highly ragged batches compute one
+  stable grouping, slice by graph offsets, and apply one inverse permutation
+  instead of rescanning all nodes per graph.
+- `local_reduction_backend="segment_csr"` builds receiver and reverse offsets
+  after cutoff filtering for COO inputs. Local receiver sums use
+  `torch.segment_reduce`; generic local key balancing uses reverse CSR. Public
+  `PackedNeighborGraph` stores stable receiver CSR and optional reverse CSR in
+  int32 whenever addressable; the model consumes and linearly restricts these
+  plans without resorting, preserving index dtype across devices.
+- `use_local_key_balancing` and `use_global_key_balancing` may now be controlled
+  independently. `None` inherits the legacy `use_key_balancing`, preserving
+  every existing configuration.
+- `IrrepLayout` and `TensorProductPlan` now parse and plan arbitrary
+  nonnegative degree/parity layouts once at construction. The live numerical
+  backend is deliberately unchanged: model execution accepts only
+  `0e/polar-1o/2e`, and canonical Cartesian tensor-product executors are bound
+  statically. A planned but unregistered numerical path fails explicitly.
+
+The previous adaptive multiscale middle-global LGL packet remains available
+and mechanically verified, but it no longer defines the architectural target.
+No real-data accuracy, CUDA speed, or CUDA peak-memory claim is attached to
+this new packet yet. The next scientific gate is a matched downstream
+comparison of homogeneous sparse-plus-global blocks against accepted gated
+LGL on a bounded-degree generic 3D task, followed by CUDA backend profiling.
+ELL, chunk-streamed gated MLPs, full-block recomputation, Triton, automatic
+threshold dispatch, persistent/public `l>=3`, and a general numerical CG
+executor require that evidence and remain out of scope.
+
 ## Static-Compiled Irreps and CTP-LGL Extension
 
 - Decision state: confirmed by the user's 2026-07-27 post-draft instruction to
@@ -849,12 +977,14 @@
   irrep contract with statically compiled execution rather than build a
   runtime-dynamic irrep interpreter or replace this project with a separate
   Equiformer family.
-- Phase-1 representation scope remains full-`O(3)` Cartesian
-  `0e + polar-1o + symmetric-traceless-2e`. The existing parser continues to
-  reject `0o`, `1e`, `2o`, and `l > 2` in this packet. A parity-complete
-  `IrrepsLayout` and optional general-CG/eSCN backend are later model-class
-  decisions, admitted only if the phase-1 tensor-product path is useful on
-  real data. No `e3nn`, spherical-harmonic, or other dependency is added.
+- The numerical representation scope remains full-`O(3)` Cartesian
+  `0e + polar-1o + symmetric-traceless-2e`.
+  `CartesianIrreps`, and therefore executable model inputs/hidden/outputs,
+  continues to reject `0o`, `1e`, `2o`, and `l > 2`. The separate
+  degree-unbounded `IrrepLayout`/`TensorProductPlan` layer now parses,
+  canonicalizes, slices, and applies O(3)/SE(3) selection rules without
+  claiming a numerical executor. No `e3nn`, spherical-harmonic, or other
+  dependency is added.
 - "Static compiled" means that the enabled tensor-product paths, input/output
   degrees, parities, multiplicities, and tensor storage slices are resolved
   once in `__init__`. Forward execution contains no input-dependent irrep

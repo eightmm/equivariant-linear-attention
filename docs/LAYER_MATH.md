@@ -212,6 +212,220 @@ quadratic summaries. Their learned values may be signed, so numerator summaries
 are not clamped. This is algebraically identical to the explicit dense kernel
 and remains `O(N)` at fixed width and head count.
 
+## Adaptive multiscale spatial LGL
+
+The opt-in exact three-layer LGL candidate adds a spatial feature block only to
+the fully global middle stage. For normalized centered position `x_i` and
+positive scale `s`, the existing ten-component degree-two Gaussian--Taylor map
+`psi_s(x_i)` satisfies
+
+```text
+psi_s(x_i)^T psi_s(x_j)
+  = exp(-s (||x_i||^2 + ||x_j||^2))
+    * (1 + u_ij + u_ij^2 / 2),
+u_ij = 2 s x_i^T x_j.
+```
+
+The polynomial factor is strictly positive in real arithmetic because
+`1 + u + u^2/2 = ((u+1)^2 + 1)/2`. For four fixed scales, invariant scalar
+projections produce separate query/key logits. With
+`epsilon = finfo(logit_dtype).eps`, define
+
+```text
+pq_ihs = (softmax_s(lq_ihs) + epsilon) / (1 + S epsilon),
+pk_jhs = (softmax_s(lk_jhs) + epsilon) / (1 + S epsilon),
+gq_ihs = sqrt(pq_ihs),
+gk_jhs = sqrt(pk_jhs),
+Qsp_ih = concat_s(gq_ihs psi_s(x_i)),
+Ksp_jh = concat_s(gk_jhs psi_s(x_j)).
+```
+
+Then the added pair term is
+
+```text
+Ksp_ijh = Qsp_ih^T Ksp_jh
+        = sum_s gq_ihs gk_jhs psi_s(x_i)^T psi_s(x_j) >= 0.
+```
+
+The epsilon floor prevents a representable softmax zero from entering
+`sqrt(0)` during backward. Renormalization keeps each squared scale profile
+summed to one, preserves common-logit-shift invariance, and initializes to the
+average of the four scale kernels when both projections are zero. The spatial
+term is numerically nonnegative; extreme Gaussian underflow may make it zero.
+The incumbent strictly positive kernel floor still keeps the full attention
+kernel and denominator positive.
+
+For key-balancing row scale `r_ih`, the spatial column mass is
+
+```text
+Qmass_gh = sum_i r_ih Qsp_ih,
+msp_jh = Ksp_jh^T Qmass_gh.
+```
+
+After the combined structured-plus-spatial key scale `d_jh` is formed, value
+transport is
+
+```text
+Ssp_gh = sum_j Ksp_jh tensor (d_jh v_jh),
+osp_ih = Qsp_ih^T Ssp_gh.
+```
+
+These are exact evaluations of the defined kernel. With fixed scale count and
+feature width, work and node storage are `O(N)` and no `N x N` tensor is
+materialized. Gates depend only on invariant scalar state, while the spatial
+basis uses centered/RMS-normalized coordinates, preserving O(3), translation,
+batch, and permutation contracts subject to the documented coordinate-storage
+precision boundary.
+
+## Exact explicit-feature GEMM backend
+
+The structured summaries above and an explicit feature factorization are two
+execution strategies for the same kernel. Let `eta_g=1` for the fixed floor
+and `eta_g=1/N_g` for the inverse-graph-size baseline. Using an isometric
+symmetric-square map
+
+```text
+Sym2(x) = [x_1^2, x_2^2, x_3^2,
+           sqrt(2)x_1x_2, sqrt(2)x_1x_3, sqrt(2)x_2x_3],
+```
+
+define
+
+```text
+PhiQ_ih = concat(
+  a_ih,
+  sqrt(eta_g (c + beta_h)),
+  sqrt(eta_g delta_h) qbar_ih,
+  sqrt(gamma_h) Sym2(qbar_ih),
+  optional Qsp_ih
+)
+
+PhiK_jh = concat(
+  b_jh,
+  sqrt(eta_g (c + beta_h)),
+  sqrt(eta_g delta_h) kbar_jh,
+  sqrt(gamma_h) Sym2(kbar_jh),
+  optional Ksp_jh
+).
+```
+
+The shared `sqrt(2)` coordinates give
+`Sym2(q)^T Sym2(k)=(q^T k)^2`; therefore
+`PhiQ_i^T PhiK_j` is exactly the incumbent pair kernel, including distinct
+adaptive spatial query/key features. For unbalanced transport,
+
+```text
+S_gh = sum_j PhiK_jh tensor [v_jh, 1],
+y_ih = PhiQ_ih^T S_gh,
+o_ih = y_ih[:-1] / y_ih[-1].
+```
+
+One-cycle key balancing first evaluates
+
+```text
+Q_gh = sum_i PhiQ_ih,
+m_jh = PhiK_jh^T Q_gh,
+S_gh = sum_j PhiK_jh tensor ([v_jh,1] / m_jh).
+```
+
+`feature_gemm` evaluates these equations as graph-major matrix products.
+Unlike the compatibility numerator it never materializes a per-node
+`N x H x F x V` outer. Storage is `O(NHF + GHFV + NHV)` at fixed feature
+rank. A bounded-padding layout is used for ordinary batches; highly ragged
+batches are grouped once, sliced by graph offsets, concatenated once, and
+returned to node order with one inverse permutation. They execute the same two
+GEMMs without `G` full-batch scans or a repeated full-size `index_copy` chain.
+
+## Homogeneous sparse low-rank residual
+
+The vNext block retains the full global message in every layer and adds a
+separable local correction only on a static refresh set `R`:
+
+```text
+M_i^t = G_i^t + 1[t in R] S_i^t.
+```
+
+For rank `r=1..R`, node projections produce invariant scalars
+`q_ir,k_jr`, polar vectors `u_ir,v_jr`, scalar values `z_jrd`, polar values
+`p_jr`, and invariant value gates. With normalized polar edge direction
+`d_ij=(x_j-x_i)/Rc`, the edge logit is
+
+```text
+ell_ijr = tanh(
+  q_ir + k_jr + A_r RBF(||d_ij||^2)
+  + alpha_r <u_ir,v_jr>
+  + beta_r <u_ir,d_ij>
+  + chi_r <v_jr,d_ij>
+).
+```
+
+Every term in `ell` is O(3)-invariant: polar/polar and polar/direction
+contractions remain even under reflection. Positive receiver-normalized
+weights are
+
+```text
+abar_ijr = fc(||d_ij||^2) sigmoid(ell_ijr),
+a_ijr = abar_ijr / sum_(k -> i) abar_ikr.
+```
+
+Rank-space sufficient statistics are
+
+```text
+S0_ird = sum_j a_ijr z_jrd
+S1_ir  = sum_j a_ijr p_jr
+Sd_ir  = sum_j a_ijr g^d_jr d_ij
+S2_ir  = sum_j a_ijr (
+           g^2_jr ST(d_ij tensor d_ij) + optional W2 H_j^(2e))
+Sr_ir  = sum_j a_ijr g^r_jr ||d_ij||^2.
+```
+
+Channel-only maps `R -> H` return this tuple to the existing head update.
+They are initialized at zero, so the enabled model starts as the exact
+all-global control. At the first backward pass the output maps receive
+gradient; after their first update the query/key/value projections receive a
+nonzero learning signal. The sparse path uses only `E x R` invariant edge
+latents and canonical `E x R x {D,3,5}` transported values. It has no
+persistent edge state, hidden-width edge MLP, triplets, or `N x N` tensor.
+Its scalar payload gives work `O(N + E R D_head)` in general and
+`O(N + ER)` when rank and channel width are fixed.
+
+## Receiver CSR and reverse key mass
+
+With cutoff-retained edges sorted receiver-major, let `row_ptr[i]:row_ptr[i+1]`
+index all `j -> i` edges. Receiver sums become
+
+```text
+out_i = segment_sum(edge_value[row_ptr[i]:row_ptr[i+1]]).
+```
+
+The optional reverse plan stably sorts the same edges by sender and supplies a
+second offset array. Generic local key balancing uses it for
+`m_j=sum_i K_ij`; the resulting edge weights return to receiver order before
+the row denominator. Compact int32 offsets/senders are valid whenever node and
+edge addresses fit signed 32-bit range, while tensor indexing is promoted only
+at the point PyTorch requires it. For an already packed graph, cutoff masks
+restrict the receiver/reverse pointers by prefix counts and map the reverse
+permutation into retained forward order, so neither receiver nor sender rows
+are resorted. CSR changes reduction order but not the defined sum; float64
+value/gradient equivalence and bounded float32 error are tested separately.
+
+## Static irrep planning boundary
+
+For abstract irreps `(l_1,p_1)`, `(l_2,p_2)`, and `(L,p_L)`, the planner admits
+
+```text
+|l_1-l_2| <= L <= l_1+l_2,
+p_L = p_1 p_2                         under O(3).
+```
+
+SE(3) planning may retain an explicitly requested parity-mixed path because
+proper rotations do not distinguish the two parity labels. Layout parsing,
+multiplicity merging, flattened slices, and path binding are construction-time
+metadata. Only registered native Cartesian executors run numerically. The
+current bindings are the existing `1o x 0e -> 1o` passthrough plus
+`1o x 1o -> 2e`, `2e x 0e -> 2e`, and `2e x 1o -> 1o`; the planner does not
+turn arbitrary `l` into an executable model.
+
 ## External equivariant inputs and irrep RMS normalization
 
 The public forward can optionally accept polar-vector and reflection-even
@@ -374,6 +588,51 @@ reflection-even. No spherical harmonics or parity-odd tensor products are
 introduced. The v3 public API can inject external reflection-even `2e`
 matrices into this state; external `2o` and arbitrary higher-degree inputs
 remain unsupported.
+
+### Optional global persistent-`2e` value lane
+
+The base persistent path above is receiver-local: without an explicit value
+lane, changing `H_j` at a remote sender cannot change receiver `i` through an
+otherwise global-only block. The opt-in
+`use_global_tensor_value_transport=True` closes that gap. Let
+
+```text
+V^T_jh = (W_to B(H_j))_h in R^5.
+```
+
+For the same invariant scalar kernel and denominator used by the incumbent
+global read, the new lane computes
+
+```text
+Hbar_ih = sum_{j:b_j=b_i} K_ijh V^T_jh / Z_ih.
+```
+
+`V^T` is concatenated to the existing value statistics before factorization,
+so each of its five coordinates reuses the same graph-segmented sufficient
+statistics. At fixed head width, the work and storage increase by a constant
+five value coordinates per global head and remain `O(N)`; no pair-weight
+tensor is formed. The existing tensor reconstruction becomes
+
+```text
+M_i = M_i^position + Hbar_i,
+```
+
+after which the unchanged `W_from`, invariant gate, and bounded residual update
+write to persistent `H_i` for the generic carrier. The static carrier has
+`C_2=H`, uses the identity head layout, and applies its existing bounded
+residual directly; it has no `W_from` or persistent-tensor gate. Since `K/Z` is
+an `O(3)`-invariant scalar and every channel map that is present acts only on
+multiplicity, `Hbar` transforms as `T(Hbar) -> R T(Hbar) R^T`, including
+reflections. Graph-segmented sums give exact permutation equivariance and graph
+isolation, while the value contains no coordinate origin and is translation
+invariant. Learned, uniform, fixed spatial, adaptive spatial, memory, and
+additive whitened-read configurations all share the same value-packing
+argument; the whitened auxiliary lane itself still applies only to
+scalar/vector values.
+
+The flag is off by default and introduces no parameters or checkpoint keys.
+It is rejected without hidden `2e`, without an active global transport mode,
+or when every head in every layer is local.
 
 ## Global transport controls
 
