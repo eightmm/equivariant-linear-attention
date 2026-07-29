@@ -4,15 +4,19 @@ This file freezes the consolidated scope of the public ChatGPT share supplied
 by the user, the user's subsequent in-thread directions, and the repository
 audit performed while implementing them:
 
-- primary design-feedback URL:
+- initial design-feedback URL:
   `https://chatgpt.com/share/6a68ca40-9730-83ee-8c49-1a122068d2af?ogimg=plain`
 - cached response SHA-256:
   `ebc484a186dc2c850a126c22f321c12dcaa9f7c08589d4086cebe87b76683c5f`
+- completion-scope URL recorded by the native Codex Science goal:
+  `https://chatgpt.com/share/6a698a40-3598-83ee-a972-bd2b8298c4d0`
+- recorded retrieved-HTML SHA-256:
+  `86a30c552c7c689e9dc7138769cab28d21db3292d869520bfa8627ec9179af59`
 - extraction date: 2026-07-29
 
-The share is design input, not empirical evidence. Rows below are a
+The shares are design/scope inputs, not empirical evidence. Rows below are a
 requirement-by-requirement synthesis, not a claim that every row is a verbatim
-statement from that single share. Follow-up user directions and defects found
+statement from either share. Follow-up user directions and defects found
 by source/test review are included so the completion boundary is auditable.
 
 Status vocabulary:

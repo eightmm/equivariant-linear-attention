@@ -5,6 +5,11 @@ Date: 2026-07-29 KST
 Scope: blocking correctness, equivariance, scientific/data contracts,
 provenance, and evidence claims for the generic 3D architecture follow-up.
 
+Provenance records both named inputs rather than conflating them: the
+`6a68ca40...` share is the initial design-feedback packet visible in the task
+history, while the native Codex Science completion goal records
+`6a698a40...` as its completion-scope packet.
+
 ## Independent local review
 
 An independent release-review agent inspected the integrated source and

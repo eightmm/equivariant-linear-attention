@@ -19,7 +19,7 @@
         "requirements.md"
       ],
       "evidence_sha256": {
-        "requirements.md": "daac4bb150768c2d69c17fbfb352ddc33fa2b604a7e005bf1444f43859eaf55e"
+        "requirements.md": "5fdc617f2c2e90f340f07210115831cdc4ef493f1f28c9fbf2c7ed9cc50165b2"
       },
       "id": "criterion-1",
       "status": "satisfied",
@@ -52,7 +52,7 @@
         "requirements.md"
       ],
       "evidence_sha256": {
-        "requirements.md": "daac4bb150768c2d69c17fbfb352ddc33fa2b604a7e005bf1444f43859eaf55e"
+        "requirements.md": "5fdc617f2c2e90f340f07210115831cdc4ef493f1f28c9fbf2c7ed9cc50165b2"
       },
       "id": "criterion-4",
       "status": "satisfied",
@@ -63,7 +63,7 @@
         "requirements.md"
       ],
       "evidence_sha256": {
-        "requirements.md": "daac4bb150768c2d69c17fbfb352ddc33fa2b604a7e005bf1444f43859eaf55e"
+        "requirements.md": "5fdc617f2c2e90f340f07210115831cdc4ef493f1f28c9fbf2c7ed9cc50165b2"
       },
       "id": "criterion-5",
       "status": "satisfied",
@@ -93,9 +93,9 @@
         "release-review.md"
       ],
       "evidence_sha256": {
-        "requirements.md": "daac4bb150768c2d69c17fbfb352ddc33fa2b604a7e005bf1444f43859eaf55e",
+        "requirements.md": "5fdc617f2c2e90f340f07210115831cdc4ef493f1f28c9fbf2c7ed9cc50165b2",
         "packed-systems-progress.md": "0355e8c5e2df74d6313aeb1acd4b8372cfb470732bd8d1c7892b90a143df1295",
-        "release-review.md": "49950cfa4d3b3dd3ea67c4b5dbafd2112c813075dba8c90111577650a65f9657"
+        "release-review.md": "0b3dc9b075f3198e08605e5beb7f268c78cdb7b56aeeae0ebc5f52711d83b205"
       },
       "id": "criterion-7",
       "status": "satisfied",
@@ -115,7 +115,7 @@
   "pending_decisions": [],
   "review_receipt": {
     "path": "release-review.md",
-    "sha256": "49950cfa4d3b3dd3ea67c4b5dbafd2112c813075dba8c90111577650a65f9657",
+    "sha256": "0b3dc9b075f3198e08605e5beb7f268c78cdb7b56aeeae0ebc5f52711d83b205",
     "verdict": "go"
   },
   "revision": 7,
