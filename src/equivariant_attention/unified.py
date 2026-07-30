@@ -6,9 +6,14 @@ from math import isfinite
 import torch
 from torch import nn
 
-from .canonical_se3 import CanonicalMultipoleSE3Core
 from .graph_layout import PackedGraphLayout, pack_graph_layout
-from .irreps import IrrepLayout
+from .irreps import IrrepLayout, split_irreps
+from .layered_se3 import (
+    LayeredCanonicalSE3Core,
+    UnifiedEquivariantLayer,
+    UnifiedSE3Context,
+    UnifiedSE3State,
+)
 from .neighbors import PackedNeighborGraph, build_receiver_csr
 
 
@@ -59,12 +64,13 @@ def _nonnegative_real(name: str, value: object) -> float:
 
 @dataclass(frozen=True, slots=True)
 class Unified3DConfig:
-    """Canonical parity-complete SE(3) configuration.
+    """Canonical layer-stack configuration.
 
-    Internal angular degree, parity, multipole construction, normalization,
-    local/global composition, and fallback policy are fixed. Users declare only
-    flattened ``input_irreps`` and final ``output_irreps``; width, depth, rank,
-    and cutoff remain ordinary resource/capacity hyperparameters.
+    Input and output representations are public. Hidden parity and angular
+    degree stay fixed to the canonical low-order parity-complete carrier. An
+    optional invariant condition enables DiT-style adaptive modulation, and an
+    optional coordinate path applies a bounded ``1o`` displacement after every
+    layer while recomputing geometry on the same prepared candidate topology.
     """
 
     input_irreps: str
@@ -78,6 +84,9 @@ class Unified3DConfig:
     num_node_roles: int = 0
     relation_cutoffs: tuple[float, ...] = ()
     residual_scale_init: float = 0.1
+    condition_dim: int = 0
+    coordinate_updates: bool = False
+    max_coordinate_step: float = 0.25
     eps: float = 1e-12
 
     def __post_init__(self) -> None:
@@ -89,8 +98,10 @@ class Unified3DConfig:
             "num_rbf",
         ):
             _positive_integer(name, getattr(self, name))
-        for name in ("num_node_roles",):
+        for name in ("num_node_roles", "condition_dim"):
             _nonnegative_integer(name, getattr(self, name))
+        if not isinstance(self.coordinate_updates, bool):
+            raise TypeError("coordinate_updates must be a bool")
         if self.hidden_dim % self.num_heads:
             raise ValueError("hidden_dim must be divisible by num_heads")
 
@@ -99,14 +110,10 @@ class Unified3DConfig:
         if not output_layout.blocks:
             raise ValueError("output_irreps must not be empty")
         unsupported_input = [
-            block.irrep
-            for block in input_layout.blocks
-            if block.irrep.degree > 2
+            block.irrep for block in input_layout.blocks if block.irrep.degree > 2
         ]
         unsupported_output = [
-            block.irrep
-            for block in output_layout.blocks
-            if block.irrep.degree > 2
+            block.irrep for block in output_layout.blocks if block.irrep.degree > 2
         ]
         if unsupported_input or unsupported_output:
             raise ValueError(
@@ -116,6 +123,7 @@ class Unified3DConfig:
             )
 
         local_cutoff = _positive_real("local_cutoff", self.local_cutoff)
+        _positive_real("max_coordinate_step", self.max_coordinate_step)
         _positive_real("eps", self.eps)
         _nonnegative_real("residual_scale_init", self.residual_scale_init)
         if not isinstance(self.relation_cutoffs, tuple):
@@ -132,12 +140,12 @@ class Unified3DConfig:
         return len(self.relation_cutoffs)
 
     @property
-    def output_layout(self) -> IrrepLayout:
-        return IrrepLayout.parse(self.output_irreps)
-
-    @property
     def input_layout(self) -> IrrepLayout:
         return IrrepLayout.parse(self.input_irreps)
+
+    @property
+    def output_layout(self) -> IrrepLayout:
+        return IrrepLayout.parse(self.output_irreps)
 
     @property
     def internal_irreps(self) -> IrrepLayout:
@@ -155,7 +163,21 @@ class Unified3DConfig:
             "internal_irreps": str(self.internal_irreps),
             "user_representation_control": "input_and_output_irreps",
             "input_irreps": str(self.input_layout),
-            "node_geometry": "static_l0_l1_l2_radial_multipoles",
+            "layer_api": "attention_residual_tensor_closure_ffn_residual",
+            "conditioning": (
+                "dit_invariant_adaptive_modulation"
+                if self.condition_dim
+                else "none"
+            ),
+            "condition_irrep": "0e",
+            "coordinate_output": "bounded_polar_residual",
+            "coordinate_updates": self.coordinate_updates,
+            "coordinate_topology": (
+                "fixed_candidate_recompute_geometry_each_layer"
+                if self.coordinate_updates
+                else "fixed_input_geometry"
+            ),
+            "node_geometry": "dynamic_l0_l1_l2_radial_multipoles",
             "global_operator": "exact_positive_feature_gemm_l0_l1_l2",
             "global_balancing": "one_cycle",
             "local_operator": "single_positive_mass_damped_rank_r",
@@ -169,7 +191,6 @@ class Unified3DConfig:
             "chiral_construction": "aggregate_cross_triple_product",
             "chiral_initialization": "deterministic_rank_to_head_bridge",
             "neighbor_input": "prepacked_receiver_csr",
-            "local_refresh": "every_block",
             "fallbacks": (),
         }
 
@@ -264,7 +285,7 @@ def prepare_3d_graph(
     edge_relation_id: torch.Tensor | None = None,
     prefer_int32: bool = True,
 ) -> Prepared3DGraph:
-    """Validate and pack one receiver-major sparse graph outside model forward."""
+    """Validate and pack one receiver-major sparse candidate graph."""
 
     if not isinstance(batch, torch.Tensor):
         raise TypeError("batch must be a tensor")
@@ -285,10 +306,7 @@ def prepare_3d_graph(
         prefer_int32=prefer_int32,
         build_ell=False,
     )
-    graph_layout = pack_graph_layout(
-        batch_long,
-        assume_grouped=False,
-    )
+    graph_layout = pack_graph_layout(batch_long, assume_grouped=False)
     return Prepared3DGraph(
         batch=graph_layout.batch,
         graph_layout=graph_layout,
@@ -297,9 +315,9 @@ def prepare_3d_graph(
 
 
 class UnifiedEquivariantAttention(nn.Module):
-    """One multipole-complete parity-aware SE(3) execution path."""
+    """Layered parity-complete SE(3) stack with optional condition and coordinates."""
 
-    attention_kind = "canonical_multipole_parity_factorized_moment"
+    attention_kind = "layered_multipole_parity_factorized_moment"
     symmetry = "SE3"
     internal_symmetry = "O3_parity_complete"
     supports_graph_layout = True
@@ -309,7 +327,7 @@ class UnifiedEquivariantAttention(nn.Module):
         if not isinstance(config, Unified3DConfig):
             raise TypeError("config must be a Unified3DConfig")
         self.config = config
-        self.core = CanonicalMultipoleSE3Core(
+        self.core = LayeredCanonicalSE3Core(
             input_irreps=config.input_layout,
             output_irreps=config.output_layout,
             hidden_dim=config.hidden_dim,
@@ -322,21 +340,118 @@ class UnifiedEquivariantAttention(nn.Module):
             num_edge_relations=config.num_edge_relations,
             relation_cutoffs=config.relation_cutoffs,
             residual_scale_init=config.residual_scale_init,
+            condition_dim=config.condition_dim,
+            coordinate_updates=config.coordinate_updates,
+            max_coordinate_step=config.max_coordinate_step,
             eps=config.eps,
         )
         self._initialize_chiral_bridge()
         self.internal_irreps = self.core.internal_irreps
         self.output_irreps = self.core.output_irreps
 
+    @property
+    def layers(self) -> nn.ModuleList:
+        return self.core.layers
+
     def _initialize_chiral_bridge(self) -> None:
         """Keep an immediate even-objective gradient path into odd geometry."""
 
         with torch.no_grad():
-            for block in self.core.blocks:
-                weight = block.local_chiral_scalar_out.weight
+            for layer in self.core.layers:
+                weight = layer.local_chiral_scalar_out.weight
                 weight.zero_()
                 rows = torch.arange(weight.shape[0], device=weight.device)
                 weight[rows, rows.remainder(weight.shape[1])] = 1.0
+
+    def _validate_graph_inputs(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> None:
+        if not isinstance(graph, Prepared3DGraph) or not graph._validated:
+            raise TypeError("graph must be a validated Prepared3DGraph")
+        if node_irreps.shape[0] != graph.num_nodes:
+            raise ValueError("node_irreps node count must match graph")
+        if pos.shape != (graph.num_nodes, 3):
+            raise ValueError("pos must have shape (N, 3)")
+        if node_irreps.device != graph.device or pos.device != graph.device:
+            raise ValueError("model inputs and graph must share one device")
+
+    def prepare_context(
+        self,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> UnifiedSE3Context:
+        dummy = pos.new_zeros((graph.num_nodes, self.config.input_layout.dim))
+        self._validate_graph_inputs(dummy, pos, graph)
+        return self.core.prepare_context(
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+        )
+
+    def embed_input(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        node_role_id: torch.Tensor | None = None,
+    ) -> tuple[UnifiedSE3State, UnifiedSE3Context]:
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        self.core._validate_inputs(
+            node_irreps,
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+            node_role_id=node_role_id,
+        )
+        context = self.core.prepare_context(
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+        )
+        return (
+            self.core.embed_input(
+                node_irreps,
+                context,
+                node_role_id=node_role_id,
+            ),
+            context,
+        )
+
+    def project_state(self, state: UnifiedSE3State) -> torch.Tensor:
+        return self.core.project_state(state)
+
+    def split_input(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
+        return split_irreps(self.config.input_layout, value)
+
+    def split_output(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
+        return split_irreps(self.output_irreps, value)
+
+    def forward_features(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        node_role_id: torch.Tensor | None = None,
+        condition: torch.Tensor | None = None,
+    ) -> tuple[UnifiedSE3State, torch.Tensor, torch.Tensor]:
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        return self.core.forward_features(
+            node_irreps,
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+            node_role_id=node_role_id,
+            condition=condition,
+        )
 
     def forward(
         self,
@@ -345,15 +460,9 @@ class UnifiedEquivariantAttention(nn.Module):
         graph: Prepared3DGraph,
         *,
         node_role_id: torch.Tensor | None = None,
+        condition: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        if not isinstance(graph, Prepared3DGraph) or not graph._validated:
-            raise TypeError("graph must be a validated Prepared3DGraph")
-        if node_irreps.shape[0] != graph.num_nodes:
-            raise ValueError("node_irreps node count must match graph")
-        if pos.shape[0] != graph.num_nodes:
-            raise ValueError("pos node count must match graph")
-        if node_irreps.device != graph.device or pos.device != graph.device:
-            raise ValueError("model inputs and graph must share one device")
+        self._validate_graph_inputs(node_irreps, pos, graph)
         return self.core(
             node_irreps,
             pos,
@@ -361,13 +470,8 @@ class UnifiedEquivariantAttention(nn.Module):
             graph.graph_layout,
             graph.neighbors,
             node_role_id=node_role_id,
+            condition=condition,
         )
-
-    def split_output(
-        self,
-        value: torch.Tensor,
-    ) -> dict[str, torch.Tensor]:
-        return self.core.split_output(value)
 
     def extra_repr(self) -> str:
         return (
@@ -375,7 +479,8 @@ class UnifiedEquivariantAttention(nn.Module):
             f"output_irreps={self.output_irreps}, hidden_dim={self.config.hidden_dim}, "
             f"layers={self.config.num_layers}, heads={self.config.num_heads}, "
             f"local_rank={self.config.local_rank}, "
-            f"multipole_rank={self.core.multipole_rank}"
+            f"condition_dim={self.config.condition_dim}, "
+            f"coordinate_updates={self.config.coordinate_updates}"
         )
 
 
@@ -383,5 +488,8 @@ __all__ = [
     "Prepared3DGraph",
     "Unified3DConfig",
     "UnifiedEquivariantAttention",
+    "UnifiedEquivariantLayer",
+    "UnifiedSE3Context",
+    "UnifiedSE3State",
     "prepare_3d_graph",
 ]
