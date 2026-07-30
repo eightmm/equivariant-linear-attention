@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from math import isfinite, log
 from collections.abc import Sequence
+from dataclasses import dataclass
+from math import exp, isfinite, log
+from typing import Literal
+
+
+EdgeScaling = Literal["linear", "quadratic", "unknown"]
 
 
 def _positive_integer(name: str, value: object) -> int:
@@ -46,14 +50,22 @@ def estimate_base_linear_attention(
     edges: int,
     layers: int,
     channel_factor: int = 1,
+    edge_scaling: EdgeScaling = "unknown",
 ) -> ComplexityEstimate:
-    """Estimate the base spatial stack with a precomputed candidate graph."""
+    """Estimate the base spatial stack with a precomputed candidate graph.
+
+    ``node_linear`` is asserted only when the caller explicitly states that the
+    candidate edge count satisfies ``E=O(N)`` across the scaling family. A single
+    observed ``(N,E)`` pair cannot establish that asymptotic relation.
+    """
 
     nodes = _positive_integer("nodes", nodes)
     layers = _positive_integer("layers", layers)
     channel_factor = _positive_integer("channel_factor", channel_factor)
     if isinstance(edges, bool) or not isinstance(edges, int) or edges < 0:
         raise ValueError("edges must be a nonnegative integer")
+    if edge_scaling not in {"linear", "quadratic", "unknown"}:
+        raise ValueError("edge_scaling must be linear, quadratic, or unknown")
     per_layer = channel_factor * (nodes + edges)
     return ComplexityEstimate(
         name="equivariant_linear_attention",
@@ -64,8 +76,9 @@ def estimate_base_linear_attention(
         assumptions=(
             "fixed hidden width, head count, radial rank, and local rank",
             "candidate graph is prepared outside the layer",
+            f"declared candidate-edge scaling: {edge_scaling}",
         ),
-        node_linear=edges <= 256 * nodes,
+        node_linear=edge_scaling == "linear",
         depth_linear=True,
     )
 
@@ -77,6 +90,8 @@ def estimate_attention_residuals(
     layers: int,
     blocks: int,
     channel_factor: int = 1,
+    edge_scaling: EdgeScaling = "unknown",
+    blocks_fixed_with_depth: bool = True,
 ) -> ComplexityEstimate:
     """Estimate spatial work plus two depth routers per layer."""
 
@@ -85,10 +100,13 @@ def estimate_attention_residuals(
         edges=edges,
         layers=layers,
         channel_factor=channel_factor,
+        edge_scaling=edge_scaling,
     )
     blocks = _positive_integer("blocks", blocks)
     if blocks > layers:
         raise ValueError("blocks must not exceed layers")
+    if not isinstance(blocks_fixed_with_depth, bool):
+        raise TypeError("blocks_fixed_with_depth must be a bool")
     depth_routing = 2 * layers * blocks * nodes * channel_factor
     return ComplexityEstimate(
         name="equivariant_attention_residuals",
@@ -98,9 +116,12 @@ def estimate_attention_residuals(
         training_memory_proxy=base.training_memory_proxy + depth_routing,
         formula="O(L * (N + E) + L * B * N)",
         assumptions=base.assumptions
-        + ("B is the number of retained block-level depth sources",),
+        + (
+            "B is the number of retained block-level depth sources",
+            f"B fixed independently of depth: {blocks_fixed_with_depth}",
+        ),
         node_linear=base.node_linear,
-        depth_linear=blocks < layers or blocks == 1,
+        depth_linear=blocks_fixed_with_depth,
     )
 
 
@@ -176,13 +197,14 @@ def fit_log_log_slope(
     r_squared = 1.0 if total == 0.0 else 1.0 - residual / total
     return ScalingFit(
         slope=slope,
-        coefficient=float(__import__("math").exp(intercept)),
+        coefficient=exp(intercept),
         r_squared=r_squared,
     )
 
 
 __all__ = [
     "ComplexityEstimate",
+    "EdgeScaling",
     "ScalingFit",
     "estimate_attention_residuals",
     "estimate_base_linear_attention",
