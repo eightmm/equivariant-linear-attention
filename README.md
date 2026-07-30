@@ -1,40 +1,18 @@
 # Equivariant Linear Attention
 
 A domain-agnostic PyTorch layer for unordered 3D data. The canonical path is
-SE(3)-equivariant, keeps explicit parity bookkeeping internally, combines exact
-linear-time global attention with one receiver-normalized sparse local operator,
-and exposes only the final `output_irreps` as a representation-level user
-choice.
+SE(3)-equivariant, keeps explicit O(3) parity bookkeeping internally, combines
+exact linear-time global attention with one receiver-normalized sparse local
+operator, and exposes `input_irreps` and `output_irreps` as its representation
+contract.
 
-The same core can be used for molecules, proteins, protein--ligand complexes,
-particles, meshes, point clouds, and other sparse 3D systems. Chemical or
-biological vocabulary is not part of the layer; domain adapters provide scalar
-features, roles, relations, masks, hierarchy, and task heads.
+The same layer can be used for molecules, proteins, protein--ligand complexes,
+particles, meshes, point clouds, and other sparse 3D systems. Domain vocabulary
+and task heads remain outside the core.
 
 ## Canonical architecture
 
-Every block evaluates
-
-\[
-G^\ell
-=
-\operatorname{ExactGlobal}_{l\le2}(h^\ell),
-\]
-
-\[
-S^\ell
-=
-\operatorname{SparseLocal}_{l\le2}(h^\ell,x,\mathcal E),
-\]
-
-\[
-h^{\ell+1}
-=
-\operatorname{EquivariantUpdateFFN}
-\left(h^\ell,G^\ell+S^\ell\right).
-\]
-
-The persistent hidden carrier is fixed automatically to
+The fixed hidden carrier is
 
 \[
 C_0\times0e
@@ -45,24 +23,43 @@ C_0\times0e
 \oplus H\times2o.
 \]
 
-Users do not select hidden parity, angular degree, local/global routing,
-normalization, backend fallback, or layer schedule.
+Each layer evaluates
 
-The canonical implementation includes:
+\[
+G^\ell=\operatorname{ExactGlobal}_{l\le2}(h^\ell),
+\]
+
+\[
+S^\ell=\operatorname{SparseLocal}_{l\le2}(h^\ell,x^\ell,\mathcal E),
+\]
+
+followed by an attention/tensor-closure residual and an equivariant FFN
+residual:
+
+\[
+\widetilde h^\ell
+=h^\ell+\Delta h^\ell_{\rm attn}+\Delta h^\ell_{\rm closure},
+\]
+
+\[
+h^{\ell+1}=\widetilde h^\ell+\Delta h^\ell_{\rm ffn}.
+\]
+
+The implementation includes:
 
 - exact positive finite-feature global attention with one balancing cycle;
-- one sparse rank-`R` local score, weight, receiver mass, and value transport;
-- static receiver-centered radial multipoles corresponding to Cartesian
-  `l=0,1,2` spherical-harmonic moments;
+- one sparse rank-`R` score, edge weight, receiver mass, and value transport;
+- receiver-centered Cartesian `l=0,1,2` node multipoles;
 - active `0o`, `1o`, `1e`, `2e`, and `2o` routing;
 - low-rank Cartesian tensor-product closure through `l<=2`;
-- aggregate cross/triple-product chirality without explicit edge triplets;
+- chirality through aggregate cross/triple products without edge triplets;
 - irrep-sector RMS pre-normalization and per-copy LayerScale;
-- a compact C2 cutoff envelope;
-- graph scale and local density context;
+- a compact C2 cutoff;
+- optional invariant DiT-style conditioning;
+- optional bounded coordinate refinement;
 - no `N x N` attention tensor and no persistent edge hidden state.
 
-At fixed channel width, head count, radial rank, and local rank,
+At fixed widths and ranks,
 
 \[
 \operatorname{time}=O(L(N+E)),
@@ -70,8 +67,7 @@ At fixed channel width, head count, radial rank, and local rank,
 \operatorname{persistent\ state}=O(N).
 \]
 
-Neighbor discovery is intentionally outside the layer and must be costed
-separately.
+Neighbor discovery is outside the layer and must be costed separately.
 
 ## Install
 
@@ -86,8 +82,8 @@ uv sync --locked --extra qm9
 uv sync --locked --extra pdbbind
 ```
 
-Automated GitHub Actions are intentionally disabled for push and pull-request
-events. Repository checks are run explicitly when needed:
+Automated GitHub Actions are disabled for push and pull-request events. Run
+checks explicitly:
 
 ```bash
 scripts/check.sh fast
@@ -102,11 +98,12 @@ import torch
 from equivariant_attention import (
     Unified3DConfig,
     UnifiedEquivariantAttention,
+    pack_irreps,
     prepare_3d_graph,
 )
 
 config = Unified3DConfig(
-    input_irreps="32x0e",
+    input_irreps="32x0e + 4x1o",
     output_irreps="1x0e",
     hidden_dim=128,
     num_layers=6,
@@ -117,219 +114,170 @@ config = Unified3DConfig(
 )
 model = UnifiedEquivariantAttention(config)
 
-# Directed candidate edges j -> i are stored as edge_index[0] = receiver,
-# edge_index[1] = sender.
-graph = prepare_3d_graph(
-    batch,
-    edge_index,
-    edge_relation_id=edge_relation_id,
+node_irreps = pack_irreps(
+    config.input_layout,
+    {
+        "0e": scalar_features[..., None],
+        "1o": vector_features,
+    },
 )
 
+# edge_index[0] is receiver i and edge_index[1] is sender j for j -> i.
+graph = prepare_3d_graph(batch, edge_index)
 output = model(node_irreps, positions, graph)
 
 node_output = output["node_irreps"]
 graph_mean_diagnostic = output["graph_irreps"]
-blocks = model.split_output(node_output)
 ```
 
-`prepare_3d_graph` validates graph isolation and packs receiver-major CSR once,
-outside the model hot path. The canonical model does not silently construct a
-complete graph and has no runtime neighbor-provider fallback.
+`prepare_3d_graph` validates graph isolation and packs receiver-major CSR once.
+The canonical model does not silently construct a complete graph.
 
-## Choosing output irreps
+## Input and output irreps
 
-The representation-level public control is `output_irreps`.
-
-Parity-even scalar, such as an energy or a conventional affinity head input:
-
-```python
-output_irreps="1x0e"
-```
-
-Pseudoscalar, such as signed chirality or an optical observable:
-
-```python
-output_irreps="1x0o"
-```
-
-Polar vector, such as a displacement or force-like vector:
-
-```python
-output_irreps="1x1o"
-```
-
-Axial vector:
-
-```python
-output_irreps="1x1e"
-```
-
-Even or odd symmetric-traceless tensors:
-
-```python
-output_irreps="1x2e"
-output_irreps="1x2o"
-```
-
-Mixed outputs are allowed:
-
-```python
-output_irreps="2x0e + 1x0o + 3x1o + 1x1e + 1x2e"
-```
-
-The optimized canonical output currently supports `l<=2`. A request for a
-higher output degree is rejected rather than silently dispatched to a slower or
-semantically different backend.
-
-## Inputs
-
-The canonical path accepts one flattened `l<=2` irrep tensor and separate
-positions:
+The optimized canonical path supports any multiplicity of
 
 ```text
-node_irreps: (N, input_layout.dim)
-positions:   (N, 3)
+0e  ordinary scalar
+0o  pseudoscalar
+1o  polar vector
+1e  axial vector
+2e  even symmetric-traceless tensor
+2o  odd symmetric-traceless tensor
 ```
 
-`input_irreps` may contain any multiplicity of `0e`, `0o`, `1e`, `1o`, `2e`,
-and `2o`. The `l=1` basis is Cartesian xyz. The compact `l=2` basis is
-`[xx, yy, xy, xz, yz]`, with `zz=-xx-yy`. `pack_irreps`, `split_irreps`,
-`matrix_to_st5`, and `st5_to_matrix` are provided at the package root.
-Positions are geometry, not an input feature sector. `input_irreps="0"` is the
+for both input and output. The Cartesian `l=1` basis is xyz. The compact `l=2`
+basis is `[xx, yy, xy, xz, yz]` with `zz=-xx-yy`.
+
+Helpers are available at package root:
+
+```python
+pack_irreps(...)
+split_irreps(...)
+matrix_to_st5(...)
+st5_to_matrix(...)
+```
+
+Raw positions are not an `1o` feature. They transform affinely as
+`x -> R x + t` and remain a separate argument. `input_irreps="0"` is the
 geometry-only path.
 
-Integer node roles and edge relations are invariant metadata. Relation-specific
-cutoffs may narrow one shared local domain but do not create relation-specific
-equivariant kernels or persistent edge states.
+## Layer-level API
 
-## Node multipoles
+The full stack is a composition of public `UnifiedEquivariantLayer` instances:
 
-For radial shell `n`, the static receiver-centered moments are
+```python
+state, context = model.embed_input(node_irreps, positions, graph)
+
+for layer in model.layers:
+    after_attention = layer.attention_residual(state, context)
+    state = layer.ffn_residual(after_attention, context)
+
+node_output = model.project_state(state)
+```
+
+The equivalent one-call layer form is:
+
+```python
+layer_output = layer(state, context)
+state = layer_output.state
+```
+
+This separation allows custom residual schedules, layer sharing, activation
+checkpointing, external control logic, or integration into diffusion/flow
+backbones without redefining the equivariant operator.
+
+## DiT-style invariant conditioning
+
+Set `condition_dim` and pass an ordinary invariant condition per graph or per
+node:
+
+```python
+config = Unified3DConfig(
+    input_irreps="32x0e",
+    output_irreps="1x1o",
+    condition_dim=256,
+)
+model = UnifiedEquivariantAttention(config)
+
+# condition: [G, 256], [N, 256], or [256]
+output = model(node_irreps, positions, graph, condition=condition)
+```
+
+The condition projection is zero initialized. It produces separate adaptive
+modulation and residual gates for the attention and FFN branches. Only even
+scalars receive additive shifts; non-scalar sectors receive copy-wise scales,
+which preserves equivariance.
+
+Typical conditions include diffusion time, noise level, class, temperature, or
+another graph-level state. Conditions are `0e`; arbitrary vector conditions must
+instead be declared in `input_irreps`.
+
+## Coordinate refinement
+
+A `1o` output is a displacement-like polar vector, not an absolute coordinate.
+For an affine coordinate output, enable layer-wise coordinate residuals:
+
+```python
+config = Unified3DConfig(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
+    coordinate_updates=True,
+    max_coordinate_step=0.2,
+)
+model = UnifiedEquivariantAttention(config)
+output = model(node_irreps, positions, graph)
+
+refined_positions = output["positions"]
+total_displacement = output["coordinate_delta"]
+```
+
+Each layer predicts a bounded polar displacement
 
 \[
-P_{in}^{1o}
+\Delta x_i
 =
-\frac{
-\sum_{j\to i}a_{ijn}\hat d_{ij}
-}{1+\sum_{j\to i}a_{ijn}},
+\Delta_{\max}\sigma(a_i)
+\frac{W_xV_i^{1o}}{\sqrt{1+\|W_xV_i^{1o}\|^2}},
 \]
 
-\[
-Q_{in}^{2e}
-=
-\frac{
-\sum_{j\to i}a_{ijn}\operatorname{ST}(\hat d_{ij})
-}{1+\sum_{j\to i}a_{ijn}}.
-\]
+and applies `x <- x + delta_x`. The coordinate projection is zero initialized,
+so enabling the path does not alter the initial function.
 
-Three radial-shell polar moments generate axial, pseudoscalar, and odd-tensor
-features after aggregation:
+Geometry, RBFs, cutoffs, normalized positions, and node multipoles are recomputed
+after each applied update. Receiver/sender candidates remain fixed. Dynamic
+systems must therefore provide a candidate graph with sufficient skin or rebuild
+it in an outer loop.
 
-\[
-A^{1e}=P_1^{1o}\times P_2^{1o},
-\]
-
-\[
-\chi^{0o}=A^{1e}\cdot P_3^{1o},
-\]
-
-\[
-U^{2o}=\operatorname{ST}(P_3^{1o},A^{1e}).
-\]
-
-This gives chirality-sensitive node state in `O(E)` time without materializing
-neighbor triplets.
-
-## Exact global attention
-
-The global feature map contains positive scalar, polar, axial, even-tensor, and
-odd-tensor sectors. Same-irrep contractions are parity-even. A positive constant
-block bounds the complete kernel away from zero.
-
-For each graph and head, one-cycle balancing and augmented transport are
-
-\[
-Q_{gh}=\sum_{i\in g}\Phi^Q_{ih},
-\]
-
-\[
-\widetilde\Phi^K_{jh}
-=
-\frac{\Phi^K_{jh}}{(\Phi^K_{jh})^TQ_{g(j)h}},
-\]
-
-\[
-A_{gh}
-=
-\sum_{j\in g}\widetilde\Phi^K_{jh}\otimes[z_{jh},1],
-\]
-
-\[
-G_{ih}
-=
-\frac{[(\Phi^Q_{ih})^TA_{g(i)h}]_{1:-1}}
-{[(\Phi^Q_{ih})^TA_{g(i)h}]_{-1}}.
-\]
-
-No pairwise global attention matrix is formed. Single-graph, padded, bucketed,
-and ragged matrix schedules evaluate the same equation.
-
-## Unified sparse local operator
-
-All local routing terms contribute to one invariant score `a_ijr`, including
-scalar, polar, axial, pseudoscalar, even-tensor, odd-tensor, and tensor-axis
-contractions. The single positive edge weight is
-
-\[
-w_{ijr}
-=
-f_c(\tilde u_{ij})
-\exp\left(3\tanh(a_{ijr}/3)\right).
-\]
-
-Every local value family uses the same receiver mass:
-
-\[
-S_{ir}^{f}
-=
-\frac{\sum_jw_{ijr}\rho_{ijr}^{f}z_{jr}^{f}}
-{1+\sum_jw_{ijr}}.
-\]
-
-Thus tensor routing does not create a second sparse operator, second mass, or
-second value lane.
+Coordinate refinement is meaningful for diffusion/flow denoising, pose or
+conformation refinement, learned relaxation, point-cloud registration, and
+coarse-to-fine generation. It is usually unnecessary for a fixed-geometry
+scalar property model.
 
 ## Task heads
 
-`graph_irreps` is a fixed mean-pooled diagnostic, not a universal task head.
-Task semantics remain outside the core:
+`graph_irreps` is mean-pooled diagnostic output, not a universal task head.
+Typical downstream semantics are:
 
-- extensive energy: sum an invariant scalar node head;
+- extensive energy: sum invariant scalar node contributions;
 - conservative force: differentiate scalar energy with respect to positions;
-- pose refinement: project a `1o` node head and apply an update mask;
-- interface or selected-node property: apply a task-specific mask and pooling;
-- hierarchy: pool/broadcast using an external assignment;
-- chirality-sensitive observable: consume `0o`, `1e`, or mixed sectors as needed.
-
-Generic pooling, coordinate/vector heads, energy/force primitives, hierarchy
-operations, and the SBDD adapter remain available as separate modules.
+- pose refinement: use refined positions or a task-specific `1o` head;
+- selected-node property: apply a mask and task-specific pooling;
+- chirality-sensitive observable: consume `0o`, `1e`, or mixed sectors.
 
 ## Compatibility and research API
 
 `EquivariantAttention` and `EquivariantAttentionConfig` remain available for
-reproducing legacy experiments and testing explicit architecture ablations:
-local/global routes, memory transport, alternative normalization, transient
-high-order workspaces, and backend studies.
-
-They are not the canonical public path. New downstream integrations should use
-`UnifiedEquivariantAttention` unless an experiment explicitly requires a legacy
-or research switch.
+legacy experiments and explicit architecture ablations. New integrations should
+use `UnifiedEquivariantAttention` unless a study specifically requires a legacy
+switch.
 
 ## Mathematical and implementation notes
 
 - `docs/UNIFIED_3D_CORE.md`
 - `docs/UNIFIED_3D_INITIALIZATION.md`
 - `docs/UNIFIED_3D_MULTIPOLES.md`
+- `docs/LAYERED_SE3_API.md`
 - `docs/MATHEMATICAL_SPEC.md`
 - `docs/INVARIANCE.md`
 - `docs/SCALING.md`
@@ -337,8 +285,8 @@ or research switch.
 
 ## Evidence boundary
 
-Unit and smoke tests can establish algebraic transformation laws, numerical
-finiteness, gradient paths, and implementation equivalence. They do not by
-themselves establish downstream accuracy, architecture superiority, production
-neighbor-search performance, or a fused sparse-kernel speedup. Those claims
-require resource-matched and leakage-controlled experiments.
+Unit and smoke tests establish transformation laws, numerical finiteness,
+gradient paths, and implementation equivalence. They do not establish downstream
+accuracy, architecture superiority, production neighbor-search performance, or
+a fused sparse-kernel speedup. Those claims require resource-matched and
+leakage-controlled experiments.
