@@ -273,23 +273,93 @@ Direct coordinate refinement is useful for denoising, pose refinement,
 registration, and learned relaxation. Conservative forces should instead be
 obtained from a scalar energy through `-grad_x E`.
 
-## Complexity
+## Experimental edge-free spatial kernel
 
-At fixed channel width, head count, local rank, and multipole rank,
+A hard cutoff neighborhood cannot generally be evaluated exactly without
+finding nearby pairs. The experimental `ImplicitGaussianSpatialKernel` instead
+approximates a soft isotropic neighborhood through a finite Gaussian--Taylor
+feature map. It takes values, coordinates, and graph membership only:
+
+```python
+from equivariant_attention import (
+    ImplicitGaussianSpatialKernel,
+    ImplicitSpatialKernelConfig,
+)
+
+kernel = ImplicitGaussianSpatialKernel(
+    ImplicitSpatialKernelConfig(
+        scales=(1.0, 2.0, 4.0),
+        order=2,
+        exclude_self=True,
+        normalization="one_plus_mass",
+    )
+)
+
+result = kernel(values, positions, batch)
+message = result.output
+mass = result.mass
+moments = kernel.moments(positions, batch)
+```
+
+It does not accept or construct `edge_index`, a neighbor list, or an `N x N`
+pair matrix. For `S` scales the feature rank is `F=10S`, and fixed-width
+transport costs
 
 \[
-\operatorname{time}=O(L(N+E)),
-\qquad
-\operatorname{persistent\ state}=O(N).
+O(NFD).
 \]
 
-The implementation has no dense pair-attention tensor and no persistent edge
-hidden state. Neighbor discovery is outside the layer and must be costed
-separately.
+This is an approximate smooth kernel, not an exact radius graph. Exact local
+semantics without retained edges require an on-the-fly cell-list or spatial-hash
+kernel, which is a separate future backend.
+
+## Complexity
+
+For a precomputed candidate graph with `N` nodes, `E` directed candidates, and
+fixed widths/ranks, the base stack has
+
+\[
+T_{\rm base}=O(L(N+E)).
+\]
+
+It is node-linear only when the candidate family satisfies `E=O(N)`. A complete
+candidate graph makes the local term quadratic.
+
+Block Attention Residuals with `B` retained depth sources add
+
+\[
+O(LBN),
+\]
+
+so
+
+\[
+T_{\rm AttnRes}=O(L(N+E)+LBN).
+\]
+
+Depth linearity requires `B` to stay fixed as `L` grows. Coordinate geometry
+refresh preserves `O(L(N+E))` only while candidate topology is fixed. Neighbor
+discovery remains outside the layer.
+
+Run the scaling harness with
+
+```bash
+uv run python scripts/benchmark_scaling.py \
+  --modes base,attnres,implicit \
+  --nodes 256,512,1024,2048,4096 \
+  --depths 4,8,16,32 \
+  --blocks 4,8 \
+  --degree 32 \
+  --device cuda \
+  --dtype bfloat16 \
+  --output artifacts/scaling.json
+```
 
 ## Compatibility and research APIs
 
 - `EquivariantLinearAttention`: preferred refined linear-attention stack.
+- `EquivariantAttentionResiduals`: opt-in block depth-attention variant.
+- `ImplicitGaussianSpatialKernel`: experimental no-edge spatial approximation.
 - `UnifiedEquivariantAttention`: canonical compatibility stack without the new
   regularization wrapper.
 - `EquivariantAttention`: legacy research path for explicit architecture and
@@ -298,10 +368,13 @@ separately.
 Mathematical details:
 
 - `docs/EQUIVARIANT_LINEAR_ATTENTION.md`
+- `docs/ATTENTION_RESIDUALS.md`
+- `docs/IMPLICIT_SPATIAL_KERNEL.md`
+- `docs/SCALING.md`
 - `docs/LAYERED_SE3_API.md`
 - `docs/UNIFIED_3D_CORE.md`
 - `docs/UNIFIED_3D_MULTIPOLES.md`
 
-Unit tests establish transformation laws, numerical finiteness, and gradient
-paths. They do not establish downstream accuracy, production neighbor-search
-performance, or fused-kernel speedup.
+Unit tests establish transformation laws, numerical finiteness, factorization
+equivalence, and gradient paths. They do not establish downstream accuracy,
+production neighbor-search performance, or fused-kernel speedup.
