@@ -8,11 +8,19 @@ import torch
 from torch import nn
 
 from .layered_se3 import UnifiedSE3State
-from .parity_se3 import _st_cross, _st_from_vector
 from .multipole_ops import _st_orthonormal
+from .parity_se3 import _st_cross, _st_from_vector
 
 
 Normalization = Literal["none", "mass", "one_plus_mass"]
+
+
+def _positive_integer(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
 
 
 def _positive_real(name: str, value: object) -> float:
@@ -49,6 +57,7 @@ class ImplicitSpatialKernelConfig:
     exclude_self: bool = True
     normalization: Normalization = "one_plus_mass"
     learnable_scale_weights: bool = False
+    chunk_size: int = 2048
     eps: float = 1e-8
 
     def __post_init__(self) -> None:
@@ -66,6 +75,7 @@ class ImplicitSpatialKernelConfig:
             )
         if not isinstance(self.learnable_scale_weights, bool):
             raise TypeError("learnable_scale_weights must be a bool")
+        _positive_integer("chunk_size", self.chunk_size)
         _positive_real("eps", self.eps)
 
     @property
@@ -84,8 +94,13 @@ class ImplicitSpatialKernelConfig:
             "kernel": "multiscale_isotropic_gaussian_taylor",
             "taylor_order": self.order,
             "feature_rank": self.feature_rank,
+            "chunk_size": self.chunk_size,
             "arithmetic": "O(N * feature_rank * value_width)",
-            "working_memory": "O(N * (feature_rank + value_width))",
+            "working_memory": (
+                "O(N*(feature_rank+value_width) + "
+                "G*feature_rank*value_width + "
+                "chunk_size*feature_rank*value_width)"
+            ),
             "exact_radius_graph": False,
         }
 
@@ -99,6 +114,7 @@ class ImplicitSpatialContext:
     batch: torch.Tensor
     num_graphs: int
     features: torch.Tensor
+    feature_sum: torch.Tensor
     self_kernel: torch.Tensor
 
 
@@ -271,6 +287,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
         batch: torch.Tensor,
     ) -> ImplicitSpatialContext:
         centered, features, num_graphs = self.feature_map(positions, batch)
+        feature_sum = _segment_sum(features, batch, num_graphs)
         self_kernel = features.square().sum(dim=-1)
         return ImplicitSpatialContext(
             positions=positions,
@@ -278,6 +295,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             batch=batch,
             num_graphs=num_graphs,
             features=features,
+            feature_sum=feature_sum,
             self_kernel=self_kernel,
         )
 
@@ -295,30 +313,50 @@ class ImplicitGaussianSpatialKernel(nn.Module):
 
         original_shape = values.shape
         flat = values.reshape(values.shape[0], -1)
+        if flat.shape[0] == 0:
+            return ImplicitSpatialTransport(
+                output=values.clone(),
+                mass=values.new_zeros((0,)),
+                self_kernel=values.new_zeros((0,)),
+            )
+
         dtype = torch.promote_types(context.features.dtype, flat.dtype)
         features = context.features.to(dtype=dtype)
-        flat = flat.to(dtype=dtype)
-        output = flat.new_zeros(flat.shape)
-        mass = flat.new_zeros((flat.shape[0],))
+        flat_work = flat.to(dtype=dtype)
+        feature_sum = context.feature_sum.to(dtype=dtype)
+        statistics = flat_work.new_zeros(
+            (context.num_graphs, features.shape[-1], flat_work.shape[-1])
+        )
 
-        # This is a no-edge reference schedule. Each graph performs two GEMMs:
-        # Phi^T V and Phi(Phi^T V). No N x N matrix is constructed.
-        for graph_index in range(context.num_graphs):
-            mask = context.batch == graph_index
-            phi = features[mask]
-            value = flat[mask]
-            if phi.numel() == 0:
-                continue
-            statistic = phi.transpose(0, 1) @ value
-            graph_output = phi @ statistic
-            graph_mass = phi @ phi.sum(dim=0)
+        # Chunked sufficient-statistic accumulation is O(NFD) and avoids both
+        # an N x N pair matrix and an N x F x D full-node outer tensor.
+        chunk = self.config.chunk_size
+        for start in range(0, flat_work.shape[0], chunk):
+            stop = min(start + chunk, flat_work.shape[0])
+            phi = features[start:stop]
+            value = flat_work[start:stop]
+            outer = phi.unsqueeze(-1) * value.unsqueeze(-2)
+            statistics.index_add_(0, context.batch[start:stop], outer)
+
+        output_chunks: list[torch.Tensor] = []
+        mass_chunks: list[torch.Tensor] = []
+        for start in range(0, flat_work.shape[0], chunk):
+            stop = min(start + chunk, flat_work.shape[0])
+            phi = features[start:stop]
+            batch_chunk = context.batch[start:stop]
+            value = flat_work[start:stop]
+            graph_statistics = statistics[batch_chunk]
+            graph_output = torch.einsum("cf,cfd->cd", phi, graph_statistics)
+            graph_mass = (phi * feature_sum[batch_chunk]).sum(dim=-1)
             if self.config.exclude_self:
-                diagonal = context.self_kernel[mask].to(dtype=dtype)
+                diagonal = context.self_kernel[start:stop].to(dtype=dtype)
                 graph_output = graph_output - diagonal.unsqueeze(-1) * value
                 graph_mass = graph_mass - diagonal
-            output[mask] = graph_output
-            mass[mask] = graph_mass.clamp_min(0.0)
+            output_chunks.append(graph_output)
+            mass_chunks.append(graph_mass.clamp_min(0.0))
 
+        output = torch.cat(output_chunks, dim=0)
+        mass = torch.cat(mass_chunks, dim=0)
         return ImplicitSpatialTransport(
             output=output.reshape(original_shape).to(dtype=values.dtype),
             mass=mass.to(dtype=values.dtype),
@@ -367,7 +405,10 @@ class ImplicitGaussianSpatialKernel(nn.Module):
         second = self._raw_transport(centered_tensor, context)
         mass = first.mass.to(dtype=centered.dtype)
 
-        relative_vector = first.output.to(dtype=centered.dtype) - mass.unsqueeze(-1) * centered
+        relative_vector = (
+            first.output.to(dtype=centered.dtype)
+            - mass.unsqueeze(-1) * centered
+        )
         relative_tensor = (
             second.output.to(dtype=centered.dtype)
             + mass.unsqueeze(-1) * centered_tensor
