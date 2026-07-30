@@ -202,6 +202,7 @@ kernel = ImplicitGaussianSpatialKernel(
         order=2,
         exclude_self=True,
         normalization="one_plus_mass",
+        chunk_size=2048,
     )
 )
 
@@ -225,29 +226,41 @@ accept or create `edge_index`.
 Let
 
 - \(N\) be the node count;
+- \(G\) be the graph count;
 - \(F=10S\) be the feature rank for `S` order-two scales;
 - \(D\) be the transported value width;
-- \(A\) be the number of applications.
+- \(A\) be the number of applications;
+- \(C\) be the bounded node chunk size.
 
 The arithmetic order is
 
 \[
-T_{\rm implicit}=O(ANFD),
+T_{\rm implicit}=O(ANFD).
 \]
 
-and reference working memory is
+The chunked reference schedule stores one graph statistic of shape
+\(G\times F\times D\) and one temporary node chunk of shape
+\(C\times F\times D\):
 
 \[
-M_{\rm implicit}=O(N(F+D)+FD).
+M_{\rm implicit}
+=
+O\left(
+N(F+D)+GFD+CFD
+\right).
 \]
 
-For fixed scales and value width, both are linear in node count. This is a
-separate claim from exact radius-graph locality.
+For fixed scales, value width, and chunk size, arithmetic is linear in node
+count. Memory is also linear in total input size; when the number of graphs grows
+with \(N\), the \(GFD\) term is itself linear in \(N\).
 
-The current reference schedule performs two GEMMs per graph, `Phi.T @ V` and
-`Phi @ statistic`. A production implementation should add direct single-graph,
-padded, bucketed, and ragged schedules analogous to the global linear-attention
-backend.
+The implementation accumulates graph sufficient statistics by chunked
+`index_add`, then evaluates chunked contractions. It therefore avoids both an
+\(N\times N\) pair matrix and a full \(N\times F\times D\) outer tensor.
+
+A production backend may add direct single-graph, padded, bucketed, and ragged
+GEMM schedules analogous to the global linear-attention backend. Those schedules
+must evaluate the same finite-feature kernel.
 
 ## 7. Accuracy boundary
 
@@ -267,7 +280,7 @@ The implemented reference should therefore be evaluated against:
 1. its dense feature-kernel reference — exact equality is required;
 2. exact Gaussian pair sums — approximation error is reported;
 3. explicit cutoff local transport — task-dependent quality is reported;
-4. O(3), translation, batching, and gradient contracts;
+4. O(3), translation, batching, gradients, and double-backward contracts;
 5. node-size scaling and peak memory.
 
 It must not be described as an exact neighbor-list replacement until those
