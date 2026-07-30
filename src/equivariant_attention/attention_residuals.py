@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil, isfinite, sqrt
-from collections.abc import Sequence
 
 import torch
 from torch import nn
@@ -15,9 +15,14 @@ from .equivariant_linear_attention import (
 )
 from .graph_layout import PackedGraphLayout
 from .irreps import IrrepLayout
-from .layered_se3 import UnifiedSE3Context, UnifiedSE3State
+from .layered_se3 import (
+    UnifiedSE3Context,
+    UnifiedSE3State,
+    _state_add,
+    _state_subtract,
+)
 from .neighbors import PackedNeighborGraph
-from .parity_se3 import _ParityState, _state_add, _state_subtract, _st_square
+from .parity_se3 import _ParityState, _st_square
 
 
 def _positive_integer(name: str, value: object) -> int:
@@ -39,13 +44,12 @@ def _positive_real(name: str, value: object) -> float:
 
 @dataclass(frozen=True, slots=True)
 class EquivariantAttentionResidualConfig(EquivariantLinearAttentionConfig):
-    """Equivariant linear attention with Moonshot-style depth attention.
+    """Equivariant linear attention with Moonshot-style block AttnRes.
 
-    ``attention_residual_blocks=1`` is an exact single-source identity path.
-    Values greater than one enable block-level depth attention. The depth router
-    uses one invariant softmax weight per node and source and applies that same
-    weight to every irrep sector, matching the single-head conclusion of the
-    Attention Residuals ablation while preserving equivariance.
+    The depth router uses one invariant softmax weight per node and source and
+    applies that same weight to every irrep sector. One block attends to the
+    embedding plus the evolving partial residual across the full stack; more
+    blocks cache completed partial residuals at evenly spaced depth boundaries.
     """
 
     attention_residual_blocks: int = 1
@@ -95,6 +99,8 @@ class EquivariantBlockAttentionResidual(nn.Module):
         self.num_heads = num_heads
         self.eps = max(float(eps), 1e-8)
         self.descriptor_dim = scalar_width + 5 * num_heads
+        # The Attention Residuals paper requires zero-initialized pseudo-queries,
+        # yielding uniform depth weights at initialization.
         self.pseudo_query = nn.Parameter(torch.zeros(self.descriptor_dim))
 
     @staticmethod
@@ -173,7 +179,12 @@ class EquivariantBlockAttentionResidual(nn.Module):
 class EquivariantAttentionResidualLayer(EquivariantLinearAttentionLayer):
     """One linear-attention layer with separate attention/FFN depth routers."""
 
-    def __init__(self, *, attention_residual_eps: float = 1e-6, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        attention_residual_eps: float = 1e-6,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)
         self.attention_depth_router = EquivariantBlockAttentionResidual(
             scalar_width=self.scalar_width,
@@ -223,8 +234,9 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
             ),
             self.num_layers,
         )
-        block_scale = kwargs.get("residual_scale_init", 0.1)
-        block_scale = float(block_scale) / sqrt(max(1, self.num_layers))
+        block_scale = float(kwargs.get("residual_scale_init", 0.1)) / sqrt(
+            max(1, self.num_layers)
+        )
         layers: list[nn.Module] = []
         for index in range(self.num_layers):
             probability = float(kwargs.get("drop_path_rate", 0.0)) * index / max(
@@ -296,9 +308,9 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
         total_delta = positions.new_zeros(positions.shape)
 
         for index, layer_module in enumerate(self.blocks):
-            layer = layer_module
-            if not isinstance(layer, EquivariantAttentionResidualLayer):
+            if not isinstance(layer_module, EquivariantAttentionResidualLayer):
                 raise RuntimeError("unexpected attention-residual layer type")
+            layer = layer_module
 
             if index and index % layers_per_block == 0:
                 if partial is None:
@@ -367,7 +379,7 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
 
 
 class EquivariantAttentionResiduals(EquivariantLinearAttention):
-    """Preferred opt-in block AttnRes variant of equivariant linear attention."""
+    """Opt-in Block AttnRes variant of equivariant linear attention."""
 
     attention_kind = "equivariant_linear_attention_with_depth_attention_residuals"
 
