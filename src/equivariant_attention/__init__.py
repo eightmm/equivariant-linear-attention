@@ -101,6 +101,12 @@ from .unified import (
     prepare_3d_graph,
 )
 from .layered_se3 import UnifiedSE3LayerOutput
+from .equivariant_linear_attention import (
+    EquivariantLinearAttention,
+    EquivariantLinearAttentionConfig,
+    EquivariantLinearAttentionCore,
+    EquivariantLinearAttentionLayer,
+)
 from .unified_regression import UnifiedRegressionModel
 
 __all__ = [
@@ -111,6 +117,10 @@ __all__ = [
     "DistanceBandSpec",
     "EquivariantAttention",
     "EquivariantAttentionConfig",
+    "EquivariantLinearAttention",
+    "EquivariantLinearAttentionConfig",
+    "EquivariantLinearAttentionCore",
+    "EquivariantLinearAttentionLayer",
     "ExternalCallableNeighborProvider",
     "ExecutionMetadata",
     "ExecutableTensorProductPlan",
@@ -193,4 +203,6 @@ __all__ = [
 
 
 def main() -> None:
-    print("equivariant-attention: import EquivariantAttention from Python")
+    print(
+        "equivariant-attention: import EquivariantLinearAttention from Python"
+    )
