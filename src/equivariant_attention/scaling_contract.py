@@ -131,6 +131,8 @@ def estimate_implicit_spatial_kernel(
     feature_rank: int,
     value_width: int,
     applications: int = 1,
+    graphs: int = 1,
+    chunk_size: int = 2048,
 ) -> ComplexityEstimate:
     """Estimate an edge-free finite-feature spatial transport."""
 
@@ -138,9 +140,19 @@ def estimate_implicit_spatial_kernel(
     feature_rank = _positive_integer("feature_rank", feature_rank)
     value_width = _positive_integer("value_width", value_width)
     applications = _positive_integer("applications", applications)
+    graphs = _positive_integer("graphs", graphs)
+    chunk_size = _positive_integer("chunk_size", chunk_size)
+    if graphs > nodes:
+        raise ValueError("graphs must not exceed nodes")
+
     # One Phi^T V and one Phi statistic contraction per application.
     arithmetic = 2 * applications * nodes * feature_rank * value_width
-    working = nodes * (feature_rank + value_width) + feature_rank * value_width
+    chunk_nodes = min(nodes, chunk_size)
+    working = (
+        nodes * (feature_rank + value_width)
+        + graphs * feature_rank * value_width
+        + chunk_nodes * feature_rank * value_width
+    )
     return ComplexityEstimate(
         name="implicit_spatial_kernel",
         arithmetic_proxy=arithmetic,
@@ -150,6 +162,7 @@ def estimate_implicit_spatial_kernel(
         assumptions=(
             "fixed finite feature rank F",
             "fixed transported value width D",
+            "chunk size is bounded independently of N",
             "no explicit edge list or pair matrix",
         ),
         node_linear=True,
