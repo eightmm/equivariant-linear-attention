@@ -3,15 +3,15 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from .unified import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
-    prepare_3d_graph,
+from .equivariant_linear_attention import (
+    EquivariantLinearAttention,
+    EquivariantLinearAttentionConfig,
 )
+from .unified import prepare_3d_graph
 
 
 class UnifiedRegressionModel(nn.Module):
-    """Scalar graph-regression adapter for the canonical flattened-irrep core."""
+    """Scalar graph-regression adapter for equivariant linear attention."""
 
     supports_graph_layout = False
     consumes_external_neighbors = True
@@ -27,9 +27,12 @@ class UnifiedRegressionModel(nn.Module):
         local_cutoff: float,
         num_rbf: int = 16,
         num_node_roles: int = 0,
+        residual_dropout: float = 0.0,
+        drop_path_rate: float = 0.0,
+        norm_eps: float = 1e-6,
     ) -> None:
         super().__init__()
-        self.config = Unified3DConfig(
+        self.config = EquivariantLinearAttentionConfig(
             input_irreps=f"{node_dim}x0e",
             output_irreps="1x0e",
             hidden_dim=hidden_dim,
@@ -39,8 +42,11 @@ class UnifiedRegressionModel(nn.Module):
             local_cutoff=local_cutoff,
             num_rbf=num_rbf,
             num_node_roles=num_node_roles,
+            residual_dropout=residual_dropout,
+            drop_path_rate=drop_path_rate,
+            norm_eps=norm_eps,
         )
-        self.model = UnifiedEquivariantAttention(self.config)
+        self.model = EquivariantLinearAttention(self.config)
 
     def forward(
         self,
