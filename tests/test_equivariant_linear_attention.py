@@ -147,6 +147,27 @@ def test_norm_gated_activation_is_identity_at_initialization() -> None:
     _assert_state_close(activation(delta, reference), delta)
 
 
+def test_learned_norm_gate_remains_equivariant() -> None:
+    torch.manual_seed(6)
+    delta = _state()
+    reference = _state()
+    activation = _NormGatedIrrepActivation(
+        scalar_width=12,
+        num_heads=3,
+        eps=1e-8,
+    ).double()
+    with torch.no_grad():
+        activation.projection[-1].weight.normal_(mean=0.0, std=0.1)
+        activation.projection[-1].bias.normal_(mean=0.0, std=0.1)
+    reflection = torch.diag(torch.tensor([-1.0, 1.0, 1.0], dtype=torch.float64))
+    actual = activation(
+        _transform(delta, reflection),
+        _transform(reference, reflection),
+    )
+    expected = _transform(activation(delta, reference), reflection)
+    _assert_state_close(actual, expected)
+
+
 def test_grouped_qk_projection_has_unit_rms_per_group() -> None:
     linear = nn.Linear(4, 4, bias=False).double()
     with torch.no_grad():
@@ -228,3 +249,55 @@ def test_refined_stack_forward_backward_and_condition() -> None:
     assert torch.isfinite(output["node_irreps"]).all()
     assert node_irreps.grad is not None and torch.isfinite(node_irreps.grad).all()
     assert positions.grad is not None and torch.isfinite(positions.grad).all()
+
+
+def test_refined_stack_obeys_rotation_and_translation() -> None:
+    torch.manual_seed(17)
+    config = EquivariantLinearAttentionConfig(
+        input_irreps="4x0e",
+        output_irreps="1x0e + 1x1o",
+        hidden_dim=16,
+        num_layers=2,
+        num_heads=4,
+        local_rank=3,
+        local_cutoff=10.0,
+        num_rbf=8,
+    )
+    model = EquivariantLinearAttention(config).double().eval()
+    nodes = 6
+    features = torch.randn(nodes, 4, dtype=torch.float64)
+    positions = torch.randn(nodes, 3, dtype=torch.float64)
+    graph = prepare_3d_graph(
+        torch.zeros(nodes, dtype=torch.long),
+        _complete_edges(nodes),
+    )
+    orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    if torch.linalg.det(orthogonal) < 0:
+        orthogonal[:, 0] = -orthogonal[:, 0]
+    translation = torch.tensor([1.2, -0.3, 0.7], dtype=torch.float64)
+
+    reference = model(features, positions, graph)["node_irreps"]
+    transformed = model(
+        features,
+        positions @ orthogonal.T + translation,
+        graph,
+    )["node_irreps"]
+    reference_blocks = model.split_output(reference)
+    transformed_blocks = model.split_output(transformed)
+    torch.testing.assert_close(
+        transformed_blocks["0e"],
+        reference_blocks["0e"],
+        atol=3e-8,
+        rtol=3e-8,
+    )
+    expected_vector = torch.einsum(
+        "...c,dc->...d",
+        reference_blocks["1o"],
+        orthogonal,
+    )
+    torch.testing.assert_close(
+        transformed_blocks["1o"],
+        expected_vector,
+        atol=3e-8,
+        rtol=3e-8,
+    )
