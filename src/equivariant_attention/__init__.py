@@ -74,6 +74,12 @@ from .spherical import (
     real_l2_to_matrix,
     real_spherical_harmonics,
 )
+from .tensor_product_executor import (
+    ExecutableTensorProductPlan,
+    ReferenceTensorProduct,
+    TensorProductInstruction,
+    compile_executable_tensor_product,
+)
 from .training import (
     TargetNormalizer,
     build_regression_model,
@@ -81,11 +87,11 @@ from .training import (
     fit_target_normalizer,
     train_regression_step,
 )
-from .tensor_product_executor import (
-    ExecutableTensorProductPlan,
-    ReferenceTensorProduct,
-    TensorProductInstruction,
-    compile_executable_tensor_product,
+from .unified import (
+    Prepared3DGraph,
+    Unified3DConfig,
+    UnifiedEquivariantAttention,
+    prepare_3d_graph,
 )
 
 __all__ = [
@@ -118,6 +124,7 @@ __all__ = [
     "NeighborConfig",
     "PackedGraphLayout",
     "PackedNeighborGraph",
+    "Prepared3DGraph",
     "PrecomputedNeighborProvider",
     "ProviderCapabilitySnapshot",
     "ReferenceTensorProductPath",
@@ -133,6 +140,8 @@ __all__ = [
     "TensorProductPlan",
     "TensorProductInstruction",
     "TransientL3Workspace",
+    "Unified3DConfig",
+    "UnifiedEquivariantAttention",
     "VerletRadiusNeighborProvider",
     "autocast_dtype",
     "build_receiver_csr",
@@ -146,6 +155,7 @@ __all__ = [
     "load_qm9_samples",
     "pack_graph_layout",
     "pack_neighbor_graph",
+    "prepare_3d_graph",
     "prepare_for_inference",
     "receiver_csr_reduce",
     "real_clebsch_gordan",

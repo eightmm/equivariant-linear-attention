@@ -1,7 +1,7 @@
 [project]
 name = "equivariant-attention"
 version = "0.1.0"
-description = "O(3)-equivariant local/global attention with factorized geometric moments"
+description = "Parity-aware SE(3) linear attention with exact global moments and sparse node multipoles"
 authors = [
     { name = "eightmm" }
 ]
