@@ -33,14 +33,18 @@ from equivariant_attention.scaling_contract import (
 def _csv_ints(value: str) -> list[int]:
     result = [int(item) for item in value.split(",") if item.strip()]
     if not result or any(item <= 0 for item in result):
-        raise argparse.ArgumentTypeError("expected comma-separated positive integers")
+        raise argparse.ArgumentTypeError(
+            "expected comma-separated positive integers"
+        )
     return result
 
 
 def _csv_floats(value: str) -> tuple[float, ...]:
     result = tuple(float(item) for item in value.split(",") if item.strip())
     if not result or any(item <= 0.0 for item in result):
-        raise argparse.ArgumentTypeError("expected comma-separated positive floats")
+        raise argparse.ArgumentTypeError(
+            "expected comma-separated positive floats"
+        )
     return result
 
 
@@ -61,13 +65,40 @@ def _synchronize(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
-def _fixed_degree_edges(nodes: int, degree: int, device: torch.device) -> torch.Tensor:
-    if degree >= nodes:
-        raise ValueError("degree must be smaller than nodes")
-    receiver = torch.arange(nodes, device=device).repeat_interleave(degree)
-    offsets = torch.arange(1, degree + 1, device=device).repeat(nodes)
-    sender = (receiver + offsets) % nodes
+def _batch(nodes: int, graphs: int, device: torch.device) -> torch.Tensor:
+    if graphs > nodes or nodes % graphs:
+        raise ValueError("nodes must be divisible by graphs")
+    return torch.arange(graphs, device=device).repeat_interleave(nodes // graphs)
+
+
+def _fixed_degree_edges(
+    nodes: int,
+    degree: int,
+    graphs: int,
+    device: torch.device,
+) -> torch.Tensor:
+    if graphs > nodes or nodes % graphs:
+        raise ValueError("nodes must be divisible by graphs")
+    nodes_per_graph = nodes // graphs
+    if degree >= nodes_per_graph:
+        raise ValueError("degree must be smaller than nodes per graph")
+
+    local_receiver = torch.arange(nodes_per_graph, device=device).repeat_interleave(
+        degree
+    )
+    offsets = torch.arange(1, degree + 1, device=device).repeat(nodes_per_graph)
+    local_sender = (local_receiver + offsets) % nodes_per_graph
+    graph_offset = torch.arange(graphs, device=device).repeat_interleave(
+        local_receiver.numel()
+    )
+    receiver = local_receiver.repeat(graphs) + graph_offset * nodes_per_graph
+    sender = local_sender.repeat(graphs) + graph_offset * nodes_per_graph
     return torch.stack([receiver, sender])
+
+
+def _clear_gradients(tensors: Sequence[torch.Tensor]) -> None:
+    for tensor in tensors:
+        tensor.grad = None
 
 
 def _measure(
@@ -77,14 +108,19 @@ def _measure(
     warmup: int,
     repeats: int,
     backward: bool,
-    parameters: Sequence[torch.nn.Parameter] = (),
+    gradient_tensors: Sequence[torch.Tensor] = (),
 ) -> tuple[float, int]:
+    def invoke() -> torch.Tensor:
+        if backward:
+            return function()
+        with torch.inference_mode():
+            return function()
+
     for _ in range(warmup):
-        result = function()
+        result = invoke()
         if backward:
             result.float().square().mean().backward()
-            for parameter in parameters:
-                parameter.grad = None
+            _clear_gradients(gradient_tensors)
     _synchronize(device)
 
     samples: list[float] = []
@@ -93,7 +129,7 @@ def _measure(
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         start = time.perf_counter()
-        result = function()
+        result = invoke()
         if backward:
             result.float().square().mean().backward()
         _synchronize(device)
@@ -101,14 +137,14 @@ def _measure(
         if device.type == "cuda":
             peak = max(peak, torch.cuda.max_memory_allocated(device))
         if backward:
-            for parameter in parameters:
-                parameter.grad = None
+            _clear_gradients(gradient_tensors)
     return statistics.median(samples), peak
 
 
 def _base_row(
     *,
     nodes: int,
+    graphs: int,
     degree: int,
     layers: int,
     device: torch.device,
@@ -130,11 +166,24 @@ def _base_row(
     )
     model = EquivariantLinearAttention(config).to(device=device, dtype=dtype)
     model.train(backward)
-    features = torch.randn(nodes, 16, device=device, dtype=dtype, requires_grad=backward)
-    positions = torch.randn(nodes, 3, device=device, dtype=dtype, requires_grad=backward)
-    batch = torch.zeros(nodes, device=device, dtype=torch.long)
-    edge_index = _fixed_degree_edges(nodes, degree, device)
+    features = torch.randn(
+        nodes,
+        16,
+        device=device,
+        dtype=dtype,
+        requires_grad=backward,
+    )
+    positions = torch.randn(
+        nodes,
+        3,
+        device=device,
+        dtype=dtype,
+        requires_grad=backward,
+    )
+    batch = _batch(nodes, graphs, device)
+    edge_index = _fixed_degree_edges(nodes, degree, graphs, device)
     graph = prepare_3d_graph(batch, edge_index)
+    gradient_tensors = (*model.parameters(), features, positions)
 
     def layer_only() -> torch.Tensor:
         return model(features, positions, graph)["node_irreps"]
@@ -145,10 +194,11 @@ def _base_row(
         warmup=warmup,
         repeats=repeats,
         backward=backward,
-        parameters=tuple(model.parameters()),
+        gradient_tensors=gradient_tensors,
     )
     graph_pack_ms = None
     if include_graph_pack:
+
         def with_pack() -> torch.Tensor:
             prepared = prepare_3d_graph(batch, edge_index)
             return model(features, positions, prepared)["node_irreps"]
@@ -159,7 +209,7 @@ def _base_row(
             warmup=warmup,
             repeats=repeats,
             backward=backward,
-            parameters=tuple(model.parameters()),
+            gradient_tensors=gradient_tensors,
         )
         peak = max(peak, peak_with_pack)
 
@@ -173,6 +223,7 @@ def _base_row(
     return {
         "mode": "base",
         "nodes": nodes,
+        "graphs": graphs,
         "edges": nodes * degree,
         "degree": degree,
         "layers": layers,
@@ -188,6 +239,7 @@ def _base_row(
 def _attnres_row(
     *,
     nodes: int,
+    graphs: int,
     degree: int,
     layers: int,
     blocks: int,
@@ -213,11 +265,24 @@ def _attnres_row(
     )
     model = EquivariantAttentionResiduals(config).to(device=device, dtype=dtype)
     model.train(backward)
-    features = torch.randn(nodes, 16, device=device, dtype=dtype, requires_grad=backward)
-    positions = torch.randn(nodes, 3, device=device, dtype=dtype, requires_grad=backward)
-    batch = torch.zeros(nodes, device=device, dtype=torch.long)
-    edge_index = _fixed_degree_edges(nodes, degree, device)
+    features = torch.randn(
+        nodes,
+        16,
+        device=device,
+        dtype=dtype,
+        requires_grad=backward,
+    )
+    positions = torch.randn(
+        nodes,
+        3,
+        device=device,
+        dtype=dtype,
+        requires_grad=backward,
+    )
+    batch = _batch(nodes, graphs, device)
+    edge_index = _fixed_degree_edges(nodes, degree, graphs, device)
     graph = prepare_3d_graph(batch, edge_index)
+    gradient_tensors = (*model.parameters(), features, positions)
 
     def layer_only() -> torch.Tensor:
         return model(features, positions, graph)["node_irreps"]
@@ -228,10 +293,11 @@ def _attnres_row(
         warmup=warmup,
         repeats=repeats,
         backward=backward,
-        parameters=tuple(model.parameters()),
+        gradient_tensors=gradient_tensors,
     )
     graph_pack_ms = None
     if include_graph_pack:
+
         def with_pack() -> torch.Tensor:
             prepared = prepare_3d_graph(batch, edge_index)
             return model(features, positions, prepared)["node_irreps"]
@@ -242,7 +308,7 @@ def _attnres_row(
             warmup=warmup,
             repeats=repeats,
             backward=backward,
-            parameters=tuple(model.parameters()),
+            gradient_tensors=gradient_tensors,
         )
         peak = max(peak, peak_with_pack)
 
@@ -258,6 +324,7 @@ def _attnres_row(
     return {
         "mode": "attnres",
         "nodes": nodes,
+        "graphs": graphs,
         "edges": nodes * degree,
         "degree": degree,
         "layers": layers,
@@ -273,6 +340,7 @@ def _attnres_row(
 def _implicit_row(
     *,
     nodes: int,
+    graphs: int,
     scales: tuple[float, ...],
     value_width: int,
     applications: int,
@@ -297,8 +365,15 @@ def _implicit_row(
         dtype=dtype,
         requires_grad=backward,
     )
-    positions = torch.randn(nodes, 3, device=device, dtype=dtype, requires_grad=backward)
-    batch = torch.zeros(nodes, device=device, dtype=torch.long)
+    positions = torch.randn(
+        nodes,
+        3,
+        device=device,
+        dtype=dtype,
+        requires_grad=backward,
+    )
+    batch = _batch(nodes, graphs, device)
+    gradient_tensors = (*kernel.parameters(), values, positions)
 
     def run() -> torch.Tensor:
         value = values
@@ -312,17 +387,20 @@ def _implicit_row(
         warmup=warmup,
         repeats=repeats,
         backward=backward,
-        parameters=tuple(kernel.parameters()),
+        gradient_tensors=gradient_tensors,
     )
     estimate = estimate_implicit_spatial_kernel(
         nodes=nodes,
         feature_rank=kernel.feature_rank,
         value_width=value_width,
         applications=applications,
+        graphs=graphs,
+        chunk_size=kernel.config.chunk_size,
     )
     return {
         "mode": "implicit",
         "nodes": nodes,
+        "graphs": graphs,
         "edges": 0,
         "degree": 0,
         "layers": applications,
@@ -339,7 +417,13 @@ def _implicit_row(
 def _fits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (row["mode"], row["degree"], row["layers"], row["blocks"])
+        key = (
+            row["mode"],
+            row["graphs"],
+            row["degree"],
+            row["layers"],
+            row["blocks"],
+        )
         groups.setdefault(key, []).append(row)
     output = []
     for key, group in groups.items():
@@ -353,9 +437,10 @@ def _fits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         output.append(
             {
                 "mode": key[0],
-                "degree": key[1],
-                "layers": key[2],
-                "blocks": key[3],
+                "graphs": key[1],
+                "degree": key[2],
+                "layers": key[3],
+                "blocks": key[4],
                 "node_slope": fit.slope,
                 "node_r_squared": fit.r_squared,
             }
@@ -368,16 +453,32 @@ def main() -> None:
         description="Measure conditional scaling of equivariant linear attention"
     )
     parser.add_argument("--modes", default="base,attnres,implicit")
-    parser.add_argument("--nodes", type=_csv_ints, default=[256, 512, 1024, 2048])
+    parser.add_argument(
+        "--nodes",
+        type=_csv_ints,
+        default=[256, 512, 1024, 2048],
+    )
+    parser.add_argument("--graphs", type=_csv_ints, default=[1])
     parser.add_argument("--depths", type=_csv_ints, default=[4, 8, 16])
     parser.add_argument("--blocks", type=_csv_ints, default=[4, 8])
     parser.add_argument("--degree", type=int, default=32)
-    parser.add_argument("--scales", type=_csv_floats, default=(1.0, 2.0, 4.0))
+    parser.add_argument(
+        "--scales",
+        type=_csv_floats,
+        default=(1.0, 2.0, 4.0),
+    )
     parser.add_argument("--value-width", type=int, default=64)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=10)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--dtype", choices=["float32", "bfloat16", "float64"], default="float32")
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=["float32", "bfloat16", "float64"],
+        default="float32",
+    )
     parser.add_argument("--backward", action="store_true")
     parser.add_argument("--include-graph-pack", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
@@ -392,33 +493,20 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
 
     for nodes in args.nodes:
-        if args.degree >= nodes and modes & {"base", "attnres"}:
-            raise ValueError("degree must be smaller than every node count")
-        for depth in args.depths:
-            if "base" in modes:
-                rows.append(
-                    _base_row(
-                        nodes=nodes,
-                        degree=args.degree,
-                        layers=depth,
-                        device=device,
-                        dtype=dtype,
-                        warmup=args.warmup,
-                        repeats=args.repeats,
-                        backward=args.backward,
-                        include_graph_pack=args.include_graph_pack,
-                    )
-                )
-            if "attnres" in modes:
-                for blocks in args.blocks:
-                    if blocks > depth:
-                        continue
+        for graphs in args.graphs:
+            if graphs > nodes or nodes % graphs:
+                continue
+            nodes_per_graph = nodes // graphs
+            if args.degree >= nodes_per_graph and modes & {"base", "attnres"}:
+                continue
+            for depth in args.depths:
+                if "base" in modes:
                     rows.append(
-                        _attnres_row(
+                        _base_row(
                             nodes=nodes,
+                            graphs=graphs,
                             degree=args.degree,
                             layers=depth,
-                            blocks=blocks,
                             device=device,
                             dtype=dtype,
                             warmup=args.warmup,
@@ -427,39 +515,60 @@ def main() -> None:
                             include_graph_pack=args.include_graph_pack,
                         )
                     )
-                # Explicit B=L lane exposes the expected quadratic depth term.
-                if depth not in args.blocks:
+                if "attnres" in modes:
+                    for blocks in args.blocks:
+                        if blocks > depth:
+                            continue
+                        rows.append(
+                            _attnres_row(
+                                nodes=nodes,
+                                graphs=graphs,
+                                degree=args.degree,
+                                layers=depth,
+                                blocks=blocks,
+                                device=device,
+                                dtype=dtype,
+                                warmup=args.warmup,
+                                repeats=args.repeats,
+                                backward=args.backward,
+                                include_graph_pack=args.include_graph_pack,
+                            )
+                        )
+                    # Explicit B=L lane exposes the expected quadratic depth term.
+                    if depth not in args.blocks:
+                        rows.append(
+                            _attnres_row(
+                                nodes=nodes,
+                                graphs=graphs,
+                                degree=args.degree,
+                                layers=depth,
+                                blocks=depth,
+                                device=device,
+                                dtype=dtype,
+                                warmup=args.warmup,
+                                repeats=args.repeats,
+                                backward=args.backward,
+                                include_graph_pack=args.include_graph_pack,
+                            )
+                        )
+                if "implicit" in modes:
                     rows.append(
-                        _attnres_row(
+                        _implicit_row(
                             nodes=nodes,
-                            degree=args.degree,
-                            layers=depth,
-                            blocks=depth,
+                            graphs=graphs,
+                            scales=args.scales,
+                            value_width=args.value_width,
+                            applications=depth,
                             device=device,
                             dtype=dtype,
                             warmup=args.warmup,
                             repeats=args.repeats,
                             backward=args.backward,
-                            include_graph_pack=args.include_graph_pack,
                         )
                     )
-            if "implicit" in modes:
-                rows.append(
-                    _implicit_row(
-                        nodes=nodes,
-                        scales=args.scales,
-                        value_width=args.value_width,
-                        applications=depth,
-                        device=device,
-                        dtype=dtype,
-                        warmup=args.warmup,
-                        repeats=args.repeats,
-                        backward=args.backward,
-                    )
-                )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "device": str(device),
         "dtype": args.dtype,
         "backward": args.backward,
