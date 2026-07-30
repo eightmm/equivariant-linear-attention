@@ -79,20 +79,24 @@ contain an \(O(LBN)\) term unless checkpointing or recomputation removes it.
 
 ## 4. Edge-free implicit spatial kernel
 
-For finite feature rank \(F\), transported value width \(D\), and \(A\)
-applications,
+For finite feature rank \(F\), transported value width \(D\), \(A\)
+applications, \(G\) graphs, and bounded node chunk size \(C\),
 
 \[
 T_{\rm implicit}=O(ANFD),
 \]
 
 \[
-M_{\rm implicit}=O(N(F+D)+FD).
+M_{\rm implicit}
+=
+O\left(N(F+D)+GFD+CFD\right).
 \]
 
-For fixed \(F,D\), this is node-linear without an edge list. The claim is about
-a smooth low-rank spatial-kernel approximation, not exact hard-cutoff
-neighborhoods.
+The \(GFD\) term stores one sufficient statistic per graph. The \(CFD\) term is
+the bounded chunked outer-product workspace. The implementation does not create
+a full \(NFD\) temporary. For fixed \(F,D,C\), arithmetic is node-linear and
+memory is linear in total input size. The claim is about a smooth low-rank
+spatial-kernel approximation, not exact hard-cutoff neighborhoods.
 
 ## 5. Memory statements
 
@@ -140,6 +144,7 @@ include:
 - memory-bandwidth saturation;
 - allocator and cache behavior;
 - degree skew in sparse reductions;
+- graph-count growth in per-graph sufficient statistics;
 - autograd saved tensors and recomputation.
 
 Measured wall-clock linearity must therefore be established empirically.
@@ -236,8 +241,8 @@ Compare:
 - strongly ragged graph batches;
 - skewed degree distributions.
 
-This identifies padding, bucketing, and segment-reduction overhead that a simple
-Big-O formula does not expose.
+This identifies padding, bucketing, graph-statistic, and segment-reduction
+overhead that a simple Big-O formula does not expose.
 
 ## 9. Promotion language
 
@@ -258,5 +263,5 @@ For AttnRes add:
 For the implicit kernel add:
 
 > The edge-free spatial approximation has \(O(ANFD)\) arithmetic at fixed
-> finite feature rank; it approximates a smooth isotropic kernel rather than an
-> exact radius graph.
+> finite feature rank and uses chunked per-graph sufficient statistics; it
+> approximates a smooth isotropic kernel rather than an exact radius graph.
