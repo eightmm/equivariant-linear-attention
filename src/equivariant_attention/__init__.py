@@ -107,6 +107,13 @@ from .equivariant_linear_attention import (
     EquivariantLinearAttentionCore,
     EquivariantLinearAttentionLayer,
 )
+from .attention_residuals import (
+    EquivariantAttentionResidualConfig,
+    EquivariantAttentionResidualCore,
+    EquivariantAttentionResidualLayer,
+    EquivariantAttentionResiduals,
+    EquivariantBlockAttentionResidual,
+)
 from .unified_regression import UnifiedRegressionModel
 
 __all__ = [
@@ -117,6 +124,11 @@ __all__ = [
     "DistanceBandSpec",
     "EquivariantAttention",
     "EquivariantAttentionConfig",
+    "EquivariantAttentionResidualConfig",
+    "EquivariantAttentionResidualCore",
+    "EquivariantAttentionResidualLayer",
+    "EquivariantAttentionResiduals",
+    "EquivariantBlockAttentionResidual",
     "EquivariantLinearAttention",
     "EquivariantLinearAttentionConfig",
     "EquivariantLinearAttentionCore",
