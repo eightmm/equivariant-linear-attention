@@ -687,7 +687,7 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
     def __init__(
         self,
         *,
-        node_dim: int,
+        input_irreps: str | IrrepLayout,
         output_irreps: str | IrrepLayout,
         hidden_dim: int,
         num_layers: int,
@@ -695,8 +695,6 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         local_rank: int,
         local_cutoff: float,
         num_rbf: int,
-        input_vector_dim: int = 0,
-        input_tensor_dim: int = 0,
         num_node_roles: int = 0,
         num_edge_relations: int = 0,
         relation_cutoffs: tuple[float, ...] = (),
@@ -704,7 +702,7 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         eps: float = 1e-12,
     ) -> None:
         super().__init__(
-            node_dim=node_dim,
+            input_irreps=input_irreps,
             output_irreps=output_irreps,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -712,8 +710,6 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
             local_rank=local_rank,
             local_cutoff=local_cutoff,
             num_rbf=num_rbf,
-            input_vector_dim=input_vector_dim,
-            input_tensor_dim=input_tensor_dim,
             num_node_roles=num_node_roles,
             num_edge_relations=num_edge_relations,
             relation_cutoffs=relation_cutoffs,
@@ -771,25 +767,21 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
 
     def forward(
         self,
-        node_feats: torch.Tensor,
+        node_irreps: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
         graph_layout: PackedGraphLayout,
         neighbors: PackedNeighborGraph,
         *,
         node_role_id: torch.Tensor | None = None,
-        node_vectors: torch.Tensor | None = None,
-        node_tensors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         self._validate_inputs(
-            node_feats,
+            node_irreps,
             pos,
             batch,
             graph_layout,
             neighbors,
             node_role_id=node_role_id,
-            node_vectors=node_vectors,
-            node_tensors=node_tensors,
         )
         normalized_pos, radius, centered_norm = self._normalized_geometry(
             pos,
@@ -799,7 +791,8 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         geometry = self._build_geometry(pos, neighbors)
         multipoles = self.node_multipoles(geometry)
 
-        even_scalar = self.scalar_input(node_feats)
+        external = self.input_projection(node_irreps)
+        even_scalar = external.even_scalar
         if self.role_embedding is not None:
             if node_role_id is None:
                 raise RuntimeError("validated role IDs are missing")
@@ -827,12 +820,7 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         polar = polar + self.initial_multipole_polar(
             multipoles.polar.to(dtype=polar.dtype)
         )
-        if self.vector_input is not None:
-            if node_vectors is None:
-                raise RuntimeError("validated vector input is missing")
-            polar = polar + self.vector_input(
-                node_vectors.to(dtype=polar.dtype)
-            )
+        polar = polar + external.polar_vector.to(dtype=polar.dtype)
 
         even_tensor = torch.tanh(
             self.initial_tensor_gate(even_scalar)
@@ -842,34 +830,24 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         even_tensor = even_tensor + self.initial_multipole_even_tensor(
             multipoles.even_tensor.to(dtype=even_tensor.dtype)
         )
-        if self.tensor_input is not None:
-            if node_tensors is None:
-                raise RuntimeError("validated tensor input is missing")
-            tensor_features = torch.stack(
-                [
-                    node_tensors[..., 0, 0],
-                    node_tensors[..., 1, 1],
-                    node_tensors[..., 0, 1],
-                    node_tensors[..., 0, 2],
-                    node_tensors[..., 1, 2],
-                ],
-                dim=-1,
-            )
-            even_tensor = even_tensor + self.tensor_input(
-                tensor_features.to(dtype=even_tensor.dtype)
-            )
+        even_tensor = even_tensor + external.even_tensor.to(
+            dtype=even_tensor.dtype
+        )
 
         state = _ParityState(
             even_scalar=even_scalar,
-            odd_scalar=self.initial_multipole_odd_scalar(
+            odd_scalar=external.odd_scalar.to(dtype=even_scalar.dtype)
+            + self.initial_multipole_odd_scalar(
                 multipoles.odd_scalar.to(dtype=even_scalar.dtype)
             ),
             polar_vector=polar,
-            axial_vector=self.initial_multipole_axial(
+            axial_vector=external.axial_vector.to(dtype=polar.dtype)
+            + self.initial_multipole_axial(
                 multipoles.axial.to(dtype=polar.dtype)
             ),
             even_tensor=even_tensor,
-            odd_tensor=self.initial_multipole_odd_tensor(
+            odd_tensor=external.odd_tensor.to(dtype=even_tensor.dtype)
+            + self.initial_multipole_odd_tensor(
                 multipoles.odd_tensor.to(dtype=even_tensor.dtype)
             ),
         )

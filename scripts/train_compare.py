@@ -16,6 +16,10 @@ from equivariant_attention._egnn_baseline import (
     _DynamicEGNNBaseline,
     _StaticEGNNBaseline,
 )
+from equivariant_attention._matched_vnext_arms import (
+    MATCHED_VNEXT_ARMS,
+    build_matched_vnext_config,
+)
 from equivariant_attention.moment import routing_head_counts as _routing_head_counts
 from equivariant_attention.reproducibility import configure_reproducibility
 
@@ -44,6 +48,7 @@ from equivariant_attention.training import (
     fit_target_normalizer,
     train_regression_step,
 )
+from equivariant_attention.unified_regression import UnifiedRegressionModel
 
 
 QM9_DATA_HASHES = {
@@ -260,7 +265,7 @@ def main() -> None:
             else {"status": "not_applicable"}
         )
         metrics["whitened_global_read"] = _whitened_mix_magnitude(model)
-    else:
+    elif args.benchmark_model in _EGNN_BENCHMARK_MODELS:
         coordinate_updates = args.benchmark_model == "internal_dynamic_egnn_baseline"
         metrics["baseline_details"] = {
             "name": args.benchmark_model,
@@ -273,6 +278,15 @@ def main() -> None:
             ),
             "distance_feature": "raw_squared_distance",
             "readout": "layernorm_node_linear_graph_mean",
+        }
+    else:
+        metrics["baseline_details"] = {
+            "name": "unified_multipole",
+            "official_reproduction": False,
+            "coordinate_updates": False,
+            "edge_topology": "precomputed_radius_candidates_with_self",
+            "input_irreps": f"{node_dim}x0e",
+            "readout": "canonical_0e_graph_mean",
         }
     metrics["gradient_norms"] = _gradient_norms(model)
     gradient_parameters = _gradient_parameter_diagnostics(model)
@@ -309,12 +323,15 @@ def main() -> None:
         normalizer=normalizer,
         amp_dtype=amp_dtype,
     )
-    if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
+    if args.benchmark_model != "factorized_moment":
         metrics["bounded_diagnostics"] = {
             "schema_version": 1,
             "enabled": bool(args.bounded_diagnostics),
             "status": f"not_applicable_{args.benchmark_model}",
-            "reason": "factorized attention diagnostics do not apply to EGNN messages",
+            "reason": (
+                "legacy factorized-attention diagnostics do not apply to this "
+                "benchmark model"
+            ),
         }
     else:
         metrics["bounded_diagnostics"] = (
@@ -351,8 +368,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--benchmark-model",
-        choices=["factorized_moment", *_EGNN_BENCHMARK_MODEL_CHOICES],
+        choices=[
+            "factorized_moment",
+            "unified_multipole",
+            *_EGNN_BENCHMARK_MODEL_CHOICES,
+        ],
         default="factorized_moment",
+    )
+    parser.add_argument(
+        "--architecture-arm",
+        choices=("flat", *MATCHED_VNEXT_ARMS),
+        default="flat",
+        help=(
+            "use one frozen structured vNext comparison arm; 'flat' preserves "
+            "the historical flag-based builder"
+        ),
     )
     parser.add_argument("--dataset", choices=["synthetic", "qm9"], default="synthetic")
     parser.add_argument("--data-root", type=Path, default=Path("data/qm9"))
@@ -503,6 +533,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.hidden_dim is None:
         args.hidden_dim = 91 if args.benchmark_model in _EGNN_BENCHMARK_MODELS else 64
     if (
+        args.architecture_arm != "flat"
+        and args.benchmark_model != "factorized_moment"
+    ):
+        parser.error(
+            "--architecture-arm is available only with factorized_moment"
+        )
+    if (
         not torch.isfinite(torch.tensor(args.whitened_global_ridge))
         or args.whitened_global_ridge <= 0.0
     ):
@@ -532,6 +569,24 @@ def _build_benchmark_model(
     *,
     node_dim: int,
 ) -> torch.nn.Module:
+    if args.benchmark_model == "unified_multipole":
+        if args.architecture_arm != "flat":
+            raise ValueError(
+                "unified_multipole does not use legacy architecture arms"
+            )
+        if not args.precompute_local_edges:
+            raise ValueError(
+                "unified_multipole requires precomputed local edges"
+            )
+        return UnifiedRegressionModel(
+            node_dim=node_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            num_heads=args.num_heads,
+            local_rank=max(2, args.num_heads),
+            local_cutoff=args.local_cutoff,
+            num_rbf=args.num_rbf,
+        )
     if args.benchmark_model in _EGNN_BENCHMARK_MODELS:
         incompatible = []
         defaults = {
@@ -608,6 +663,29 @@ def _build_benchmark_model(
         )
     if args.benchmark_model != "factorized_moment":
         raise ValueError(f"unknown benchmark model: {args.benchmark_model}")
+    if args.architecture_arm != "flat":
+        if not args.precompute_local_edges:
+            raise ValueError(
+                "matched vNext architecture arms require precomputed local edges"
+            )
+        return build_regression_model(
+            node_dim=node_dim,
+            architecture_config=build_matched_vnext_config(
+                args.architecture_arm,
+                node_dim=node_dim,
+                hidden_dim=args.hidden_dim,
+                num_layers=args.num_layers,
+                num_heads=args.num_heads,
+                local_cutoff=args.local_cutoff,
+                global_backend=(
+                    "feature_gemm"
+                    if args.architecture_arm
+                    in {"global_only", "global_local"}
+                    else "outer_scatter"
+                ),
+                checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+            ),
+        )
     local_head_counts = _routing_head_counts(
         args.routing,
         num_layers=args.num_layers,
@@ -686,19 +764,20 @@ def _gradient_norms(model: torch.nn.Module) -> dict[str, float]:
         return sqrt(square_sum)
 
     all_parameters = list(model.parameters())
+    layers = getattr(model, "layers", ())
     beta_parameters = [
         layer.raw_linear_kernel
-        for layer in model.layers
+        for layer in layers
         if hasattr(layer, "raw_linear_kernel")
     ]
     gamma_parameters = [
         layer.raw_vector_kernel
-        for layer in model.layers
+        for layer in layers
         if hasattr(layer, "raw_vector_kernel")
     ]
     tensor_parameters = [
         layer.raw_tensor_kernel
-        for layer in model.layers
+        for layer in layers
         if getattr(layer, "raw_tensor_kernel", None) is not None
     ]
     summary = {"all": float(norm(all_parameters))}
@@ -894,10 +973,41 @@ def _coordinate_update_diagnostics(
     try:
         model.eval()
         with torch.no_grad():
+            sparse_kwargs: dict[str, object] = {}
+            consumes_external_neighbors = bool(
+                getattr(model, "consumes_external_neighbors", True)
+            )
+            if consumes_external_neighbors and graph_batch.edge_index is not None:
+                sparse_kwargs["edge_index"] = graph_batch.edge_index
+                sparse_kwargs["edge_index_is_validated"] = (
+                    graph_batch.edge_index_is_validated
+                )
+                if graph_batch.edge_relation_id is not None:
+                    sparse_kwargs["edge_relation_id"] = (
+                        graph_batch.edge_relation_id
+                    )
+            elif (
+                consumes_external_neighbors
+                and graph_batch.packed_neighbors is not None
+            ):
+                sparse_kwargs["packed_neighbors"] = graph_batch.packed_neighbors
+            if (
+                graph_batch.graph_layout is not None
+                and getattr(model, "supports_graph_layout", False)
+            ):
+                sparse_kwargs["graph_layout"] = graph_batch.graph_layout
+            if graph_batch.readout_mask is not None:
+                sparse_kwargs["readout_mask"] = graph_batch.readout_mask
+            if (
+                graph_batch.node_role_id is not None
+                and int(getattr(model.config, "num_node_roles", 0)) > 0
+            ):
+                sparse_kwargs["node_role_id"] = graph_batch.node_role_id
             output = model(
                 graph_batch.node_feats,
                 graph_batch.pos,
                 batch=graph_batch.batch,
+                **sparse_kwargs,
             )
     finally:
         for handle in handles:
@@ -2010,6 +2120,118 @@ def _run_config(
             "diagnostic_max_nodes": args.diagnostic_max_nodes,
             "diagnostic_sample_count": args.diagnostic_sample_count,
             "diagnostic_effective_rank": args.diagnostic_effective_rank,
+        }
+    if args.benchmark_model == "unified_multipole":
+        return {
+            "dataset": args.dataset,
+            "data_root": str(args.data_root),
+            "qm9_target_index": args.qm9_target_index,
+            "num_samples": args.num_samples,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "batch_size": args.batch_size,
+            "steps": args.steps,
+            "model": args.benchmark_model,
+            "comparison_role": "canonical_generic_3d_candidate",
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "num_heads": args.num_heads,
+            "local_rank": max(2, args.num_heads),
+            "local_cutoff": args.local_cutoff,
+            "num_rbf": args.num_rbf,
+            "precompute_local_edges": args.precompute_local_edges,
+            "input_irreps": "dataset_node_dim x 0e",
+            "output_irreps": "1x0e",
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "grad_clip": args.grad_clip,
+            "split_seed": split_seed,
+            "model_seed": model_seed,
+            "dataset_seed": args.seed,
+            "determinism": args.determinism,
+            "device": args.device,
+            "amp_dtype": args.amp_dtype,
+            "target_normalized": not args.no_target_normalize,
+            "validation_evaluated": True,
+            "test_evaluated": args.evaluate_test,
+            "architecture": "canonical_multipole_parity_factorized_moment",
+            "persistent_irreps": "0e + 0o + 1e + 1o + 2e + 2o",
+            "readout": "canonical_0e_graph_mean",
+        }
+    if args.architecture_arm != "flat":
+        node_dim = 11 if args.dataset == "qm9" else 8
+        architecture = build_matched_vnext_config(
+            args.architecture_arm,
+            node_dim=node_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            num_heads=args.num_heads,
+            local_cutoff=args.local_cutoff,
+            global_backend=(
+                "feature_gemm"
+                if args.architecture_arm in {"global_only", "global_local"}
+                else "outer_scatter"
+            ),
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+        return {
+            "dataset": args.dataset,
+            "data_root": str(args.data_root),
+            "qm9_target_index": args.qm9_target_index,
+            "num_samples": args.num_samples,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "batch_size": args.batch_size,
+            "steps": args.steps,
+            "model": args.benchmark_model,
+            "architecture_arm": args.architecture_arm,
+            "structured_architecture": architecture.to_dict()["config"],
+            "comparison_role": "equivariant_attention_candidate",
+            "official_reproduction": False,
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "num_heads": args.num_heads,
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "grad_clip": args.grad_clip,
+            "split_seed": split_seed,
+            "model_seed": model_seed,
+            "dataset_seed": args.seed,
+            "determinism": args.determinism,
+            "device": args.device,
+            "amp_dtype": args.amp_dtype,
+            "target_normalized": not args.no_target_normalize,
+            "test_evaluated": args.evaluate_test,
+            "attention": "factorized_moment",
+            "balance_cycles": 0,
+            "key_balancing": False,
+            "global_transport_mode": "learned",
+            "global_transport_executed": True,
+            "global_geometry_executed": True,
+            "global_attention_formula": "factorized_learned_kernel",
+            "routing": (
+                "homogeneous_sparse_global"
+                if args.architecture_arm in {"global_local", "high_order_sparse"}
+                else (
+                    "homogeneous_global"
+                    if args.architecture_arm == "global_only"
+                    else "lgl"
+                )
+            ),
+            "local_head_counts": (
+                [0] * args.num_layers
+                if args.architecture_arm
+                in {"global_only", "global_local", "high_order_sparse"}
+                else list(architecture.local.local_head_counts or ())
+            ),
+            "local_cutoff": args.local_cutoff,
+            "edge_topology": "precomputed_radius_candidates_with_self",
+            "precompute_local_edges": args.precompute_local_edges,
+            "bounded_diagnostics": args.bounded_diagnostics,
+            "diagnostic_max_nodes": args.diagnostic_max_nodes,
+            "diagnostic_sample_count": args.diagnostic_sample_count,
+            "diagnostic_effective_rank": args.diagnostic_effective_rank,
+            "ffn_hidden_ratio": 2.0,
         }
     inverse_positive_baseline = args.kernel_floor_mode == "inverse_graph_size"
     local_head_counts = _routing_head_counts(

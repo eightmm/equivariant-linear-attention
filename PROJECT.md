@@ -2,6 +2,21 @@
 
 ## Status
 
+- The 2026-07-30 canonical generic-3D input contract now accepts one flattened
+  `l<=2` carrier over arbitrary `0e/0o/1e/1o/2e/2o` multiplicities, with
+  positions kept separate, same-irrep channel projection, bias restricted to
+  `0e`, geometry-only input, and public packing/ST5 helpers. Full O(3)
+  reflection, translation, gradients into every sector, coordinate double
+  backward, CUDA BF16, and regression wiring pass. On the seed-42 500-update
+  QM9 gap screen, unified improved validation MAE from matched LGL
+  `0.718769` to `0.664455 eV`, but used `1.303x` parameters, `5.55x` median
+  step time, and `1.345x` peak allocation. On the same 16 LBA train rows at
+  1,000 updates, unified improved MAE from historical attention `0.773502` to
+  `0.203864 pK`, but neither reached `0.10 pK`; unified used `4.25x` step time
+  and `3.27x` peak allocation. LBA validation/test remained closed and the
+  official topology-receipt mismatch remains unresolved. The interface and
+  train wiring are admitted; accuracy superiority and efficiency are not.
+  See `docs/UNIFIED_INPUT_IRREPS_QM9_LBA_20260730.md`.
 - The 2026-07-29 E2Former-informed vNext mechanics packet is implemented and
   remains **opt-in / not promoted**. It replaces the rigid architectural
   assumption that a block must give up global heads to become local with a
@@ -35,6 +50,26 @@
   mechanisms, not custom-kernel performance claims. Triton/EAAS, production
   cell-list/PBC construction, a custom streamed backward, and persistent
   `l>=3` carriers remain deferred.
+- The first downstream validation of that homogeneous candidate rejects
+  promotion. On QM9 gap (seed 42, 500 updates), same-width all-global /
+  all-global-plus-rank-4-local / historical LGL validation MAEs were
+  `0.795491/0.794915/0.718769 eV`; the additive local residual improved its
+  direct control by only `0.000576 eV` while using `1.388x` the median step
+  time. On one official-ID30-shaped LBA run (seed/order 44, 20 epochs), the
+  corresponding best validation RMSEs were
+  `1.676701/1.675044/1.604758 pK`; the residual gained only `0.001657 pK`
+  over all-global and regressed LGL by `0.070286 pK`. The LBA comparison is
+  same-run evidence only, not an admitted cross-packet result: the generic-3D
+  label-blind sample-ID migration changed the topology receipt from the frozen
+  `57f40fb1...` to `d8d4f04a...` without changing the
+  `32,302,952` edge count. `train_lba_id30.py` now fails closed before a full
+  run on that mismatch. The label-blind ID versus frozen topology-hash schema
+  must be resolved explicitly before another official LBA claim. O(3),
+  translation, node-permutation, edge-order, feature-GEMM equivalence, and
+  deeper-gradient mechanics remain green; defaults stay unchanged. See the
+  final three 2026-07-29 records in `docs/EXPERIMENTS.jsonl` and the tracked
+  architecture/results/receipt summary in
+  `docs/HOMOGENEOUS_GLOBAL_LOCAL_QM9_LBA_20260729.md`.
 - The integrated generic-3D smoke has executed one real ATOM3D-LBA ID30 train
   complex (331 nodes / 9,306 typed edges) through the structured
   `high_order` profile, invariant node roles and named masks, four relation

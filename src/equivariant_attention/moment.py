@@ -455,6 +455,12 @@ class EquivariantAttention(nn.Module):
             else None
         )
         local_head_counts = config.local_head_counts or (0,) * config.num_layers
+        self.consumes_external_neighbors = bool(
+            any(local_head_counts)
+            or config.use_sparse_low_rank_local_residual
+            or config.use_transient_l3_workspace
+            or config.readout_mode in {"bipartite", "interaction"}
+        )
         use_local_key_balancing = (
             config.use_key_balancing
             if config.use_local_key_balancing is None

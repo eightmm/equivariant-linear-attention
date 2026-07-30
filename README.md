@@ -106,7 +106,7 @@ from equivariant_attention import (
 )
 
 config = Unified3DConfig(
-    node_dim=32,
+    input_irreps="32x0e",
     output_irreps="1x0e",
     hidden_dim=128,
     num_layers=6,
@@ -125,11 +125,7 @@ graph = prepare_3d_graph(
     edge_relation_id=edge_relation_id,
 )
 
-output = model(
-    node_features,
-    positions,
-    graph,
-)
+output = model(node_irreps, positions, graph)
 
 node_output = output["node_irreps"]
 graph_mean_diagnostic = output["graph_irreps"]
@@ -187,20 +183,20 @@ semantically different backend.
 
 ## Inputs
 
-The ordinary path accepts scalar node features and positions:
+The canonical path accepts one flattened `l<=2` irrep tensor and separate
+positions:
 
 ```text
-node_features: (N, node_dim)
-positions:     (N, 3)
+node_irreps: (N, input_layout.dim)
+positions:   (N, 3)
 ```
 
-Optional external equivariant inputs are supported for conventional polar
-vectors and reflection-even symmetric-traceless tensors:
-
-```text
-node_vectors: (N, input_vector_dim, 3)      # 1o
-node_tensors: (N, input_tensor_dim, 3, 3)   # 2e
-```
+`input_irreps` may contain any multiplicity of `0e`, `0o`, `1e`, `1o`, `2e`,
+and `2o`. The `l=1` basis is Cartesian xyz. The compact `l=2` basis is
+`[xx, yy, xy, xz, yz]`, with `zz=-xx-yy`. `pack_irreps`, `split_irreps`,
+`matrix_to_st5`, and `st5_to_matrix` are provided at the package root.
+Positions are geometry, not an input feature sector. `input_irreps="0"` is the
+geometry-only path.
 
 Integer node roles and edge relations are invariant metadata. Relation-specific
 cutoffs may narrow one shared local domain but do not create relation-specific

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Mapping
 
+import torch
+
 
 _TERM = re.compile(r"^\s*(\d+)x([012])([eo])\s*$")
 _IRREP = re.compile(r"^\s*(\d+)([eo])\s*$")
@@ -159,6 +161,90 @@ class IrrepLayout:
 
     def __str__(self) -> str:
         return " + ".join(str(block) for block in self.blocks) if self.blocks else "0"
+
+
+def split_irreps(
+    layout: str | IrrepLayout,
+    value: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """View one flattened irrep tensor as canonical per-sector blocks."""
+
+    parsed = IrrepLayout.parse(layout)
+    if value.shape[-1] != parsed.dim:
+        raise ValueError(f"value final dimension must be {parsed.dim}")
+    return {
+        str(block.irrep): value[..., parsed.slice_for(block.irrep)].reshape(
+            *value.shape[:-1],
+            block.multiplicity,
+            block.irrep.dim,
+        )
+        for block in parsed.blocks
+    }
+
+
+def pack_irreps(
+    layout: str | IrrepLayout,
+    blocks: Mapping[str, torch.Tensor],
+) -> torch.Tensor:
+    """Pack canonical per-sector blocks into one flattened irrep tensor."""
+
+    parsed = IrrepLayout.parse(layout)
+    expected = {str(block.irrep) for block in parsed.blocks}
+    if set(blocks) != expected:
+        raise ValueError(
+            f"blocks must exactly match layout sectors {sorted(expected)}"
+        )
+    if not parsed.blocks:
+        raise ValueError("packing an empty layout requires an explicit shape")
+    flattened: list[torch.Tensor] = []
+    prefix: tuple[int, ...] | None = None
+    for block in parsed.blocks:
+        value = blocks[str(block.irrep)]
+        expected_tail = (block.multiplicity, block.irrep.dim)
+        if value.shape[-2:] != expected_tail:
+            raise ValueError(
+                f"{block.irrep} block must end with shape {expected_tail}"
+            )
+        if prefix is None:
+            prefix = value.shape[:-2]
+        elif value.shape[:-2] != prefix:
+            raise ValueError("all irrep blocks must share leading dimensions")
+        flattened.append(value.flatten(start_dim=-2))
+    return torch.cat(flattened, dim=-1)
+
+
+def matrix_to_st5(value: torch.Tensor) -> torch.Tensor:
+    """Compress a symmetric traceless 3x3 tensor to [xx, yy, xy, xz, yz]."""
+
+    if value.shape[-2:] != (3, 3):
+        raise ValueError("value must end with shape (3, 3)")
+    return torch.stack(
+        [
+            value[..., 0, 0],
+            value[..., 1, 1],
+            value[..., 0, 1],
+            value[..., 0, 2],
+            value[..., 1, 2],
+        ],
+        dim=-1,
+    )
+
+
+def st5_to_matrix(value: torch.Tensor) -> torch.Tensor:
+    """Expand [xx, yy, xy, xz, yz] with zz=-xx-yy."""
+
+    if value.shape[-1] != 5:
+        raise ValueError("value must end with dimension 5")
+    xx, yy, xy, xz, yz = value.unbind(dim=-1)
+    zz = -xx - yy
+    return torch.stack(
+        [
+            torch.stack([xx, xy, xz], dim=-1),
+            torch.stack([xy, yy, yz], dim=-1),
+            torch.stack([xz, yz, zz], dim=-1),
+        ],
+        dim=-2,
+    )
 
 
 def _product_parity(left: Irrep, right: Irrep) -> str:

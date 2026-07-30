@@ -85,7 +85,7 @@ def _transform_output(
 
 def test_unified_config_exposes_only_output_representation() -> None:
     config = Unified3DConfig(
-        node_dim=5,
+        input_irreps="5x0e",
         output_irreps="2x0e + 1x0o + 2x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
         num_heads=4,
@@ -98,19 +98,19 @@ def test_unified_config_exposes_only_output_representation() -> None:
     contract = config.canonical_contract()
     assert contract["public_symmetry"] == "SE3"
     assert contract["internal_symmetry"] == "O3_parity_complete"
-    assert contract["user_representation_control"] == "output_irreps_only"
+    assert contract["user_representation_control"] == "input_and_output_irreps"
     assert contract["fallbacks"] == ()
 
 
 def test_unified_config_rejects_unsupported_output_degree() -> None:
     with pytest.raises(ValueError, match="l<=2"):
-        Unified3DConfig(node_dim=3, output_irreps="1x3o")
+        Unified3DConfig(input_irreps="3x0e", output_irreps="1x3o")
 
 
 def test_relation_cutoff_may_only_narrow_shared_domain() -> None:
     with pytest.raises(ValueError, match="only narrow"):
         Unified3DConfig(
-            node_dim=3,
+            input_irreps="3x0e",
             local_cutoff=4.0,
             relation_cutoffs=(2.0, 5.0),
         )
@@ -136,7 +136,7 @@ def test_prepared_graph_same_device_move_is_identity() -> None:
 def test_output_irreps_shape_and_split_contract() -> None:
     torch.manual_seed(4)
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="2x0e + 1x0o + 2x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
         num_layers=2,
@@ -165,7 +165,7 @@ def test_output_irreps_shape_and_split_contract() -> None:
 def test_parity_complete_output_obeys_improper_transform() -> None:
     torch.manual_seed(9)
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         output_irreps="1x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
         num_layers=2,
@@ -210,7 +210,7 @@ def test_parity_complete_output_obeys_improper_transform() -> None:
 def test_unified_forward_and_coordinate_gradients_are_finite() -> None:
     torch.manual_seed(12)
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="1x0e + 1x0o + 1x1o",
         hidden_dim=16,
         num_layers=2,
@@ -243,7 +243,7 @@ def test_unified_forward_and_coordinate_gradients_are_finite() -> None:
 
 def test_relation_metadata_is_packed_once_and_range_checked() -> None:
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_heads=4,

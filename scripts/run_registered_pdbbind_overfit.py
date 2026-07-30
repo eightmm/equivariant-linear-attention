@@ -33,6 +33,7 @@ from equivariant_attention.training import (
     fit_target_normalizer,
     train_regression_step,
 )
+from equivariant_attention.unified_regression import UnifiedRegressionModel
 
 
 PACKET_ID = "pdbbind-overfit-persistent2e-20260723"
@@ -201,6 +202,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--eval-interval", type=int, default=EVAL_INTERVAL)
+    parser.add_argument(
+        "--arms",
+        nargs="+",
+        choices=(*registered_arms(), "unified"),
+        default=["attention", "egnn"],
+    )
+    parser.add_argument(
+        "--allow-label-blind-sample-ids",
+        action="store_true",
+        help=(
+            "accept the documented label-blind ID migration for train-only "
+            "capacity probes while retaining node/ligand-count checks"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if not 0 < args.max_steps <= MAX_STEPS:
@@ -235,7 +250,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         indices=SUBSET_INDICES,
         revision=DATASET_REVISION,
     )
-    _validate_frozen_samples(samples)
+    _validate_frozen_samples(
+        samples,
+        allow_label_blind_ids=args.allow_label_blind_sample_ids,
+    )
     normalizer = fit_target_normalizer(samples)
     attention_probe = _build_attention()
     attention_parameter_count = _parameter_count(attention_probe)
@@ -250,6 +268,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         **plan,
         "status": "running",
         "sample_ids": [sample.sample_id for sample in samples],
+        "sample_identity_contract": (
+            "label_blind_ids_with_frozen_node_and_ligand_counts"
+            if args.allow_label_blind_sample_ids
+            else "historical_frozen_ids"
+        ),
         "node_counts": [int(sample.pos.shape[0]) for sample in samples],
         "ligand_counts": [
             int(sample.readout_mask.sum().item())
@@ -265,7 +288,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_result(args.output, result)
     packet_started = time.perf_counter()
     try:
-        for arm in registered_arms():
+        for arm in args.arms:
             packet_elapsed = time.perf_counter() - packet_started
             remaining = args.budget_seconds - packet_elapsed
             if remaining <= 0.0:
@@ -277,15 +300,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 continue
             arm_samples = (
-                samples
-                if arm == "attention"
-                else _with_egnn_radius_edges(samples)
+                samples if arm == "attention" else _with_radius_edges(samples)
             )
-            model = (
-                _build_attention()
-                if arm == "attention"
-                else _build_egnn(egnn_width)
-            )
+            if arm == "attention":
+                model = _build_attention()
+            elif arm == "egnn":
+                model = _build_egnn(egnn_width)
+            else:
+                model = _build_unified()
             arm_result = _run_arm(
                 arm=arm,
                 model=model,
@@ -311,6 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result["status"] = "completed"
     result["attention_overfit_passed"] = _arm_passed(result, "attention")
     result["egnn_overfit_passed"] = _arm_passed(result, "egnn")
+    result["unified_overfit_passed"] = _arm_passed(result, "unified")
     _write_result(args.output, result)
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
     return 0
@@ -325,7 +348,7 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
         "split": "train",
         "subset_indices": list(SUBSET_INDICES),
         "device": args.device,
-        "arms_registered": list(registered_arms()),
+        "arms_registered": list(args.arms),
         "max_steps": args.max_steps,
         "threshold_train_mae_pK": args.threshold,
         "packet_budget_seconds": args.budget_seconds,
@@ -357,11 +380,23 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
             "cutoff_angstrom": EGNN_CUTOFF_ANGSTROM,
             "coordinate_updates": False,
         },
+        "unified": {
+            "kind": "canonical_multipole_parity_factorized_moment",
+            "input_irreps": f"{ATOM3D_LBA_NODE_DIM}x0e",
+            "output_irreps": "1x0e",
+            "hidden_dim": HIDDEN_DIM,
+            "num_layers": NUM_LAYERS,
+            "num_heads": NUM_HEADS,
+            "local_rank": NUM_HEADS,
+            "cutoff_angstrom": EGNN_CUTOFF_ANGSTROM,
+            "readout": "ligand_mask_mean_0e",
+        },
         "model_seed": MODEL_SEED,
         "order_seed": ORDER_SEED,
         "validation_evaluated": False,
         "test_evaluated": False,
         "claim_boundary": "train-only wiring/capacity sanity check",
+        "allow_label_blind_sample_ids": args.allow_label_blind_sample_ids,
     }
 
 
@@ -387,7 +422,19 @@ def _build_egnn(width: int) -> torch.nn.Module:
     )
 
 
-def _with_egnn_radius_edges(
+def _build_unified() -> torch.nn.Module:
+    torch.manual_seed(MODEL_SEED)
+    return UnifiedRegressionModel(
+        node_dim=ATOM3D_LBA_NODE_DIM,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        num_heads=NUM_HEADS,
+        local_rank=NUM_HEADS,
+        local_cutoff=EGNN_CUTOFF_ANGSTROM,
+    )
+
+
+def _with_radius_edges(
     samples: Sequence[GraphSample],
 ) -> list[GraphSample]:
     return [
@@ -400,6 +447,10 @@ def _with_egnn_radius_edges(
         )
         for sample in samples
     ]
+
+
+# Historical architecture packets import this helper by name.
+_with_egnn_radius_edges = _with_radius_edges
 
 
 def _run_arm(
@@ -515,7 +566,7 @@ def _run_arm(
             for sample in samples
             if sample.edge_index is not None
         )
-        if arm == "egnn"
+        if arm in {"egnn", "unified"}
         else 0
     )
     return {
@@ -560,11 +611,23 @@ def _iter_batches(
     ]
 
 
-def _validate_frozen_samples(samples: Sequence[GraphSample]) -> None:
+def _validate_frozen_samples(
+    samples: Sequence[GraphSample],
+    *,
+    allow_label_blind_ids: bool = False,
+) -> None:
     if len(samples) != len(SUBSET_INDICES):
         raise ValueError("registered subset must contain exactly 16 complexes")
-    if tuple(sample.sample_id for sample in samples) != FROZEN_SAMPLE_IDS:
+    if (
+        not allow_label_blind_ids
+        and tuple(sample.sample_id for sample in samples) != FROZEN_SAMPLE_IDS
+    ):
         raise ValueError("registered sample identity or order changed")
+    if allow_label_blind_ids and any(
+        not sample.sample_id.startswith(f"atom3d-lba:train:{index:07d}:")
+        for index, sample in enumerate(samples)
+    ):
+        raise ValueError("label-blind sample row identity or order changed")
     if tuple(int(sample.pos.shape[0]) for sample in samples) != FROZEN_NODE_COUNTS:
         raise ValueError("registered node count changed")
     if any(sample.node_feats.shape[1] != ATOM3D_LBA_NODE_DIM for sample in samples):

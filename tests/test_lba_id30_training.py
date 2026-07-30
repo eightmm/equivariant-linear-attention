@@ -47,6 +47,98 @@ def test_plan_uses_official_validation_and_has_no_test_switch() -> None:
     assert plan["arms"] == ["candidate", "incumbent", "egnn"]
     assert plan["test_evaluated"] is False
     assert not hasattr(args, "evaluate_test")
+    assert plan["expected_topology_sha256"] == (
+        "57f40fb157e6416558db5507d95c3a5e4f828881e0bc92e142e1b85de802dc6c"
+    )
+    assert plan["expected_topology_edge_count"] == 32_302_952
+
+
+def test_full_lba_topology_contract_fails_closed() -> None:
+    symbols = _symbols()
+
+    symbols["_validate_frozen_topology"](
+        topology_sha256=(
+            "57f40fb157e6416558db5507d95c3a5e4f828881e0bc92e142e1b85de802dc6c"
+        ),
+        edge_count=32_302_952,
+        limited=False,
+    )
+    symbols["_validate_frozen_topology"](
+        topology_sha256="subset",
+        edge_count=12,
+        limited=True,
+    )
+    with pytest.raises(RuntimeError, match="frozen topology contract"):
+        symbols["_validate_frozen_topology"](
+            topology_sha256=(
+                "d8d4f04a1241ccd6edbc515000395bc386c36e887fcb55da028d4bafa0e0d829"
+            ),
+            edge_count=32_302_952,
+            limited=False,
+        )
+
+
+def test_lba_runner_exposes_matched_2e_l3_and_sparse_arms() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba-vnext",
+            "--arms",
+            "vnext_2e",
+            "vnext_l3",
+            "vnext_sparse",
+            "candidate",
+            "--dry-run",
+        ]
+    )
+    plan = symbols["_plan"](args)
+    candidate = symbols["_build_model"]("candidate", None)
+    control = symbols["_build_model"]("vnext_2e", None)
+    l3 = symbols["_build_model"]("vnext_l3", None)
+    sparse = symbols["_build_model"]("vnext_sparse", None)
+
+    assert plan["primary_arm"] == "vnext_l3"
+    assert control.hidden_irreps.tensors == l3.hidden_irreps.tensors == 1
+    assert control.config.use_transient_l3_workspace is False
+    assert l3.config.use_transient_l3_workspace is True
+    assert sparse.config.use_sparse_low_rank_local_residual is True
+    baseline_parameters = sum(
+        parameter.numel() for parameter in candidate.parameters()
+    )
+    for model in (control, l3, sparse):
+        ratio = sum(parameter.numel() for parameter in model.parameters())
+        assert ratio / baseline_parameters <= 1.01
+
+
+def test_lba_runner_exposes_homogeneous_global_local_attribution() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/lba-homogeneous",
+            "--arms",
+            "vnext_global_local",
+            "vnext_global",
+            "candidate",
+            "--dry-run",
+        ]
+    )
+    plan = symbols["_plan"](args)
+    control = symbols["_build_model"]("vnext_global", None)
+    candidate = symbols["_build_model"]("vnext_global_local", None)
+    lgl = symbols["_build_model"]("candidate", None)
+
+    assert plan["primary_arm"] == "vnext_global_local"
+    assert plan["primary_baseline"] == "vnext_global"
+    assert control.config.local_head_counts == (0, 0, 0)
+    assert control.config.use_sparse_low_rank_local_residual is False
+    assert candidate.config.local_head_counts == (0, 0, 0)
+    assert candidate.config.use_sparse_low_rank_local_residual is True
+    assert candidate.config.local_residual_layers == (0, 2)
+    candidate_parameters = sum(
+        parameter.numel() for parameter in candidate.parameters()
+    )
+    lgl_parameters = sum(parameter.numel() for parameter in lgl.parameters())
+    assert candidate_parameters / lgl_parameters <= 1.05
 
 
 def test_plan_records_explicit_model_and_order_seeds() -> None:

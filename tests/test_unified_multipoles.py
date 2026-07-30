@@ -74,7 +74,7 @@ def _noncoplanar_positions() -> torch.Tensor:
 
 def test_unified_contract_records_multipole_complete_path() -> None:
     config = Unified3DConfig(
-        node_dim=5,
+        input_irreps="5x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_heads=4,
@@ -118,7 +118,7 @@ def test_c2_cutoff_has_zero_value_slope_and_curvature_at_boundary() -> None:
 def test_node_multipoles_obey_full_parity_transform() -> None:
     torch.manual_seed(17)
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_layers=1,
@@ -197,7 +197,7 @@ def test_node_multipoles_obey_full_parity_transform() -> None:
 def test_even_objective_reaches_new_multipole_and_tensor_paths() -> None:
     torch.manual_seed(29)
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_layers=2,
@@ -245,7 +245,7 @@ def test_even_objective_reaches_new_multipole_and_tensor_paths() -> None:
 
 def test_local_tensor_routing_uses_one_mass_and_one_value_lane() -> None:
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         hidden_dim=16,
         num_layers=1,
         num_heads=4,
@@ -260,7 +260,7 @@ def test_local_tensor_routing_uses_one_mass_and_one_value_lane() -> None:
 
 def test_layerscale_is_copy_specific_for_every_irrep_sector() -> None:
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         hidden_dim=24,
         num_layers=1,
         num_heads=6,

@@ -239,7 +239,13 @@ def predict_graph_scalar(model: nn.Module, batch: GraphBatch) -> torch.Tensor:
         if batch.node_role_id is None or configured_roles == 0
         else {"node_role_id": batch.node_role_id}
     )
-    if batch.edge_index is None and batch.packed_neighbors is None:
+    consumes_external_neighbors = bool(
+        getattr(model, "consumes_external_neighbors", True)
+    )
+    if (
+        not consumes_external_neighbors
+        or (batch.edge_index is None and batch.packed_neighbors is None)
+    ):
         out = model(
             batch.node_feats,
             batch.pos,

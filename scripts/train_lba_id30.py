@@ -19,6 +19,9 @@ from collections.abc import Mapping, Sequence
 import torch
 
 from equivariant_attention._egnn_baseline import _StaticEGNNBaseline
+from equivariant_attention._matched_vnext_arms import (
+    build_matched_vnext_config,
+)
 from equivariant_attention.benchmarking import GraphSample, collate_graphs
 from equivariant_attention.pdbbind import (
     ATOM3D_LBA_NODE_DIM,
@@ -47,6 +50,12 @@ LOCAL_HEAD_COUNTS = (4, 0, 4)
 LOCAL_CUTOFF_ANGSTROM = 6.0
 INTRA_K = 16
 CROSS_K = 16
+FROZEN_TRAIN_SIZE = 3_507
+FROZEN_VALIDATION_SIZE = 466
+FROZEN_TOPOLOGY_EDGE_COUNT = 32_302_952
+FROZEN_TOPOLOGY_SHA256 = (
+    "57f40fb157e6416558db5507d95c3a5e4f828881e0bc92e142e1b85de802dc6c"
+)
 DEFAULT_ARMS = ("candidate", "incumbent", "egnn")
 EXPERIMENTAL_ARMS = (
     "persistent_2e",
@@ -54,6 +63,11 @@ EXPERIMENTAL_ARMS = (
     "geometry_o3",
     "geometry_se3",
     "whitened",
+    "vnext_2e",
+    "vnext_l3",
+    "vnext_sparse",
+    "vnext_global",
+    "vnext_global_local",
 )
 WHITENED_GLOBAL_RIDGE = 0.1
 V3_VARIANTS = {
@@ -187,6 +201,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def _primary_arm(arms: Sequence[str]) -> str:
     for arm in (
+        "vnext_global_local",
+        "vnext_global",
+        "vnext_l3",
+        "vnext_sparse",
+        "vnext_2e",
         "geometry_se3",
         "geometry_o3",
         "ctp",
@@ -204,6 +223,17 @@ def _primary_arm(arms: Sequence[str]) -> str:
 def _plan(args: argparse.Namespace) -> dict[str, object]:
     limited = args.train_limit is not None or args.val_limit is not None
     primary_arm = _primary_arm(args.arms)
+    if primary_arm == "vnext_global_local":
+        primary_baseline = "vnext_global"
+    elif primary_arm in {"vnext_2e", "vnext_l3", "vnext_sparse", "vnext_global"}:
+        primary_baseline = "candidate"
+    else:
+        primary_baseline = "incumbent"
+    baseline_description = (
+        "all-global control"
+        if primary_baseline == "vnext_global"
+        else f"matched {primary_baseline} LGL"
+    )
     return {
         "schema_version": 1,
         "run_id": RUN_ID,
@@ -223,8 +253,9 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "secondary_metrics": ["validation MAE", "Pearson", "Spearman"],
         "hypothesis": (
             f"{primary_arm} lowers official ID30 validation RMSE by at least "
-            "0.02 pK relative to the matched incumbent LGL"
+            f"0.02 pK relative to the {baseline_description}"
         ),
+        "primary_baseline": primary_baseline,
         "same_harness_baselines": [
             *(arm for arm in args.arms if arm != primary_arm),
             "train-target mean",
@@ -261,6 +292,15 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             },
             "v3_variant": args.v3_variant,
             "v3_interventions": V3_VARIANTS[args.v3_variant],
+            "matched_vnext_attribution": {
+                "homogeneous_global_control": "vnext_global",
+                "homogeneous_global_plus_local": "vnext_global_local",
+                "homogeneous_to_lgl_parameter_ratio_ceiling": 1.05,
+                "control": "vnext_2e",
+                "transient_l3": "vnext_l3",
+                "full_sparse_diagnostic": "vnext_sparse",
+                "lgl_extension_parameter_ratio_ceiling": 1.01,
+            },
             "coordinate_updates": False,
         },
         "topology": {
@@ -271,6 +311,8 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             "self_edges": True,
             "identical_for_all_arms": True,
         },
+        "expected_topology_edge_count": FROZEN_TOPOLOGY_EDGE_COUNT,
+        "expected_topology_sha256": FROZEN_TOPOLOGY_SHA256,
         "optimizer": {
             "name": "AdamW",
             "learning_rate": args.learning_rate,
@@ -392,6 +434,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         for sample in [*train_samples, *val_samples]
         if sample.edge_index is not None
     )
+    limited = (
+        len(train_samples) != FROZEN_TRAIN_SIZE
+        or len(val_samples) != FROZEN_VALIDATION_SIZE
+    )
+    result["dataset_summary"].update(
+        {
+            "topology_sha256": topology_sha256,
+            "candidate_edge_count": edge_count,
+            "topology_build_seconds": topology_seconds,
+        }
+    )
+    topology_matches = (
+        edge_count == FROZEN_TOPOLOGY_EDGE_COUNT
+        and topology_sha256 == FROZEN_TOPOLOGY_SHA256
+    )
+    result["topology_contract_status"] = (
+        "limited_probe_not_applicable"
+        if limited
+        else ("matched" if topology_matches else "mismatch")
+    )
+    if not limited and not topology_matches:
+        result["status"] = "topology_contract_mismatch"
+    _write_json(result_path, result)
+    _validate_frozen_topology(
+        topology_sha256=topology_sha256,
+        edge_count=edge_count,
+        limited=limited,
+    )
 
     candidate_parameters = _parameter_count(
         _build_model(
@@ -456,6 +526,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
         )
     )
+    vnext_2e_parameters = _parameter_count(
+        _build_model(
+            "vnext_2e",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    vnext_l3_parameters = _parameter_count(
+        _build_model(
+            "vnext_l3",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    vnext_sparse_parameters = _parameter_count(
+        _build_model(
+            "vnext_sparse",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    vnext_global_parameters = _parameter_count(
+        _build_model(
+            "vnext_global",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
+    vnext_global_local_parameters = _parameter_count(
+        _build_model(
+            "vnext_global_local",
+            None,
+            args.v3_variant,
+            model_seed=args.model_seed,
+            checkpoint_gated_local_mlp=args.checkpoint_gated_local_mlp,
+        )
+    )
     parameter_counts = {
         "candidate": candidate_parameters,
         "incumbent": incumbent_parameters,
@@ -464,6 +579,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "v3": v3_parameters,
         "geometry_o3": geometry_o3_parameters,
         "geometry_se3": geometry_se3_parameters,
+        "vnext_2e": vnext_2e_parameters,
+        "vnext_l3": vnext_l3_parameters,
+        "vnext_sparse": vnext_sparse_parameters,
+        "vnext_global": vnext_global_parameters,
+        "vnext_global_local": vnext_global_local_parameters,
     }
     primary_arm = _primary_arm(args.arms)
     match_target_parameters = parameter_counts[primary_arm]
@@ -492,6 +612,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ctp_parameters": ctp_parameters,
         "geometry_o3_parameters": geometry_o3_parameters,
         "geometry_se3_parameters": geometry_se3_parameters,
+        "vnext_2e_parameters": vnext_2e_parameters,
+        "vnext_l3_parameters": vnext_l3_parameters,
+        "vnext_sparse_parameters": vnext_sparse_parameters,
+        "vnext_global_parameters": vnext_global_parameters,
+        "vnext_global_local_parameters": vnext_global_local_parameters,
+        "vnext_2e_to_candidate_parameter_ratio": (
+            vnext_2e_parameters / candidate_parameters
+        ),
+        "vnext_l3_to_candidate_parameter_ratio": (
+            vnext_l3_parameters / candidate_parameters
+        ),
+        "vnext_sparse_to_candidate_parameter_ratio": (
+            vnext_sparse_parameters / candidate_parameters
+        ),
+        "vnext_global_to_candidate_parameter_ratio": (
+            vnext_global_parameters / candidate_parameters
+        ),
+        "vnext_global_local_to_candidate_parameter_ratio": (
+            vnext_global_local_parameters / candidate_parameters
+        ),
         "candidate_to_incumbent_parameter_ratio": (
             candidate_parameters / incumbent_parameters
         ),
@@ -591,6 +731,36 @@ def _build_model(
             node_dim=ATOM3D_LBA_NODE_DIM,
             hidden_dim=egnn_width,
             num_layers=NUM_LAYERS,
+        )
+    vnext_arm = {
+        "vnext_2e": "lgl_2e",
+        "vnext_l3": "lgl_2e_l3",
+        "vnext_sparse": "high_order_sparse",
+        "vnext_global": "global_only",
+        "vnext_global_local": "global_local",
+    }.get(arm)
+    if vnext_arm is not None:
+        return build_regression_model(
+            node_dim=ATOM3D_LBA_NODE_DIM,
+            architecture_config=build_matched_vnext_config(
+                vnext_arm,
+                node_dim=ATOM3D_LBA_NODE_DIM,
+                hidden_dim=HIDDEN_DIM,
+                num_layers=NUM_LAYERS,
+                num_heads=NUM_HEADS,
+                local_cutoff=LOCAL_CUTOFF_ANGSTROM,
+                global_backend=(
+                    "feature_gemm"
+                    if vnext_arm in {"global_only", "global_local"}
+                    else "outer_scatter"
+                ),
+                checkpoint_gated_local_mlp=(
+                    checkpoint_gated_local_mlp
+                    if vnext_arm
+                    not in {"high_order_sparse", "global_only", "global_local"}
+                    else False
+                ),
+            ),
         )
     attention_arms = {
         "candidate",
@@ -1179,6 +1349,11 @@ def _comparison(records: object) -> dict[str, object]:
     )
     for baseline in (
         "candidate",
+        "vnext_global",
+        "vnext_global_local",
+        "vnext_2e",
+        "vnext_l3",
+        "vnext_sparse",
         "persistent_2e",
         "incumbent",
         "egnn",
@@ -1198,7 +1373,33 @@ def _comparison(records: object) -> dict[str, object]:
         comparison[f"{primary_arm}_minus_{baseline}_rmse_pK"] = delta
         comparison[f"{primary_arm}_beats_{baseline}"] = delta < 0.0
     incumbent_delta = comparison.get(f"{primary_arm}_minus_incumbent_rmse_pK")
-    if primary_arm == "ctp":
+    if primary_arm == "vnext_global_local":
+        control_delta = comparison.get(
+            "vnext_global_local_minus_vnext_global_rmse_pK"
+        )
+        lgl_delta = comparison.get(
+            "vnext_global_local_minus_candidate_rmse_pK"
+        )
+        if isinstance(control_delta, float) and isinstance(lgl_delta, float):
+            passed = control_delta <= -0.02 and lgl_delta < 0.0
+            comparison["registered_primary_improvement_passed"] = passed
+            comparison["registered_vnext_global_local_improvement_passed"] = (
+                passed
+            )
+    elif primary_arm == "vnext_l3":
+        current_delta = comparison.get("vnext_l3_minus_candidate_rmse_pK")
+        control_delta = comparison.get("vnext_l3_minus_vnext_2e_rmse_pK")
+        if isinstance(current_delta, float) and isinstance(control_delta, float):
+            passed = current_delta <= -0.02 and control_delta < 0.0
+            comparison["registered_primary_improvement_passed"] = passed
+            comparison["registered_vnext_l3_improvement_passed"] = passed
+    elif primary_arm == "vnext_sparse":
+        current_delta = comparison.get("vnext_sparse_minus_candidate_rmse_pK")
+        if isinstance(current_delta, float):
+            passed = current_delta <= -0.02
+            comparison["registered_primary_improvement_passed"] = passed
+            comparison["registered_vnext_sparse_improvement_passed"] = passed
+    elif primary_arm == "ctp":
         current_delta = comparison.get("ctp_minus_candidate_rmse_pK")
         persistent_delta = comparison.get("ctp_minus_persistent_2e_rmse_pK")
         if isinstance(current_delta, float) and isinstance(persistent_delta, float):
@@ -1266,6 +1467,25 @@ def _sample_identity_hash(samples: Sequence[GraphSample]) -> str:
 
 def _topology_hash(samples: Sequence[GraphSample]) -> str:
     return topology_sha256(samples)
+
+
+def _validate_frozen_topology(
+    *,
+    topology_sha256: str,
+    edge_count: int,
+    limited: bool,
+) -> None:
+    if limited:
+        return
+    if (
+        edge_count != FROZEN_TOPOLOGY_EDGE_COUNT
+        or topology_sha256 != FROZEN_TOPOLOGY_SHA256
+    ):
+        raise RuntimeError(
+            "full official ID30 run violates the frozen topology contract: "
+            f"observed {edge_count} edges / {topology_sha256}, expected "
+            f"{FROZEN_TOPOLOGY_EDGE_COUNT} edges / {FROZEN_TOPOLOGY_SHA256}"
+        )
 
 
 def _target_range(samples: Sequence[GraphSample]) -> list[float]:

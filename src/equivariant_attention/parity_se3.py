@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .graph_layout import PackedGraphLayout
-from .irreps import Irrep, IrrepLayout
+from .irreps import Irrep, IrrepLayout, split_irreps
 from .neighbors import PackedNeighborGraph
 
 
@@ -210,6 +210,58 @@ class _ParityState:
     axial_vector: torch.Tensor
     even_tensor: torch.Tensor
     odd_tensor: torch.Tensor
+
+
+class _InputProjection(nn.Module):
+    """Same-irrep channel mixing from one flattened l<=2 input carrier."""
+
+    def __init__(
+        self,
+        layout: IrrepLayout,
+        *,
+        scalar_width: int,
+        num_heads: int,
+    ) -> None:
+        super().__init__()
+        self.layout = layout
+        projectors: dict[str, nn.Module] = {}
+        for block in layout.blocks:
+            name = str(block.irrep)
+            width = scalar_width if name == "0e" else num_heads
+            if block.irrep.degree == 0:
+                projectors[name] = nn.Linear(
+                    block.multiplicity,
+                    width,
+                    bias=name == "0e",
+                )
+            else:
+                projectors[name] = _ChannelMix(block.multiplicity, width)
+        self.projectors = nn.ModuleDict(projectors)
+        self.scalar_width = scalar_width
+        self.num_heads = num_heads
+
+    def forward(self, value: torch.Tensor) -> _ParityState:
+        blocks = split_irreps(self.layout, value)
+        num_nodes = value.shape[0]
+
+        def project_scalar(name: str, width: int) -> torch.Tensor:
+            if name not in self.projectors:
+                return value.new_zeros((num_nodes, width))
+            return self.projectors[name](blocks[name].squeeze(-1))
+
+        def project_geometric(name: str, degree_dim: int) -> torch.Tensor:
+            if name not in self.projectors:
+                return value.new_zeros((num_nodes, self.num_heads, degree_dim))
+            return self.projectors[name](blocks[name])
+
+        return _ParityState(
+            even_scalar=project_scalar("0e", self.scalar_width),
+            odd_scalar=project_scalar("0o", self.num_heads),
+            polar_vector=project_geometric("1o", 3),
+            axial_vector=project_geometric("1e", 3),
+            even_tensor=project_geometric("2e", 5),
+            odd_tensor=project_geometric("2o", 5),
+        )
 
 
 @dataclass(frozen=True)
@@ -1167,7 +1219,7 @@ class ParityCompleteSE3Core(nn.Module):
     def __init__(
         self,
         *,
-        node_dim: int,
+        input_irreps: str | IrrepLayout,
         output_irreps: str | IrrepLayout,
         hidden_dim: int,
         num_layers: int,
@@ -1175,8 +1227,6 @@ class ParityCompleteSE3Core(nn.Module):
         local_rank: int,
         local_cutoff: float,
         num_rbf: int,
-        input_vector_dim: int = 0,
-        input_tensor_dim: int = 0,
         num_node_roles: int = 0,
         num_edge_relations: int = 0,
         relation_cutoffs: tuple[float, ...] = (),
@@ -1197,15 +1247,13 @@ class ParityCompleteSE3Core(nn.Module):
             raise ValueError(
                 "relation cutoffs must be positive and no larger than local_cutoff"
             )
-        self.node_dim = node_dim
+        self.input_irreps = IrrepLayout.parse(input_irreps)
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.local_rank = local_rank
         self.local_cutoff = float(local_cutoff)
         self.num_rbf = num_rbf
-        self.input_vector_dim = input_vector_dim
-        self.input_tensor_dim = input_tensor_dim
         self.num_node_roles = num_node_roles
         self.num_edge_relations = num_edge_relations
         self.relation_cutoffs = tuple(float(value) for value in relation_cutoffs)
@@ -1223,7 +1271,11 @@ class ParityCompleteSE3Core(nn.Module):
         )
         self.output_irreps = self.output_projection.layout
 
-        self.scalar_input = nn.Linear(node_dim, hidden_dim)
+        self.input_projection = _InputProjection(
+            self.input_irreps,
+            scalar_width=hidden_dim,
+            num_heads=num_heads,
+        )
         self.role_embedding = (
             nn.Embedding(num_node_roles, hidden_dim)
             if num_node_roles
@@ -1231,16 +1283,6 @@ class ParityCompleteSE3Core(nn.Module):
         )
         self.initial_vector_gate = nn.Linear(hidden_dim, num_heads)
         self.initial_tensor_gate = nn.Linear(hidden_dim, num_heads)
-        self.vector_input = (
-            _ChannelMix(input_vector_dim, num_heads)
-            if input_vector_dim
-            else None
-        )
-        self.tensor_input = (
-            _ChannelMix(input_tensor_dim, num_heads)
-            if input_tensor_dim
-            else None
-        )
 
         block_scale = residual_scale_init / sqrt(max(1, num_layers))
         self.blocks = nn.ModuleList(
@@ -1265,30 +1307,27 @@ class ParityCompleteSE3Core(nn.Module):
 
     def forward(
         self,
-        node_feats: torch.Tensor,
+        node_irreps: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
         graph_layout: PackedGraphLayout,
         neighbors: PackedNeighborGraph,
         *,
         node_role_id: torch.Tensor | None = None,
-        node_vectors: torch.Tensor | None = None,
-        node_tensors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         self._validate_inputs(
-            node_feats,
+            node_irreps,
             pos,
             batch,
             graph_layout,
             neighbors,
             node_role_id=node_role_id,
-            node_vectors=node_vectors,
-            node_tensors=node_tensors,
         )
         normalized_pos = self._normalize_positions(pos, batch, graph_layout)
         geometry = self._build_geometry(pos, neighbors)
 
-        even_scalar = self.scalar_input(node_feats)
+        external = self.input_projection(node_irreps)
+        even_scalar = external.even_scalar
         if self.role_embedding is not None:
             if node_role_id is None:
                 raise RuntimeError("validated role IDs are missing")
@@ -1300,43 +1339,23 @@ class ParityCompleteSE3Core(nn.Module):
         ).unsqueeze(-1) * normalized_pos[:, None, :].to(
             dtype=even_scalar.dtype
         )
-        if self.vector_input is not None:
-            if node_vectors is None:
-                raise RuntimeError("validated vector input is missing")
-            polar = polar + self.vector_input(
-                node_vectors.to(dtype=polar.dtype)
-            )
+        polar = polar + external.polar_vector.to(dtype=polar.dtype)
         even_tensor = torch.tanh(
             self.initial_tensor_gate(even_scalar)
         ).unsqueeze(-1) * _st_from_vector(
             normalized_pos[:, None, :].expand(-1, self.num_heads, -1)
         ).to(dtype=even_scalar.dtype)
-        if self.tensor_input is not None:
-            if node_tensors is None:
-                raise RuntimeError("validated tensor input is missing")
-            tensor_features = torch.stack(
-                [
-                    node_tensors[..., 0, 0],
-                    node_tensors[..., 1, 1],
-                    node_tensors[..., 0, 1],
-                    node_tensors[..., 0, 2],
-                    node_tensors[..., 1, 2],
-                ],
-                dim=-1,
-            )
-            even_tensor = even_tensor + self.tensor_input(
-                tensor_features.to(dtype=even_tensor.dtype)
-            )
+        even_tensor = even_tensor + external.even_tensor.to(
+            dtype=even_tensor.dtype
+        )
 
         state = _ParityState(
             even_scalar=even_scalar,
-            odd_scalar=even_scalar.new_zeros(
-                (even_scalar.shape[0], self.num_heads)
-            ),
+            odd_scalar=external.odd_scalar.to(dtype=even_scalar.dtype),
             polar_vector=polar,
-            axial_vector=polar.new_zeros(polar.shape),
+            axial_vector=external.axial_vector.to(dtype=polar.dtype),
             even_tensor=even_tensor,
-            odd_tensor=even_tensor.new_zeros(even_tensor.shape),
+            odd_tensor=external.odd_tensor.to(dtype=even_tensor.dtype),
         )
         for block in self.blocks:
             state = block(
@@ -1443,35 +1462,36 @@ class ParityCompleteSE3Core(nn.Module):
 
     def _validate_inputs(
         self,
-        node_feats: torch.Tensor,
+        node_irreps: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
         graph_layout: PackedGraphLayout,
         neighbors: PackedNeighborGraph,
         *,
         node_role_id: torch.Tensor | None,
-        node_vectors: torch.Tensor | None,
-        node_tensors: torch.Tensor | None,
     ) -> None:
-        if node_feats.ndim != 2 or node_feats.shape[1] != self.node_dim:
+        if (
+            node_irreps.ndim != 2
+            or node_irreps.shape[1] != self.input_irreps.dim
+        ):
             raise ValueError(
-                f"node_feats must have shape (N, {self.node_dim})"
+                f"node_irreps must have shape (N, {self.input_irreps.dim})"
             )
-        if pos.shape != (node_feats.shape[0], 3):
+        if pos.shape != (node_irreps.shape[0], 3):
             raise ValueError("pos must have shape (N, 3)")
-        if batch.shape != (node_feats.shape[0],):
+        if batch.shape != (node_irreps.shape[0],):
             raise ValueError("batch must have shape (N,)")
         if batch.dtype != torch.long:
             raise TypeError("batch must use torch.long")
         if any(
-            value.device != node_feats.device
+            value.device != node_irreps.device
             for value in (pos, batch, graph_layout.batch, neighbors.row_ptr)
         ):
             raise ValueError("all inputs and prepared metadata must share one device")
         graph_layout.validate_batch(batch)
-        if neighbors.num_nodes != node_feats.shape[0]:
+        if neighbors.num_nodes != node_irreps.shape[0]:
             raise ValueError("neighbor node count must match input nodes")
-        self._assert_finite("node_feats", node_feats)
+        self._assert_finite("node_irreps", node_irreps)
         self._assert_finite("pos", pos)
         if self.num_edge_relations and neighbors.relation_id is not None:
             relation_id = neighbors.relation_id
@@ -1491,26 +1511,12 @@ class ParityCompleteSE3Core(nn.Module):
                 )
 
         if self.num_node_roles:
-            if node_role_id is None or node_role_id.shape != (node_feats.shape[0],):
+            if node_role_id is None or node_role_id.shape != (node_irreps.shape[0],):
                 raise ValueError(
                     "node_role_id with shape (N,) is required"
                 )
         elif node_role_id is not None:
             raise ValueError("node_role_id requires positive num_node_roles")
-
-        if self.input_vector_dim:
-            expected = (node_feats.shape[0], self.input_vector_dim, 3)
-            if node_vectors is None or node_vectors.shape != expected:
-                raise ValueError(f"node_vectors must have shape {expected}")
-        elif node_vectors is not None:
-            raise ValueError("node_vectors requires positive input_vector_dim")
-
-        if self.input_tensor_dim:
-            expected = (node_feats.shape[0], self.input_tensor_dim, 3, 3)
-            if node_tensors is None or node_tensors.shape != expected:
-                raise ValueError(f"node_tensors must have shape {expected}")
-        elif node_tensors is not None:
-            raise ValueError("node_tensors requires positive input_tensor_dim")
 
     @staticmethod
     def _assert_finite(name: str, value: torch.Tensor) -> None:

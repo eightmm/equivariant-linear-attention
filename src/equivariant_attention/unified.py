@@ -63,11 +63,11 @@ class Unified3DConfig:
 
     Internal angular degree, parity, multipole construction, normalization,
     local/global composition, and fallback policy are fixed. Users declare only
-    final ``output_irreps``; width, depth, rank, and cutoff remain ordinary
-    resource/capacity hyperparameters.
+    flattened ``input_irreps`` and final ``output_irreps``; width, depth, rank,
+    and cutoff remain ordinary resource/capacity hyperparameters.
     """
 
-    node_dim: int
+    input_irreps: str
     output_irreps: str = "1x0e"
     hidden_dim: int = 64
     num_layers: int = 4
@@ -75,8 +75,6 @@ class Unified3DConfig:
     local_rank: int = 2
     local_cutoff: float = 5.0
     num_rbf: int = 16
-    input_vector_dim: int = 0
-    input_tensor_dim: int = 0
     num_node_roles: int = 0
     relation_cutoffs: tuple[float, ...] = ()
     residual_scale_init: float = 0.1
@@ -84,7 +82,6 @@ class Unified3DConfig:
 
     def __post_init__(self) -> None:
         for name in (
-            "node_dim",
             "hidden_dim",
             "num_layers",
             "num_heads",
@@ -92,27 +89,30 @@ class Unified3DConfig:
             "num_rbf",
         ):
             _positive_integer(name, getattr(self, name))
-        for name in (
-            "input_vector_dim",
-            "input_tensor_dim",
-            "num_node_roles",
-        ):
+        for name in ("num_node_roles",):
             _nonnegative_integer(name, getattr(self, name))
         if self.hidden_dim % self.num_heads:
             raise ValueError("hidden_dim must be divisible by num_heads")
 
-        layout = IrrepLayout.parse(self.output_irreps)
-        if not layout.blocks:
+        input_layout = IrrepLayout.parse(self.input_irreps)
+        output_layout = IrrepLayout.parse(self.output_irreps)
+        if not output_layout.blocks:
             raise ValueError("output_irreps must not be empty")
-        unsupported = [
+        unsupported_input = [
             block.irrep
-            for block in layout.blocks
+            for block in input_layout.blocks
             if block.irrep.degree > 2
         ]
-        if unsupported:
+        unsupported_output = [
+            block.irrep
+            for block in output_layout.blocks
+            if block.irrep.degree > 2
+        ]
+        if unsupported_input or unsupported_output:
             raise ValueError(
-                "output_irreps supports l<=2 in the optimized unified core; "
-                f"unsupported={unsupported}"
+                "input_irreps and output_irreps support l<=2 in the optimized "
+                "unified core; "
+                f"unsupported={unsupported_input + unsupported_output}"
             )
 
         local_cutoff = _positive_real("local_cutoff", self.local_cutoff)
@@ -136,6 +136,10 @@ class Unified3DConfig:
         return IrrepLayout.parse(self.output_irreps)
 
     @property
+    def input_layout(self) -> IrrepLayout:
+        return IrrepLayout.parse(self.input_irreps)
+
+    @property
     def internal_irreps(self) -> IrrepLayout:
         heads = self.num_heads
         return IrrepLayout.parse(
@@ -149,7 +153,8 @@ class Unified3DConfig:
             "public_symmetry": "SE3",
             "internal_symmetry": "O3_parity_complete",
             "internal_irreps": str(self.internal_irreps),
-            "user_representation_control": "output_irreps_only",
+            "user_representation_control": "input_and_output_irreps",
+            "input_irreps": str(self.input_layout),
             "node_geometry": "static_l0_l1_l2_radial_multipoles",
             "global_operator": "exact_positive_feature_gemm_l0_l1_l2",
             "global_balancing": "one_cycle",
@@ -305,7 +310,7 @@ class UnifiedEquivariantAttention(nn.Module):
             raise TypeError("config must be a Unified3DConfig")
         self.config = config
         self.core = CanonicalMultipoleSE3Core(
-            node_dim=config.node_dim,
+            input_irreps=config.input_layout,
             output_irreps=config.output_layout,
             hidden_dim=config.hidden_dim,
             num_layers=config.num_layers,
@@ -313,8 +318,6 @@ class UnifiedEquivariantAttention(nn.Module):
             local_rank=config.local_rank,
             local_cutoff=config.local_cutoff,
             num_rbf=config.num_rbf,
-            input_vector_dim=config.input_vector_dim,
-            input_tensor_dim=config.input_tensor_dim,
             num_node_roles=config.num_node_roles,
             num_edge_relations=config.num_edge_relations,
             relation_cutoffs=config.relation_cutoffs,
@@ -337,31 +340,27 @@ class UnifiedEquivariantAttention(nn.Module):
 
     def forward(
         self,
-        node_feats: torch.Tensor,
+        node_irreps: torch.Tensor,
         pos: torch.Tensor,
         graph: Prepared3DGraph,
         *,
         node_role_id: torch.Tensor | None = None,
-        node_vectors: torch.Tensor | None = None,
-        node_tensors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if not isinstance(graph, Prepared3DGraph) or not graph._validated:
             raise TypeError("graph must be a validated Prepared3DGraph")
-        if node_feats.shape[0] != graph.num_nodes:
-            raise ValueError("node_feats node count must match graph")
+        if node_irreps.shape[0] != graph.num_nodes:
+            raise ValueError("node_irreps node count must match graph")
         if pos.shape[0] != graph.num_nodes:
             raise ValueError("pos node count must match graph")
-        if node_feats.device != graph.device or pos.device != graph.device:
+        if node_irreps.device != graph.device or pos.device != graph.device:
             raise ValueError("model inputs and graph must share one device")
         return self.core(
-            node_feats,
+            node_irreps,
             pos,
             graph.batch,
             graph.graph_layout,
             graph.neighbors,
             node_role_id=node_role_id,
-            node_vectors=node_vectors,
-            node_tensors=node_tensors,
         )
 
     def split_output(
@@ -372,6 +371,7 @@ class UnifiedEquivariantAttention(nn.Module):
 
     def extra_repr(self) -> str:
         return (
+            f"input_irreps={self.config.input_layout}, "
             f"output_irreps={self.output_irreps}, hidden_dim={self.config.hidden_dim}, "
             f"layers={self.config.num_layers}, heads={self.config.num_heads}, "
             f"local_rank={self.config.local_rank}, "

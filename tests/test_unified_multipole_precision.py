@@ -19,7 +19,7 @@ def _complete_edge_index(num_nodes: int, *, device: torch.device) -> torch.Tenso
 def test_multipole_core_supports_coordinate_double_backward() -> None:
     torch.manual_seed(211)
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=12,
         num_layers=1,
@@ -69,7 +69,7 @@ def test_multipole_core_cuda_bfloat16_forward_backward() -> None:
     torch.manual_seed(223)
     device = torch.device("cuda")
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="1x0e + 1x0o + 1x1o + 1x2e",
         hidden_dim=16,
         num_layers=2,

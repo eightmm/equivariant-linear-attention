@@ -31,7 +31,7 @@ def _positions() -> torch.Tensor:
 
 def test_positive_radial_profiles_do_not_collapse_inside_large_cutoff() -> None:
     config = Unified3DConfig(
-        node_dim=3,
+        input_irreps="3x0e",
         hidden_dim=16,
         num_layers=1,
         num_heads=4,
@@ -56,7 +56,7 @@ def test_positive_radial_profiles_do_not_collapse_inside_large_cutoff() -> None:
 
 def test_radial_profiles_are_positive_and_distinct() -> None:
     config = Unified3DConfig(
-        node_dim=2,
+        input_irreps="2x0e",
         hidden_dim=8,
         num_layers=1,
         num_heads=2,

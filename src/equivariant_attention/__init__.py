@@ -31,6 +31,10 @@ from .irreps import (
     IrrepLayout,
     TensorProductPath,
     TensorProductPlan,
+    matrix_to_st5,
+    pack_irreps,
+    split_irreps,
+    st5_to_matrix,
 )
 from .moment import EquivariantAttention, EquivariantAttentionConfig
 from .multiscale import HierarchyAssignment
@@ -93,6 +97,7 @@ from .unified import (
     UnifiedEquivariantAttention,
     prepare_3d_graph,
 )
+from .unified_regression import UnifiedRegressionModel
 
 __all__ = [
     "ArchitectureConfig",
@@ -116,6 +121,7 @@ __all__ = [
     "IrrepLinear",
     "IrrepLinearPath",
     "IrrepRMSNorm",
+    "matrix_to_st5",
     "GlobalTransportConfig",
     "LocalResidualConfig",
     "MaskedInvariantPooling",
@@ -124,6 +130,7 @@ __all__ = [
     "NeighborConfig",
     "PackedGraphLayout",
     "PackedNeighborGraph",
+    "pack_irreps",
     "Prepared3DGraph",
     "PrecomputedNeighborProvider",
     "ProviderCapabilitySnapshot",
@@ -135,6 +142,8 @@ __all__ = [
     "ScalarEnergyHead",
     "ScalarGatedIrreps",
     "SyntheticMoleculeDataset",
+    "split_irreps",
+    "st5_to_matrix",
     "TargetNormalizer",
     "TensorProductPath",
     "TensorProductPlan",
@@ -142,6 +151,7 @@ __all__ = [
     "TransientL3Workspace",
     "Unified3DConfig",
     "UnifiedEquivariantAttention",
+    "UnifiedRegressionModel",
     "VerletRadiusNeighborProvider",
     "autocast_dtype",
     "build_receiver_csr",

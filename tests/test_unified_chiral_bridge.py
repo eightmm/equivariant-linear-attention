@@ -17,7 +17,7 @@ def _complete_edge_index(num_nodes: int) -> torch.Tensor:
 
 def test_chiral_bridge_is_deterministic_cyclic_selector() -> None:
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_layers=2,
@@ -44,7 +44,7 @@ def test_chiral_bridge_is_deterministic_cyclic_selector() -> None:
 def test_even_only_objective_reaches_chiral_bridge_on_first_backward() -> None:
     torch.manual_seed(23)
     config = Unified3DConfig(
-        node_dim=4,
+        input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
         num_layers=2,

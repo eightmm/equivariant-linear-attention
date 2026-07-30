@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from equivariant_attention.benchmarking import GraphSample
+
 
 def _script_symbols() -> dict[str, object]:
     script = Path(__file__).resolve().parents[1] / "scripts" / "train_compare.py"
@@ -56,6 +58,93 @@ def test_run_config_records_single_architecture() -> None:
     assert config["ffn_hidden_ratio"] == 2.0
     assert config["global_transport_mode"] == "learned"
     assert config["global_attention_formula"] == "factorized_learned_kernel"
+
+
+def test_matched_vnext_arm_is_explicit_and_requires_precomputed_edges() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--architecture-arm",
+            "lgl_2e_l3",
+            "--precompute-local-edges",
+        ]
+    )
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["architecture_arm"] == "lgl_2e_l3"
+    assert config["structured_architecture"]["profile"] == "high_order"
+    assert model.config.use_transient_l3_workspace is True
+    assert model.config.transient_l3_layers == (0, 2)
+
+    invalid = symbols["parse_args"](
+        [
+            "--architecture-arm",
+            "lgl_2e_l3",
+        ]
+    )
+    with pytest.raises(ValueError, match="precomputed local edges"):
+        symbols["_build_benchmark_model"](invalid, node_dim=11)
+
+
+def test_homogeneous_global_local_arm_is_not_lgl_routing() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--architecture-arm",
+            "global_local",
+            "--precompute-local-edges",
+        ]
+    )
+
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["routing"] == "homogeneous_sparse_global"
+    assert config["local_head_counts"] == [0, 0, 0]
+    assert model.config.local_head_counts == (0, 0, 0)
+    assert model.config.use_sparse_low_rank_local_residual is True
+    assert model.config.global_reduction_backend == "feature_gemm"
+
+
+def test_coordinate_diagnostics_preserve_precomputed_neighbors_for_l3() -> None:
+    symbols = _script_symbols()
+    args = symbols["parse_args"](
+        [
+            "--architecture-arm",
+            "lgl_2e_l3",
+            "--precompute-local-edges",
+            "--hidden-dim",
+            "8",
+            "--num-heads",
+            "2",
+        ]
+    )
+    model = symbols["_build_benchmark_model"](args, node_dim=3)
+    edge_index = torch.tensor(
+        [[0, 0, 1, 1], [0, 1, 0, 1]],
+        dtype=torch.long,
+    )
+    samples = [
+        GraphSample(
+            node_feats=torch.randn(2, 3),
+            pos=torch.randn(2, 3),
+            target=torch.zeros(1),
+            sample_id=f"sample-{index}",
+            edge_index=edge_index,
+        )
+        for index in range(2)
+    ]
+
+    diagnostics = symbols["_coordinate_update_diagnostics"](
+        model,
+        samples,
+        [0, 1],
+        sample_count=2,
+    )
+
+    assert diagnostics["enabled"] is False
+    assert diagnostics["sample_count"] == 2
 
 
 def test_whitened_global_read_is_recorded_and_shares_the_paired_base() -> None:
