@@ -95,8 +95,12 @@ from .unified import (
     Prepared3DGraph,
     Unified3DConfig,
     UnifiedEquivariantAttention,
+    UnifiedEquivariantLayer,
+    UnifiedSE3Context,
+    UnifiedSE3State,
     prepare_3d_graph,
 )
+from .layered_se3 import UnifiedSE3LayerOutput
 from .unified_regression import UnifiedRegressionModel
 
 __all__ = [
@@ -151,7 +155,11 @@ __all__ = [
     "TransientL3Workspace",
     "Unified3DConfig",
     "UnifiedEquivariantAttention",
+    "UnifiedEquivariantLayer",
     "UnifiedRegressionModel",
+    "UnifiedSE3Context",
+    "UnifiedSE3LayerOutput",
+    "UnifiedSE3State",
     "VerletRadiusNeighborProvider",
     "autocast_dtype",
     "build_receiver_csr",
