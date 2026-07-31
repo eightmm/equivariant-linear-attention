@@ -75,3 +75,16 @@ or affinity-ranking claim.
 - A one-seed QM9 result is a screen, never a default-changing confirmation.
 - LBA train-only overfit cannot promote downstream superiority.
 - A failed prediction remains recorded; no post-hoc threshold changes.
+
+## Same-source contextual controls
+
+After the spatial comparison is frozen, run the current-source controls with
+the same data/split/seed/update budgets:
+
+- QM9: accepted factorized LGL, frozen `unified_multipole`, and private static
+  EGNN;
+- LBA train-only: historical factorized attention and frozen unified core.
+
+These controls contextualize the new arm. They are not part of the
+explicit/implicit/hybrid attribution gate and cannot rescue a failed spatial
+prediction.
