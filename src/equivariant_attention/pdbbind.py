@@ -63,10 +63,12 @@ def _load_cached_atom3d_train(
 
 
 def topology_sha256(samples: Sequence[GraphSample]) -> str:
-    """Canonical identity of a precomputed candidate list.
+    """Legacy joint identity of sample IDs and a precomputed candidate list.
 
-    Every runner must consume this one definition so a drifting candidate list
-    cannot be mistaken for a matched topology across processes or packets.
+    Historical frozen receipts use this joint digest. New receipts should
+    additionally record :func:`sample_identity_sha256` and
+    :func:`edge_topology_sha256` so an identifier migration cannot be mistaken
+    for an edge-topology change.
     """
     digest = hashlib.sha256()
     for sample in samples:
@@ -74,6 +76,39 @@ def topology_sha256(samples: Sequence[GraphSample]) -> str:
             raise ValueError("topology hash requires precomputed edges")
         digest.update(sample.sample_id.encode("utf-8"))
         digest.update(sample.edge_index.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
+
+
+def sample_identity_sha256(samples: Sequence[GraphSample]) -> str:
+    """Ordered sample identity independent of coordinates and edges."""
+
+    digest = hashlib.sha256()
+    for sample in samples:
+        encoded = sample.sample_id.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def edge_topology_sha256(samples: Sequence[GraphSample]) -> str:
+    """Ordered candidate-edge identity independent of sample labels/IDs."""
+
+    digest = hashlib.sha256()
+    for sample in samples:
+        if sample.edge_index is None:
+            raise ValueError("topology hash requires precomputed edges")
+        edge_index = sample.edge_index.detach().to(
+            device="cpu",
+            dtype=torch.int64,
+        ).contiguous()
+        header = (
+            int(sample.node_feats.shape[0]),
+            int(edge_index.shape[0]),
+            int(edge_index.shape[1]),
+        )
+        for value in header:
+            digest.update(value.to_bytes(8, "big", signed=False))
+        digest.update(edge_index.numpy().tobytes())
     return digest.hexdigest()
 
 

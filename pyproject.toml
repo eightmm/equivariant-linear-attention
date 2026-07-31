@@ -1,7 +1,7 @@
 [project]
 name = "equivariant-attention"
 version = "0.1.0"
-description = "Parity-aware SE(3) linear attention with exact global moments and sparse node multipoles"
+description = "Canonical parity-aware equivariant linear attention with exact global transport and sparse local geometry"
 authors = [
     { name = "eightmm" }
 ]

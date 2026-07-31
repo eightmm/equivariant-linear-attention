@@ -17,6 +17,8 @@ import torch
 
 from equivariant_attention.benchmarking import GraphSample
 from equivariant_attention.pdbbind import (
+    edge_topology_sha256,
+    sample_identity_sha256,
     segment_balanced_knn_edge_index,
     topology_sha256,
 )
@@ -233,6 +235,8 @@ def test_topology_hash_is_order_and_content_sensitive() -> None:
         readout_mask=segment_mask,
     )
     digest = topology_sha256([sample])
+    edge_digest = edge_topology_sha256([sample])
+    sample_digest = sample_identity_sha256([sample])
     assert digest == topology_sha256([sample])
 
     mutated = GraphSample(
@@ -244,6 +248,8 @@ def test_topology_hash_is_order_and_content_sensitive() -> None:
         readout_mask=sample.readout_mask,
     )
     assert topology_sha256([mutated]) != digest
+    assert edge_topology_sha256([mutated]) != edge_digest
+    assert sample_identity_sha256([mutated]) == sample_digest
 
     renamed = GraphSample(
         node_feats=sample.node_feats,
@@ -254,6 +260,8 @@ def test_topology_hash_is_order_and_content_sensitive() -> None:
         readout_mask=sample.readout_mask,
     )
     assert topology_sha256([renamed]) != digest
+    assert edge_topology_sha256([renamed]) == edge_digest
+    assert sample_identity_sha256([renamed]) != sample_digest
 
 
 def test_topology_hash_requires_precomputed_edges() -> None:

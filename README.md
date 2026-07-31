@@ -1,143 +1,142 @@
 # Equivariant Linear Attention
 
-A domain-agnostic PyTorch implementation of **equivariant linear attention** for
-unordered 3D data. The canonical model combines:
-
-- exact positive-feature global linear attention;
-- one receiver-normalized sparse local residual;
-- parity-aware `0e/0o/1o/1e/2e/2o` hidden state;
-- receiver-centered Cartesian `l<=2` multipoles;
-- low-rank tensor closure and chirality without explicit triplets;
-- reusable attention and FFN residual layers;
-- optional invariant DiT-style conditioning and coordinate refinement.
-
-The same layer can be used for molecules, proteins, protein--ligand complexes,
-particles, meshes, point clouds, and other sparse 3D systems. Domain vocabulary
-and task semantics remain outside the core.
-
-## What defines the architecture
-
-For layer `l`,
+A general-purpose PyTorch layer for parity-aware 3D data. The canonical model is
+**equivariant linear attention**, not a task-specific molecular network and not
+a menu of interchangeable graph backends.
 
 \[
-\widehat h^l=\operatorname{EqRMSNorm}_{\rm attn}(h^l),
+\boxed{
+\text{exact global equivariant linear attention}
++
+\text{exact sparse short-range residual}
+}
 \]
 
-\[
-G^l=\operatorname{ExactLinearAttention}_{l\le2}(\widehat h^l),
-\]
+Global and local messages stay separate until an invariant,
+identity-initialized router combines them. Positions remain a separate affine
+geometry input; node inputs and outputs are declared with `input_irreps` and
+`output_irreps`.
 
-\[
-S^l=\operatorname{SparseLocalResidual}_{l\le2}
-(\widehat h^l,x^l,\mathcal E),
-\]
-
-\[
-\widetilde h^l
-=h^l+\operatorname{AttnResidual}(G^l+S^l),
-\]
-
-\[
-h^{l+1}
-=\widetilde h^l+
-\operatorname{EquivariantFFN}
-(\operatorname{EqRMSNorm}_{\rm ffn}(\widetilde h^l)).
-\]
-
-The global operator is still the defining operation. Node multipoles and the
-sparse local path augment the linear-attention layer; they do not replace it
-with a graph convolution or dense pair attention.
-
-The persistent hidden carrier is fixed automatically to
-
-\[
-C_0\times0e
-\oplus H\times0o
-\oplus H\times1o
-\oplus H\times1e
-\oplus H\times2e
-\oplus H\times2o.
-\]
-
-Users declare `input_irreps` and `output_irreps`; hidden parity and angular
-degree are fixed.
-
-## Install
-
-```bash
-uv sync --locked
-```
-
-Optional evaluation dependencies:
-
-```bash
-uv sync --locked --extra qm9
-uv sync --locked --extra pdbbind
-```
-
-Automated Actions are not run on push or pull request. Local checks are explicit:
-
-```bash
-scripts/check.sh fast
-scripts/check.sh gpu
-```
-
-## Canonical use
+## Canonical model
 
 ```python
-import torch
+from equivariant_attention import ELA, ELAConfig, SparseGeometry
 
-from equivariant_attention import (
-    EquivariantLinearAttention,
-    EquivariantLinearAttentionConfig,
-    pack_irreps,
-    prepare_3d_graph,
-)
-
-config = EquivariantLinearAttentionConfig(
+config = ELAConfig(
     input_irreps="32x0e + 4x1o + 1x1e",
     output_irreps="1x0e + 1x1o",
-    hidden_dim=128,
-    num_layers=6,
-    num_heads=8,
-    local_rank=4,
-    local_cutoff=6.0,
-    num_rbf=16,
-    residual_dropout=0.05,
-    drop_path_rate=0.10,
+    width=128,
+    depth=8,
+    geometry=SparseGeometry(
+        cutoff=6.0,
+        num_rbf=16,
+    ),
 )
-model = EquivariantLinearAttention(config)
+model = ELA(config)
 
-node_irreps = pack_irreps(
-    config.input_layout,
-    {
-        "0e": scalar_features[:, :, None],
-        "1o": polar_vectors,
-        "1e": axial_vectors,
-    },
+graph = config.geometry.prepare(
+    batch,
+    edge_index,  # edge_index[0] receives from edge_index[1]
 )
-
-# edge_index[0] is receiver i; edge_index[1] is sender j.
-graph = prepare_3d_graph(batch, edge_index)
-
 output = model(node_irreps, positions, graph)
-node_output = output["node_irreps"]
-final_positions = output["positions"]
 ```
 
-`positions` are a separate affine geometry input. They are not packed as a
-`1o` feature because
+The canonical public choices are deliberately limited to:
+
+```text
+input_irreps
+output_irreps
+width
+depth
+geometry
+```
+
+Attention heads, local rank, hidden parity sectors, normalization, residual
+scales, tensor closure, and chirality construction are derived implementation
+choices rather than public architecture-search knobs.
+
+## One layer
 
 \[
-x_i\mapsto Rx_i+t
+\bar h^\ell
+=
+\operatorname{EqRMSNorm}_{\rm attn}(h^\ell),
 \]
 
-contains translation, whereas an ordinary polar feature transforms as
-`v -> Rv`.
+\[
+G^\ell
+=
+\operatorname{ExactGlobalELA}_{l\le2}(\bar h^\ell),
+\qquad
+L^\ell
+=
+\operatorname{ExactSparseLocal}_{l\le2}
+(\bar h^\ell,x,\mathcal E).
+\]
 
-## Input and output irreps
+For each sector
 
-The optimized canonical path supports arbitrary multiplicities of
+\[
+\tau\in\{0e,0o,1o,1e,2e,2o\},
+\]
+
+the model computes invariant branch statistics and positive routing weights:
+
+\[
+(w_{G,i}^{\tau},w_{L,i}^{\tau})
+=
+2\operatorname{softmax}
+\left[
+R_\tau
+\left(
+\bar h_i^{0e},
+\log\operatorname{RMS}(G_i^\tau),
+\log\operatorname{RMS}(L_i^\tau)
+\right)
+\right].
+\]
+
+The router output and branch-balance parameters are zero initialized, so
+initially
+
+\[
+w_G^\tau=w_L^\tau=1,
+\qquad
+M_i^\tau=G_i^\tau+L_i^\tau.
+\]
+
+The model therefore starts from the admitted refined ELA equation. It learns a
+branch preference only when gradients support it.
+
+After fusion, one parity update, low-order tensor closure, residual, and
+pointwise equivariant FFN are applied:
+
+\[
+\begin{aligned}
+M^\ell &= \operatorname{Fuse}(G^\ell,L^\ell),\\
+\widetilde h^\ell
+&=h^\ell+
+\operatorname{AttnResidual}
+\left[
+\operatorname{ParityUpdate}(M^\ell)
++
+\operatorname{TPClosure}_{l\le2}
+\right],\\
+h^{\ell+1}
+&=\widetilde h^\ell+
+\operatorname{EqFFN}
+\left(
+\operatorname{EqRMSNorm}_{\rm ffn}
+(\widetilde h^\ell)
+\right).
+\end{aligned}
+\]
+
+No `N x N` attention tensor or persistent edge hidden state is materialized.
+
+## Representations
+
+The optimized path accepts arbitrary multiplicities of
 
 ```text
 0e  ordinary scalar
@@ -148,75 +147,47 @@ The optimized canonical path supports arbitrary multiplicities of
 2o  odd symmetric-traceless tensor
 ```
 
-The Cartesian bases are:
+with `l <= 2`. Cartesian bases are
 
 ```text
 l=1: [x, y, z]
-l=2: [xx, yy, xy, xz, yz], with zz = -xx - yy
+l=2: [xx, yy, xy, xz, yz], where zz = -xx - yy
 ```
 
-Helpers are available at package root:
+Helpers:
 
 ```python
-pack_irreps(...)
-split_irreps(...)
-matrix_to_st5(...)
-st5_to_matrix(...)
+from equivariant_attention import (
+    matrix_to_st5,
+    pack_irreps,
+    split_irreps,
+    st5_to_matrix,
+)
 ```
 
-`l>2` input or output is rejected rather than silently dispatched to a slower or
-semantically different path.
-
-## Linear-attention stabilization
-
-The scalar query and key are RMS-normalized per head before the positive feature
-map:
+Raw positions are not `1o` input features. They transform affinely,
 
 \[
-\bar q_{ih}
-=\gamma_h^Q
-\frac{q_{ih}}
-{\sqrt{\operatorname{mean}_d(q_{ihd}^2)+\epsilon}},
+x_i\mapsto Rx_i+t,
 \]
 
-with the same equation for keys. The positive map remains
+whereas a polar feature transforms homogeneously as `v -> Rv`.
 
-\[
-\phi(z)=\frac{\operatorname{ELU}(z)+1}{\sqrt D}.
-\]
+## Invariant conditioning
 
-The feature kernel and one-cycle balancing remain exactly factorized, so no
-`N x N` attention matrix is formed.
-
-## Equivariant normalization and activation
-
-Every branch has its own all-sector RMS pre-normalization. Non-scalar residuals
-use a direction-preserving gate derived only from invariant magnitudes:
-
-\[
-\Delta X^{l,p}\leftarrow
-2\sigma(\operatorname{MLP}(\text{sector norms}))\Delta X^{l,p}.
-\]
-
-The last gate projection is zero initialized, giving an exact identity gate at
-initialization.
-
-Residual dropout samples one mask per irrep copy and broadcasts it over the
-irrep components. Stochastic depth samples one mask per graph. Both preserve the
-transformation law of every retained residual.
-
-## DiT-style conditioning
-
-Set `condition_dim` to use invariant conditioning:
+Conditioning is an explicit wrapper, not a field in the minimal model config:
 
 ```python
-config = EquivariantLinearAttentionConfig(
-    input_irreps="32x0e",
-    output_irreps="1x1o",
-    condition_dim=256,
+from equivariant_attention.conditioning import (
+    ConditionedELA,
+    InvariantConditioningConfig,
 )
 
-output = model(
+conditioned = ConditionedELA(
+    config,
+    InvariantConditioningConfig(condition_dim=256),
+)
+output = conditioned(
     node_irreps,
     positions,
     graph,
@@ -224,166 +195,157 @@ output = model(
 )
 ```
 
-Condition shape may be `[D]`, `[1,D]`, `[G,D]`, or `[N,D]`. The condition is
-`0e`. Scalar channels receive bounded shift and scale; non-scalar channels
-receive bounded copy-wise scale only. Attention and FFN residuals are gated
-independently.
+The condition is `0e`. Even scalars receive bounded shift and scale;
+non-scalar sectors receive invariant copy-wise scale only. Conditioner output
+projections are zero initialized, so shared ELA weights initially reproduce the
+unconditioned function.
 
-Vector or tensor conditions belong in `input_irreps`, not in the invariant
-condition tensor.
-
-## Reusable layer API
-
-The stack exposes its layers:
-
-```python
-state, context = model.embed_input(node_irreps, positions, graph)
-
-for layer in model.layers:
-    state = layer.attention_residual(state, context, condition)
-    state = layer.ffn_residual(state, context, condition)
-
-node_output = model.project_state(state)
-```
-
-The preferred public layer class is `EquivariantLinearAttentionLayer`. The
-lower-level `UnifiedEquivariantLayer` remains available as a compatibility and
-ablation boundary.
+Vector or tensor conditions belong in `input_irreps`.
 
 ## Coordinate refinement
 
-Set
-
-```python
-coordinate_updates=True
-max_coordinate_step=0.2
-```
-
-to apply a bounded polar displacement after each layer:
-
-\[
-x_i^{l+1}=x_i^l+\Delta x_i^l.
-\]
-
-Geometry and multipoles are refreshed after each layer on the same prepared
-candidate topology. For large motion, the caller should construct candidates
-with a skin or rebuild the graph in an outer loop.
-
-Direct coordinate refinement is useful for denoising, pose refinement,
-registration, and learned relaxation. Conservative forces should instead be
-obtained from a scalar energy through `-grad_x E`.
-
-## Experimental edge-free spatial kernel
-
-A hard cutoff neighborhood cannot generally be evaluated exactly without
-finding nearby pairs. The experimental `ImplicitGaussianSpatialKernel` instead
-approximates a soft isotropic neighborhood through a finite Gaussian--Taylor
-feature map. It takes values, coordinates, and graph membership only:
+Coordinate mutation is not part of the canonical layer. Refinement, denoising,
+registration, and learned relaxation use an outer-loop wrapper:
 
 ```python
 from equivariant_attention import (
-    ImplicitGaussianSpatialKernel,
-    ImplicitSpatialKernelConfig,
+    CoordinateRefinementConfig,
+    ELACoordinateRefiner,
 )
 
-kernel = ImplicitGaussianSpatialKernel(
-    ImplicitSpatialKernelConfig(
-        scales=(1.0, 2.0, 4.0),
-        order=2,
-        exclude_self=True,
-        normalization="one_plus_mass",
-    )
+refiner = ELACoordinateRefiner(
+    model,
+    CoordinateRefinementConfig(
+        steps=4,
+        max_step=0.2,
+        centering="selected",
+    ),
 )
 
-result = kernel(values, positions, batch)
-message = result.output
-mass = result.mass
-moments = kernel.moments(positions, batch)
+output = refiner(
+    node_irreps,
+    positions,
+    graph,
+    update_mask=movable_nodes,
+    graph_rebuilder=optional_neighbor_rebuilder,
+)
 ```
 
-It does not accept or construct `edge_index`, a neighbor list, or an `N x N`
-pair matrix. For `S` scales the feature rank is `F=10S`, and fixed-width
-transport costs
+The zero-initialized equivariant head predicts a bounded `1o` displacement. A
+caller-provided graph rebuilder makes neighbor-list policy explicit. For
+conservative force fields, derive forces from scalar energy:
 
 \[
-O(NFD).
+F_i=-\nabla_{x_i}E.
 \]
-
-This is an approximate smooth kernel, not an exact radius graph. Exact local
-semantics without retained edges require an on-the-fly cell-list or spatial-hash
-kernel, which is a separate future backend.
-
-Current evidence keeps sparse local geometry in the canonical architecture.
-The implicit kernel is an experimental, selectively scheduled smooth
-long-range residual; it is not a universal local replacement, and the
-always-on explicit-plus-implicit hybrid is not promoted. A layer-0-only hybrid
-improved the one-seed QM9 Pareto point but failed the LBA train-capacity gate,
-so it also remains experimental. LGL routing is retired from active
-architecture work. See the preregistered QM9/LBA comparison in
-`artifacts/ela-spatial-realdata-20260731/RESULTS.md`.
 
 ## Complexity
 
-For a precomputed candidate graph with `N` nodes, `E` directed candidates, and
-fixed widths/ranks, the base stack has
+For `N` nodes, `E` directed candidate edges, and `L` layers, with fixed widths
+and ranks,
 
 \[
-T_{\rm base}=O(L(N+E)).
+T=O\left(L(N+E)\right).
 \]
 
-It is node-linear only when the candidate family satisfies `E=O(N)`. A complete
-candidate graph makes the local term quadratic.
+The branch router adds `O(LN)` work and does not change the asymptotic order.
+The model is linear in node count only when `E = O(N)`. Neighbor discovery is
+outside the layer and must be measured separately.
 
-Block Attention Residuals with `B` retained depth sources add
+## Architecture policy
 
-\[
-O(LBN),
-\]
+Tracked evidence supports distinct operator roles:
 
-so
-
-\[
-T_{\rm AttnRes}=O(L(N+E)+LBN).
-\]
-
-Depth linearity requires `B` to stay fixed as `L` grows. Coordinate geometry
-refresh preserves `O(L(N+E))` only while candidate topology is fixed. Neighbor
-discovery remains outside the layer.
-
-Run the scaling harness with
-
-```bash
-uv run python scripts/benchmark_scaling.py \
-  --modes base,attnres,implicit \
-  --nodes 256,512,1024,2048,4096 \
-  --depths 4,8,16,32 \
-  --blocks 4,8 \
-  --degree 32 \
-  --device cuda \
-  --dtype bfloat16 \
-  --output artifacts/scaling.json
+```text
+canonical:    exact global ELA + exact sparse local + branch-aware fusion
+experimental: edge-free implicit smooth transport
+experimental: block Attention Residuals for deep stacks
+legacy:       historical configurable architectures
 ```
 
-## Compatibility and research APIs
+The implicit Gaussian--Taylor operator is useful for smooth spatial research,
+but fixed-rank transport does not reproduce compact support, edge-axis routing,
+typed relations, or sharp local interactions. Always-on and periodic hybrid
+schedules are therefore not canonical options.
 
-- `EquivariantLinearAttention`: preferred refined linear-attention stack.
-- `EquivariantAttentionResiduals`: opt-in block depth-attention variant.
-- `ImplicitGaussianSpatialKernel`: experimental no-edge spatial approximation.
-- `UnifiedEquivariantAttention`: canonical compatibility stack without the new
-  regularization wrapper.
-- `EquivariantAttention`: legacy research path for explicit architecture and
-  backend ablations.
+Experimental components:
 
-Mathematical details:
+```python
+from equivariant_attention.experimental import ...
+```
 
-- `docs/EQUIVARIANT_LINEAR_ATTENTION.md`
-- `docs/ATTENTION_RESIDUALS.md`
-- `docs/IMPLICIT_SPATIAL_KERNEL.md`
+Compatibility models:
+
+```python
+from equivariant_attention.legacy import ...
+```
+
+`EquivariantLinearAttentionConfig` and `EquivariantLinearAttention` remain
+available for existing experiments and historical state schemas. New work
+should start from `ELAConfig` and compose a wrapper only when the task requires
+one.
+
+## Migration
+
+```python
+from equivariant_attention.migration import (
+    canonical_config_from_advanced,
+    load_advanced_ela_state,
+)
+
+minimal = canonical_config_from_advanced(old_config)
+model = ELA(minimal)
+receipt = load_advanced_ela_state(model, old_state_dict)
+```
+
+The migration fails closed when shapes or wrapper-only features differ. Missing
+keys are allowed only for the new branch router.
+
+## Install and validate
+
+```bash
+uv sync --locked
+scripts/check.sh fast
+scripts/check.sh gpu
+```
+
+GitHub Actions do not run automatically on pushes or pull requests. Validation
+is explicit and local.
+
+Focused canonical checks:
+
+```bash
+uv run pytest \
+  tests/test_branch_fusion.py \
+  tests/test_canonical_api.py \
+  tests/test_canonical_migration.py \
+  tests/test_conditioning_wrapper.py \
+  tests/test_refinement_wrapper.py \
+  tests/test_api_policy.py
+```
+
+Resource comparison:
+
+```bash
+uv run python scripts/benchmark_canonical_ela.py \
+  --nodes 1024 \
+  --degree 32 \
+  --width 128 \
+  --depth 8 \
+  --device cuda \
+  --dtype bfloat16 \
+  --output artifacts/canonical-ela-overhead.json
+```
+
+## Design documents
+
+- `docs/CANONICAL_ELA.md`
+- `docs/API_POLICY.md`
+- `docs/MIGRATION_TO_ELA.md`
+- `docs/ARCHITECTURE_DECISION_20260731.md`
 - `docs/SCALING.md`
-- `docs/LAYERED_SE3_API.md`
-- `docs/UNIFIED_3D_CORE.md`
-- `docs/UNIFIED_3D_MULTIPOLES.md`
+- `docs/SPATIAL_OPERATOR_INDEX.md`
 
-Unit tests establish transformation laws, numerical finiteness, factorization
-equivalence, and gradient paths. They do not establish downstream accuracy,
-production neighbor-search performance, or fused-kernel speedup.
+Unit tests establish shape, symmetry, finite-gradient, initialization, and
+execution contracts. They do not by themselves establish downstream accuracy or
+hardware speedup.

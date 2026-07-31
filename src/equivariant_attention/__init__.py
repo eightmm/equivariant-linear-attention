@@ -7,6 +7,16 @@ from .benchmarking import (
     split_dataset,
 )
 from .annotations import DistanceBandSpec, RelationTable
+from .branch_fusion import BranchFusionDiagnostics, RMSAwareBranchFusion
+from .canonical import (
+    CanonicalEquivariantLinearAttention,
+    ELA,
+    ELAConfig,
+    ELACore,
+    ELALayer,
+    SparseGeometry,
+)
+from .canonical_regression import ELARegressionModel
 from .config import (
     ArchitectureConfig,
     GlobalTransportConfig,
@@ -69,6 +79,11 @@ from .reference_irreps import (
     ScalarGatedIrreps,
     tensor_product_path,
     transform_irreps,
+)
+from .refinement import (
+    CoordinateRefinementConfig,
+    ELACoordinateRefiner,
+    GeometryRebuilder,
 )
 from .spherical import (
     cartesian_to_real_l1,
@@ -160,11 +175,20 @@ from .unified_regression import (
 
 __all__ = [
     "ArchitectureConfig",
+    "BranchFusionDiagnostics",
+    "CanonicalEquivariantLinearAttention",
     "CartesianIrreps",
     "ComplexityEstimate",
+    "CoordinateRefinementConfig",
     "CoordinateUpdateHead",
     "DirectVectorForceHead",
     "DistanceBandSpec",
+    "ELA",
+    "ELAConfig",
+    "ELACoordinateRefiner",
+    "ELACore",
+    "ELALayer",
+    "ELARegressionModel",
     "EdgeScaling",
     "EquivariantAttention",
     "EquivariantAttentionConfig",
@@ -183,6 +207,7 @@ __all__ = [
     "ExecutableTensorProductPlan",
     "EquivariantVectorHead",
     "FallbackDecision",
+    "GeometryRebuilder",
     "GlobalTransportConfig",
     "GraphBatch",
     "GraphSample",
@@ -210,6 +235,7 @@ __all__ = [
     "PrecomputedNeighborProvider",
     "Prepared3DGraph",
     "ProviderCapabilitySnapshot",
+    "RMSAwareBranchFusion",
     "ReferenceRadiusNeighborProvider",
     "ReferenceTensorProduct",
     "ReferenceTensorProductPath",
@@ -218,6 +244,7 @@ __all__ = [
     "ScalarEnergyHead",
     "ScalarGatedIrreps",
     "ScalingFit",
+    "SparseGeometry",
     "SpatialOperatorAblationConfig",
     "SpatialOperatorAblationModel",
     "SpatialOperatorArm",
@@ -287,6 +314,4 @@ __all__ = [
 
 
 def main() -> None:
-    print(
-        "equivariant-attention: import EquivariantLinearAttention from Python"
-    )
+    print("equivariant-attention: import ELA and ELAConfig from Python")

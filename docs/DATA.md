@@ -48,10 +48,14 @@ the storage dtype itself, exactly to at least a `1e3 Angstrom` float32 offset
 against a `61.58 Angstrom` operating range. Candidate order is receiver major, then
 self, intra-segment, cross-segment, then ascending sender index.
 
-`topology_sha256` is the only admitted candidate identity, and
-`scripts/verify_lba_topology.py` must report one edge count and one hash across
-fresh processes before a multi-seed claim. See `TOPOLOGY_CONTRACT_20260727.md`
-for the frozen ATOM3D-LBA ID30 identity and the effect on historical numbers.
+Historical packets used the joint `topology_sha256`, which hashes sample IDs
+and edge bytes together. New packets must record `sample_identity_sha256` and
+`edge_topology_sha256` separately (and may retain the joint digest for backward
+compatibility). This prevents a label-blind sample-ID migration from looking
+like a changed candidate graph. `scripts/verify_lba_topology.py` must report one
+edge count and one edge-only hash across fresh processes before a multi-seed
+claim. See `TOPOLOGY_CONTRACT_20260727.md` for the historical frozen joint
+identity and the effect on older numbers.
 
 ## ATOM3D-LBA train-only overfit packet
 

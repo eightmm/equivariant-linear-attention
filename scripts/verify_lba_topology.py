@@ -9,8 +9,9 @@ budgets and requires one edge count and one hash.
     uv run python scripts/verify_lba_topology.py \
       artifacts/topology-contract/id30-identity.json
 
-Add `--expect <sha256>` to also require the recorded frozen identity. No label
-is read, no GPU is used, and the test split remains inadmissible.
+Add `--expect-edge <sha256>` to require the edge-only identity. The legacy
+`--expect` option still checks the historical joint sample-ID/edge digest. No
+label is read, no GPU is used, and the test split remains inadmissible.
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from equivariant_attention.benchmarking import GraphSample  # noqa: E402
 from equivariant_attention.pdbbind import (  # noqa: E402
     ATOM3D_LBA_REVISION,
+    edge_topology_sha256,
     load_atom3d_lba_split_samples,
+    sample_identity_sha256,
     segment_balanced_knn_edge_index,
     topology_sha256,
 )
@@ -48,6 +51,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--train-limit", type=int, default=None)
     parser.add_argument("--val-limit", type=int, default=None)
     parser.add_argument("--expect", default=None)
+    parser.add_argument("--expect-edge", default=None)
     parser.add_argument("--worker", action="store_true")
     return parser.parse_args(argv)
 
@@ -97,6 +101,8 @@ def build_identity(args: argparse.Namespace) -> dict[str, object]:
         "validation_size": len(validation),
         "edge_count": edge_count,
         "topology_sha256": topology_sha256(samples),
+        "edge_topology_sha256": edge_topology_sha256(samples),
+        "sample_identity_sha256": sample_identity_sha256(samples),
         "build_seconds": time.perf_counter() - started,
         "torch_threads": int(os.environ.get("OMP_NUM_THREADS", "0")),
     }
@@ -137,16 +143,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         runs.append(record)
         print(
             f"threads={threads} edges={record['edge_count']} "
-            f"sha256={record['topology_sha256']} "
+            f"edge_sha256={record['edge_topology_sha256']} "
             f"seconds={float(record['build_seconds']):.1f}",
             file=sys.stderr,
             flush=True,
         )
 
     hashes = {str(run["topology_sha256"]) for run in runs}
+    edge_hashes = {str(run["edge_topology_sha256"]) for run in runs}
+    sample_hashes = {str(run["sample_identity_sha256"]) for run in runs}
     counts = {str(run["edge_count"]) for run in runs}
-    reproducible = len(hashes) == 1 and len(counts) == 1
+    reproducible = (
+        len(hashes) == 1
+        and len(edge_hashes) == 1
+        and len(sample_hashes) == 1
+        and len(counts) == 1
+    )
     matches_expected = None if args.expect is None else args.expect in hashes
+    matches_expected_edge = (
+        None if args.expect_edge is None else args.expect_edge in edge_hashes
+    )
     summary = {
         "revision": ATOM3D_LBA_REVISION,
         "cutoff_angstrom": LOCAL_CUTOFF_ANGSTROM,
@@ -156,7 +172,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "reproducible": reproducible,
         "expected_topology_sha256": args.expect,
         "matches_expected": matches_expected,
-        "status": "passed" if reproducible and matches_expected is not False else "failed",
+        "expected_edge_topology_sha256": args.expect_edge,
+        "matches_expected_edge": matches_expected_edge,
+        "status": (
+            "passed"
+            if reproducible
+            and matches_expected is not False
+            and matches_expected_edge is not False
+            else "failed"
+        ),
     }
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
@@ -166,6 +190,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if matches_expected is False:
         print("topology identity differs from the expected hash", file=sys.stderr)
+        return 1
+    if matches_expected_edge is False:
+        print("edge topology differs from the expected hash", file=sys.stderr)
         return 1
     return 0
 
