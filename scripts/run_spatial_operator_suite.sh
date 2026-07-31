@@ -29,6 +29,8 @@ case "$MODE" in
     SCALE_BLOCKS="1"
     SCALE_DEGREES="4"
     APPROX_NODES=64
+    FRAGMENT_BASE_NODES=16
+    FRAGMENT_NODES=4
     ;;
   full)
     SEEDS="${SPATIAL_SUITE_SEEDS:-0,1,2,3,4}"
@@ -47,6 +49,8 @@ case "$MODE" in
     SCALE_BLOCKS="${SPATIAL_SUITE_SCALE_BLOCKS:-4,8}"
     SCALE_DEGREES="${SPATIAL_SUITE_SCALE_DEGREES:-8,16,32,64}"
     APPROX_NODES="${SPATIAL_SUITE_APPROX_NODES:-512}"
+    FRAGMENT_BASE_NODES="${SPATIAL_SUITE_FRAGMENT_BASE_NODES:-64}"
+    FRAGMENT_NODES="${SPATIAL_SUITE_FRAGMENT_NODES:-16}"
     ;;
   *)
     echo "SPATIAL_SUITE_MODE must be smoke or full" >&2
@@ -74,6 +78,7 @@ uv run pytest \
   tests/test_spatial_ablation.py \
   tests/test_spatial_benchmarks.py \
   tests/test_spatial_comparison.py \
+  tests/test_fragment_locality.py \
   tests/test_implicit_spatial.py \
   tests/test_implicit_spatial_chunks.py \
   tests/test_implicit_spatial_gradients.py \
@@ -138,6 +143,16 @@ uv run python scripts/evaluate_implicit_spatial.py \
   --output "$RUN_DIR/implicit-accuracy.json" \
   > "$RUN_DIR/implicit-accuracy.log"
 
+uv run python scripts/evaluate_fragment_locality.py \
+  --base-nodes "$FRAGMENT_BASE_NODES" \
+  --fragment-nodes "$FRAGMENT_NODES" \
+  --fragment-distance 20 \
+  --value-width 16 \
+  --cutoff 1.75 \
+  --scales 2,4,8 \
+  --output "$RUN_DIR/fragment-locality.json" \
+  > "$RUN_DIR/fragment-locality.log"
+
 uv run python scripts/benchmark_scaling.py \
   --modes base,attnres,implicit \
   --nodes "$SCALE_NODES" \
@@ -165,6 +180,7 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "report.md",
     "decision.json",
     "implicit-accuracy.json",
+    "fragment-locality.json",
     "scaling.json",
     "environment.txt",
     "git.txt",
@@ -173,6 +189,7 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "comparison.log",
     "report.log",
     "implicit-accuracy.log",
+    "fragment-locality.log",
     "scaling.log"
   ]
 }
