@@ -68,15 +68,23 @@ def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
     if tuple(payload.get("arms", ())) != ARMS:
         errors.append("canonical arm order is explicit, implicit, hybrid")
 
+    tasks = tuple(str(task) for task in payload.get("tasks", []))
+    seeds = tuple(int(seed) for seed in payload.get("seeds", []))
+    if len(set(tasks)) != len(tasks):
+        errors.append("tasks must be unique")
+    if len(set(seeds)) != len(seeds):
+        errors.append("seeds must be unique")
+    expected_pairs = {(task, seed) for task in tasks for seed in seeds}
+
     protocol = payload.get("protocol", {})
-    expected = {
+    expected_protocol = {
         "same_parameter_schema": True,
         "same_initial_state_per_task_seed": True,
         "same_train_validation_data_per_task_seed": True,
         "validation_or_test_labels_used_for_training": False,
         "no_edge_graph_prepared_outside_timed_forward": True,
     }
-    for key, required in expected.items():
+    for key, required in expected_protocol.items():
         if protocol.get(key) is not required:
             errors.append(f"protocol mismatch: {key} must be {required}")
 
@@ -86,7 +94,14 @@ def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
             (str(run.get("task")), int(run.get("seed", -1))),
             [],
         ).append(run)
+    observed_pairs = set(grouped)
+    for key in sorted(expected_pairs - observed_pairs):
+        errors.append(f"missing task/seed run group: {key}")
+    for key in sorted(observed_pairs - expected_pairs):
+        errors.append(f"undeclared task/seed run group: {key}")
     for key, runs in grouped.items():
+        if len(runs) != len(ARMS):
+            errors.append(f"expected exactly three runs for {key}")
         if {str(run.get("arm")) for run in runs} != set(ARMS):
             errors.append(f"incomplete arm set for {key}")
         if len({str(run.get("initial_state_sha256")) for run in runs}) != 1:
@@ -95,8 +110,26 @@ def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
             int(run.get("audit", {}).get("parameter_count", -1))
             for run in runs
         }
-        if len(counts) != 1:
+        if len(counts) != 1 or -1 in counts:
             errors.append(f"parameter-count mismatch for {key}")
+
+    audit_counts: dict[tuple[str, int], int] = {}
+    for audit in payload.get("audits", []):
+        key = (str(audit.get("task")), int(audit.get("seed", -1)))
+        audit_counts[key] = audit_counts.get(key, 0) + 1
+        equivalence = audit.get("initial_equivalence", {})
+        for required_key in (
+            "explicit_vs_hybrid_max_abs",
+            "explicit_vs_implicit_max_abs",
+            "implicit_edge_independence_max_abs",
+        ):
+            if required_key not in equivalence:
+                errors.append(f"missing audit metric {required_key} for {key}")
+    for key in sorted(expected_pairs):
+        if audit_counts.get(key, 0) != 1:
+            errors.append(f"expected exactly one audit for {key}")
+    for key in sorted(set(audit_counts) - expected_pairs):
+        errors.append(f"undeclared audit task/seed pair: {key}")
     return errors
 
 
