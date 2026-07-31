@@ -7,8 +7,6 @@ import json
 import math
 import statistics
 import time
-from collections.abc import Iterator
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +21,10 @@ from equivariant_attention.implicit_spatial import ImplicitSpatialKernelConfig
 from equivariant_attention.spatial_ablation import (
     SpatialOperatorAblationConfig,
     SpatialOperatorAblationModel,
+    empty_prepared_graph_like,
     state_dict_sha256,
 )
 from equivariant_attention.spatial_benchmarks import (
-    SpatialSyntheticTask,
     SyntheticSpatialBatch,
     make_synthetic_spatial_batch,
     synthetic_batch_sha256,
@@ -121,7 +119,9 @@ def _metrics(
     target_mean: torch.Tensor,
     target_std: torch.Tensor,
 ) -> dict[str, float]:
-    prediction = prediction_normalized.float() * target_std.float() + target_mean.float()
+    prediction = (
+        prediction_normalized.float() * target_std.float() + target_mean.float()
+    )
     target = target_normalized.float() * target_std.float() + target_mean.float()
     error = prediction - target
     return {
@@ -137,10 +137,29 @@ def _metrics(
     }
 
 
+def _predict(
+    model: SpatialOperatorAblationModel,
+    batch: SyntheticSpatialBatch,
+    graph: Any,
+    no_edge_graph: Any,
+    *,
+    device: torch.device,
+    compute_dtype: torch.dtype,
+) -> torch.Tensor:
+    with _autocast(device, compute_dtype):
+        return model(
+            batch.node_irreps,
+            batch.positions,
+            graph,
+            no_edge_graph=no_edge_graph,
+        )["graph_irreps"]
+
+
 def _evaluate(
     model: SpatialOperatorAblationModel,
     batch: SyntheticSpatialBatch,
     graph: Any,
+    no_edge_graph: Any,
     target_normalized: torch.Tensor,
     *,
     target_mean: torch.Tensor,
@@ -149,12 +168,15 @@ def _evaluate(
     compute_dtype: torch.dtype,
 ) -> dict[str, float]:
     model.eval()
-    with torch.inference_mode(), _autocast(device, compute_dtype):
-        prediction = model(
-            batch.node_irreps,
-            batch.positions,
+    with torch.inference_mode():
+        prediction = _predict(
+            model,
+            batch,
             graph,
-        )["graph_irreps"]
+            no_edge_graph,
+            device=device,
+            compute_dtype=compute_dtype,
+        )
     return _metrics(
         prediction,
         target_normalized,
@@ -167,6 +189,7 @@ def _inference_profile(
     model: SpatialOperatorAblationModel,
     batch: SyntheticSpatialBatch,
     graph: Any,
+    no_edge_graph: Any,
     *,
     device: torch.device,
     compute_dtype: torch.dtype,
@@ -175,8 +198,15 @@ def _inference_profile(
 ) -> tuple[float, int]:
     model.eval()
     for _ in range(warmup):
-        with torch.inference_mode(), _autocast(device, compute_dtype):
-            model(batch.node_irreps, batch.positions, graph)
+        with torch.inference_mode():
+            _predict(
+                model,
+                batch,
+                graph,
+                no_edge_graph,
+                device=device,
+                compute_dtype=compute_dtype,
+            )
     _synchronize(device)
 
     samples: list[float] = []
@@ -185,8 +215,15 @@ def _inference_profile(
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         start = time.perf_counter()
-        with torch.inference_mode(), _autocast(device, compute_dtype):
-            model(batch.node_irreps, batch.positions, graph)
+        with torch.inference_mode():
+            _predict(
+                model,
+                batch,
+                graph,
+                no_edge_graph,
+                device=device,
+                compute_dtype=compute_dtype,
+            )
         _synchronize(device)
         samples.append((time.perf_counter() - start) * 1000.0)
         if device.type == "cuda":
@@ -199,6 +236,7 @@ def _initial_equivalence(
     state_dict: dict[str, torch.Tensor],
     batch: SyntheticSpatialBatch,
     graph: Any,
+    no_edge_graph: Any,
     *,
     device: torch.device,
     model_dtype: torch.dtype,
@@ -209,18 +247,52 @@ def _initial_equivalence(
         model = SpatialOperatorAblationModel(config, arm=arm)
         model.load_state_dict(state_dict, strict=True)
         model.to(device=device, dtype=model_dtype).eval()
-        with torch.inference_mode(), _autocast(device, compute_dtype):
-            outputs[arm] = model(
-                batch.node_irreps,
-                batch.positions,
+        with torch.inference_mode():
+            outputs[arm] = _predict(
+                model,
+                batch,
                 graph,
-            )["graph_irreps"].float()
+                no_edge_graph,
+                device=device,
+                compute_dtype=compute_dtype,
+            ).float()
+
+    implicit = SpatialOperatorAblationModel(config, arm="implicit")
+    implicit.load_state_dict(state_dict, strict=True)
+    implicit.to(device=device, dtype=model_dtype).eval()
+    with torch.inference_mode():
+        implicit_with_explicit_metadata = _predict(
+            implicit,
+            batch,
+            graph,
+            no_edge_graph,
+            device=device,
+            compute_dtype=compute_dtype,
+        ).float()
+        implicit_with_no_edge_metadata = _predict(
+            implicit,
+            batch,
+            no_edge_graph,
+            no_edge_graph,
+            device=device,
+            compute_dtype=compute_dtype,
+        ).float()
+
     return {
         "explicit_vs_hybrid_max_abs": float(
             (outputs["explicit"] - outputs["hybrid"]).abs().max().item()
         ),
         "explicit_vs_implicit_max_abs": float(
             (outputs["explicit"] - outputs["implicit"]).abs().max().item()
+        ),
+        "implicit_edge_independence_max_abs": float(
+            (
+                implicit_with_explicit_metadata
+                - implicit_with_no_edge_metadata
+            )
+            .abs()
+            .max()
+            .item()
         ),
     }
 
@@ -235,6 +307,8 @@ def _train_arm(
     validation: SyntheticSpatialBatch,
     train_graph: Any,
     validation_graph: Any,
+    train_no_edge_graph: Any,
+    validation_no_edge_graph: Any,
     target_mean: torch.Tensor,
     target_std: torch.Tensor,
     steps: int,
@@ -274,13 +348,15 @@ def _train_arm(
         model.train()
         optimizer.zero_grad(set_to_none=True)
         start = time.perf_counter()
-        with _autocast(device, compute_dtype):
-            prediction = model(
-                train.node_irreps,
-                train.positions,
-                train_graph,
-            )["graph_irreps"]
-            loss = F.mse_loss(prediction.float(), train_target.float())
+        prediction = _predict(
+            model,
+            train,
+            train_graph,
+            train_no_edge_graph,
+            device=device,
+            compute_dtype=compute_dtype,
+        )
+        loss = F.mse_loss(prediction.float(), train_target.float())
         loss.backward()
         gradient_norm = torch.nn.utils.clip_grad_norm_(
             model.parameters(),
@@ -303,6 +379,7 @@ def _train_arm(
                 model,
                 validation,
                 validation_graph,
+                validation_no_edge_graph,
                 validation_target,
                 target_mean=target_mean,
                 target_std=target_std,
@@ -331,27 +408,30 @@ def _train_arm(
         model,
         validation,
         validation_graph,
+        validation_no_edge_graph,
         validation_target,
         target_mean=target_mean,
         target_std=target_std,
         device=device,
         compute_dtype=compute_dtype,
     )
+    training_peak = (
+        torch.cuda.max_memory_allocated(device)
+        if device.type == "cuda"
+        else 0
+    )
+
     model.load_state_dict(best_state, strict=True)
     model.to(device=device, dtype=model_dtype)
     inference_ms, inference_peak = _inference_profile(
         model,
         validation,
         validation_graph,
+        validation_no_edge_graph,
         device=device,
         compute_dtype=compute_dtype,
         warmup=profile_warmup,
         repeats=profile_repeats,
-    )
-    training_peak = (
-        torch.cuda.max_memory_allocated(device)
-        if device.type == "cuda"
-        else 0
     )
     return {
         "arm": arm,
@@ -475,11 +555,10 @@ def main() -> None:
     runs: list[dict[str, Any]] = []
     audits: list[dict[str, Any]] = []
 
-    for task_index, task_name in enumerate(args.tasks):
-        task = task_name  # narrowed by validation above
+    for task_index, task in enumerate(args.tasks):
         for seed in args.seeds:
             train = make_synthetic_spatial_batch(
-                task=task,  # type: ignore[arg-type]
+                task=task,
                 num_graphs=args.train_graphs,
                 nodes_per_graph=args.nodes_per_graph,
                 seed=10_000 * task_index + seed,
@@ -491,7 +570,7 @@ def main() -> None:
                 dtype=model_dtype,
             ).to(device, dtype=model_dtype)
             validation = make_synthetic_spatial_batch(
-                task=task,  # type: ignore[arg-type]
+                task=task,
                 num_graphs=args.validation_graphs,
                 nodes_per_graph=args.nodes_per_graph,
                 seed=100_000 + 10_000 * task_index + seed,
@@ -507,6 +586,8 @@ def main() -> None:
                 validation.batch,
                 validation.edge_index,
             )
+            train_no_edge_graph = empty_prepared_graph_like(train_graph)
+            validation_no_edge_graph = empty_prepared_graph_like(validation_graph)
             target_mean = train.targets.mean(dim=0, keepdim=True)
             target_std = train.targets.std(dim=0, keepdim=True).clamp_min(1e-6)
 
@@ -546,6 +627,7 @@ def main() -> None:
                 initial_state,
                 train,
                 train_graph,
+                train_no_edge_graph,
                 device=device,
                 model_dtype=model_dtype,
                 compute_dtype=compute_dtype,
@@ -554,12 +636,8 @@ def main() -> None:
                 {
                     "task": task,
                     "seed": seed,
-                    "train_data_sha256": synthetic_batch_sha256(
-                        train.to("cpu", dtype=torch.float64)
-                    ),
-                    "validation_data_sha256": synthetic_batch_sha256(
-                        validation.to("cpu", dtype=torch.float64)
-                    ),
+                    "train_data_sha256": synthetic_batch_sha256(train),
+                    "validation_data_sha256": synthetic_batch_sha256(validation),
                     "initial_state_sha256": initial_hash,
                     "initial_equivalence": equivalence,
                     "parameter_count": sum(
@@ -582,6 +660,8 @@ def main() -> None:
                     validation=validation,
                     train_graph=train_graph,
                     validation_graph=validation_graph,
+                    train_no_edge_graph=train_no_edge_graph,
+                    validation_no_edge_graph=validation_no_edge_graph,
                     target_mean=target_mean,
                     target_std=target_std,
                     steps=args.steps,
@@ -606,7 +686,7 @@ def main() -> None:
                 runs.append(result)
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": "spatial_operator_comparison",
         "arms": list(ARMS),
         "tasks": args.tasks,
@@ -620,6 +700,7 @@ def main() -> None:
             "same_train_validation_data_per_task_seed": True,
             "validation_or_test_labels_used_for_training": False,
             "full_batch_training": True,
+            "no_edge_graph_prepared_outside_timed_forward": True,
             "arguments": vars(args) | {"output": str(args.output)},
         },
         "audits": audits,
