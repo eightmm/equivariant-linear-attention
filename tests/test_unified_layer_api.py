@@ -244,3 +244,4 @@ def test_condition_and_coordinate_contract_is_explicit() -> None:
     assert contract["coordinate_topology"] == (
         "fixed_candidate_recompute_geometry_each_layer"
     )
+    assert contract["node_geometry"] == "dynamic_l0_l1_l2_radial_multipoles"

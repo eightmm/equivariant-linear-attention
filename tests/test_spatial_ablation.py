@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import pytest
 
 from equivariant_attention import prepare_3d_graph
 from equivariant_attention.equivariant_linear_attention import (
@@ -124,6 +125,25 @@ def test_implicit_arm_is_independent_of_explicit_edge_metadata() -> None:
             no_edge_graph=no_edge_graph,
         )["node_irreps"]
     torch.testing.assert_close(first, second, atol=0.0, rtol=0.0)
+
+
+def test_no_edge_graph_requires_identical_batch_membership() -> None:
+    config = _config(scale_init=0.1)
+    model = SpatialOperatorAblationModel(config, arm="implicit").double()
+    batch, graph, _ = _fixture()
+    mismatched_batch = graph.batch.roll(1)
+    mismatched = prepare_3d_graph(
+        mismatched_batch,
+        torch.empty((2, 0), dtype=torch.long),
+    )
+
+    with pytest.raises(ValueError, match="reuse graph.batch"):
+        model(
+            batch.node_irreps,
+            batch.positions,
+            graph,
+            no_edge_graph=mismatched,
+        )
 
 
 def test_zero_implicit_layerscale_receives_gradient() -> None:

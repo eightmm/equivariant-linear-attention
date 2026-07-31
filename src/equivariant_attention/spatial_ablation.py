@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Literal
 
@@ -54,6 +54,7 @@ class SpatialOperatorAblationConfig:
         return {
             "arms": ("explicit", "implicit", "hybrid"),
             "common_global_operator": "exact_equivariant_linear_attention",
+            "common_node_multipoles": "edge_free_zero_neighbor_context",
             "explicit_local": "single_positive_receiver_csr",
             "implicit_local": "gaussian_taylor_edge_free_residual",
             "same_parameter_schema": True,
@@ -130,8 +131,6 @@ class SpatialOperatorAblationModel(nn.Module):
         graph: Prepared3DGraph,
         no_edge_graph: Prepared3DGraph | None,
     ) -> Prepared3DGraph:
-        if self.uses_explicit_local:
-            return graph
         candidate = (
             empty_prepared_graph_like(graph)
             if no_edge_graph is None
@@ -145,6 +144,11 @@ class SpatialOperatorAblationModel(nn.Module):
             raise ValueError("no_edge_graph must contain zero edges")
         if candidate.graph_layout.num_graphs != graph.graph_layout.num_graphs:
             raise ValueError("no_edge_graph graph count must match graph")
+        if candidate.batch is not graph.batch:
+            raise ValueError(
+                "no_edge_graph must reuse graph.batch exactly; "
+                "construct it with empty_prepared_graph_like(graph)"
+            )
         return candidate
 
     @staticmethod
@@ -172,13 +176,23 @@ class SpatialOperatorAblationModel(nn.Module):
         node_role_id: torch.Tensor | None = None,
         condition: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        execution_graph = self._execution_graph(graph, no_edge_graph)
+        edge_free_graph = self._execution_graph(graph, no_edge_graph)
         state, context = self.backbone.embed_input(
             node_irreps,
             positions,
-            execution_graph,
+            edge_free_graph,
             node_role_id=node_role_id,
         )
+        if self.uses_explicit_local:
+            # Keep input multipoles and tensor closure identical across arms.
+            # Only the sparse local message receives explicit edge geometry.
+            context = replace(
+                context,
+                geometry=self.backbone.core._build_geometry(
+                    positions,
+                    graph.neighbors,
+                ),
+            )
         for index, layer in enumerate(self.backbone.layers):
             state = layer.attention_residual(state, context, condition)
             if self.uses_implicit_local and index % self.config.implicit_every == 0:

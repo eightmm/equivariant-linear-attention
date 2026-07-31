@@ -181,7 +181,9 @@ def test_grouped_qk_projection_has_unit_rms_per_group() -> None:
     value = torch.tensor([[3.0, 4.0, 5.0, 12.0]], dtype=torch.float64)
     output = projection(value).reshape(1, 2, 2)
     rms = output.square().mean(dim=-1).sqrt()
-    torch.testing.assert_close(rms, torch.ones_like(rms), atol=1e-10, rtol=1e-10)
+    input_square = value.reshape(1, 2, 2).square().mean(dim=-1)
+    expected = torch.sqrt(input_square / (input_square + projection.eps))
+    torch.testing.assert_close(rms, expected, atol=1e-12, rtol=1e-12)
 
 
 def test_equivariant_dropout_never_splits_vector_components() -> None:

@@ -57,6 +57,14 @@ def _ratio(candidate: float, reference: float) -> float:
     return candidate / reference
 
 
+def _is_finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
+
+
 def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
     """Return all protocol violations found in one result bundle."""
 
@@ -112,6 +120,26 @@ def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
         }
         if len(counts) != 1 or -1 in counts:
             errors.append(f"parameter-count mismatch for {key}")
+        for run in runs:
+            arm = str(run.get("arm"))
+            for metric_group in ("best_validation", "final_validation"):
+                metrics = run.get(metric_group, {})
+                for metric in ("normalized_mse", "mae", "rmse", "pearson"):
+                    value = metrics.get(metric)
+                    if not _is_finite_number(value):
+                        errors.append(
+                            f"non-finite {metric_group}.{metric} for "
+                            f"{key} arm {arm}"
+                        )
+            for metric in (
+                "median_train_step_ms",
+                "inference_ms",
+                "training_peak_allocated_bytes",
+                "inference_peak_allocated_bytes",
+                "clip_fraction",
+            ):
+                if not _is_finite_number(run.get(metric)):
+                    errors.append(f"non-finite {metric} for {key} arm {arm}")
 
     audit_counts: dict[tuple[str, int], int] = {}
     for audit in payload.get("audits", []):
@@ -125,6 +153,10 @@ def validate_spatial_comparison(payload: dict[str, Any]) -> list[str]:
         ):
             if required_key not in equivalence:
                 errors.append(f"missing audit metric {required_key} for {key}")
+            elif not _is_finite_number(equivalence[required_key]):
+                errors.append(
+                    f"non-finite audit metric {required_key} for {key}"
+                )
     for key in sorted(expected_pairs):
         if audit_counts.get(key, 0) != 1:
             errors.append(f"expected exactly one audit for {key}")
@@ -197,9 +229,10 @@ def _mean(
         for row in rows
         if row["arm"] == arm
         and (task is None or row["task"] == task)
-        and math.isfinite(float(row[key]))
     ]
-    return statistics.mean(values) if values else float("nan")
+    if not values or not all(math.isfinite(value) for value in values):
+        return float("nan")
+    return statistics.mean(values)
 
 
 def _max_audit(payload: dict[str, Any], key: str) -> float:
@@ -207,8 +240,9 @@ def _max_audit(payload: dict[str, Any], key: str) -> float:
         float(audit.get("initial_equivalence", {}).get(key, float("nan")))
         for audit in payload.get("audits", [])
     ]
-    finite = [value for value in values if math.isfinite(value)]
-    return max(finite, default=float("nan"))
+    if not values or not all(math.isfinite(value) for value in values):
+        return float("nan")
+    return max(values)
 
 
 def spatial_promotion_decision(
@@ -219,12 +253,21 @@ def spatial_promotion_decision(
 
     errors = validate_spatial_comparison(payload)
     paired = paired_spatial_deltas(payload)
+    resource_evidence_complete = (
+        str(payload.get("device", "")).startswith("cuda")
+        and all(
+            float(run.get("training_peak_allocated_bytes", 0.0)) > 0.0
+            and float(run.get("inference_peak_allocated_bytes", 0.0)) > 0.0
+            for run in payload.get("runs", [])
+        )
+    )
     evidence_complete = (
         len(set(int(seed) for seed in payload.get("seeds", [])))
         >= thresholds.min_seeds
         and set(REQUIRED_TASKS).issubset(
             str(task) for task in payload.get("tasks", [])
         )
+        and resource_evidence_complete
         and not errors
     )
     hybrid_identity = _max_audit(
@@ -344,6 +387,7 @@ def spatial_promotion_decision(
         "synthetic_only": True,
         "real_task_validation_required": True,
         "evidence_complete": evidence_complete,
+        "resource_evidence_complete": resource_evidence_complete,
         "audits_pass": audits_pass,
         "protocol_errors": errors,
         "audit_metrics": {

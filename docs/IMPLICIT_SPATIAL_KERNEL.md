@@ -238,21 +238,23 @@ The arithmetic order is
 T_{\rm implicit}=O(ANFD).
 \]
 
-The chunked reference schedule stores one graph statistic of shape
+For no-grad inference, the chunked reference schedule stores one graph statistic of shape
 \(G\times F\times D\) and one temporary node chunk of shape
 \(C\times F\times D\):
 
 \[
-M_{\rm implicit}
+M_{\rm implicit,infer}
 =
 O\left(
 N(F+D)+GFD+CFD
 \right).
 \]
 
-For fixed scales, value width, and chunk size, arithmetic is linear in node
-count. Memory is also linear in total input size; when the number of graphs grows
-with \(N\), the \(GFD\) term is itself linear in \(N\).
+Eager autograd retains chunk contractions across the full node axis. Without
+checkpointing, training therefore adds an \(O(ANFD)\) saved-activation term.
+For fixed scales, value width, applications, and chunk size, arithmetic and
+memory remain linear in node count; when the number of graphs grows with \(N\),
+the \(GFD\) term is itself linear in \(N\).
 
 The implementation accumulates graph sufficient statistics by chunked
 `index_add`, then evaluates chunked contractions. It therefore avoids both an

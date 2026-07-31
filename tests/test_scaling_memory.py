@@ -31,4 +31,5 @@ def test_implicit_memory_proxy_accounts_for_graph_statistics_and_chunk() -> None
 
     assert many_graphs.inference_memory_proxy > one_graph.inference_memory_proxy
     assert larger_chunk.inference_memory_proxy > one_graph.inference_memory_proxy
+    assert one_graph.training_memory_proxy > one_graph.inference_memory_proxy
     assert one_graph.node_linear is True

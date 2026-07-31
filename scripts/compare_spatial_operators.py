@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import gc
 import json
 import math
 import statistics
@@ -18,6 +19,7 @@ from equivariant_attention.equivariant_linear_attention import (
     EquivariantLinearAttentionConfig,
 )
 from equivariant_attention.implicit_spatial import ImplicitSpatialKernelConfig
+from equivariant_attention.reproducibility import configure_reproducibility
 from equivariant_attention.spatial_ablation import (
     SpatialOperatorAblationConfig,
     SpatialOperatorAblationModel,
@@ -423,6 +425,12 @@ def _train_arm(
 
     model.load_state_dict(best_state, strict=True)
     model.to(device=device, dtype=model_dtype)
+    model.zero_grad(set_to_none=True)
+    optimizer.state.clear()
+    del optimizer
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     inference_ms, inference_peak = _inference_profile(
         model,
         validation,
@@ -543,9 +551,18 @@ def main() -> None:
         choices=["float32", "bfloat16", "float64"],
         default="float32",
     )
+    parser.add_argument(
+        "--determinism",
+        choices=["seeded", "strict"],
+        default="strict",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
+    reproducibility = configure_reproducibility(
+        seed=0,
+        mode=args.determinism,
+    )
     invalid_tasks = set(args.tasks) - set(TASKS)
     if invalid_tasks:
         raise ValueError(f"unsupported tasks: {sorted(invalid_tasks)}")
@@ -693,6 +710,7 @@ def main() -> None:
         "seeds": args.seeds,
         "device": str(device),
         "compute_dtype": args.dtype,
+        "reproducibility": reproducibility,
         "neighbor_discovery_included": False,
         "protocol": {
             "same_parameter_schema": True,
@@ -708,8 +726,9 @@ def main() -> None:
         "summaries": _summaries(runs),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(json.dumps(payload, indent=2))
+    serialized = json.dumps(payload, indent=2, allow_nan=False)
+    args.output.write_text(serialized, encoding="utf-8")
+    print(serialized)
 
 
 if __name__ == "__main__":

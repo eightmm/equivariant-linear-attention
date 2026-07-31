@@ -22,6 +22,9 @@ from equivariant_attention._matched_vnext_arms import (
 )
 from equivariant_attention.moment import routing_head_counts as _routing_head_counts
 from equivariant_attention.reproducibility import configure_reproducibility
+from equivariant_attention.spatial_regression import (
+    SpatialOperatorRegressionModel,
+)
 
 from equivariant_attention.benchmarking import (
     GraphSample,
@@ -48,7 +51,10 @@ from equivariant_attention.training import (
     fit_target_normalizer,
     train_regression_step,
 )
-from equivariant_attention.unified_regression import UnifiedRegressionModel
+from equivariant_attention.unified_regression import (
+    EquivariantLinearAttentionRegressionModel,
+    UnifiedRegressionModel,
+)
 
 
 QM9_DATA_HASHES = {
@@ -279,14 +285,41 @@ def main() -> None:
             "distance_feature": "raw_squared_distance",
             "readout": "layernorm_node_linear_graph_mean",
         }
-    else:
+    elif args.benchmark_model == "ela_spatial":
         metrics["baseline_details"] = {
-            "name": "unified_multipole",
+            "name": f"ela_spatial_{args.spatial_arm}",
+            "official_reproduction": False,
+            "coordinate_updates": False,
+            "edge_topology": (
+                "precomputed_radius_candidates_with_self"
+                if args.spatial_arm in {"explicit", "hybrid"}
+                else "none"
+            ),
+            "input_irreps": f"{node_dim}x0e",
+            "readout": "canonical_0e_graph_mean",
+            "architecture": "equivariant_linear_attention_spatial_ablation",
+            "spatial_arm": args.spatial_arm,
+            "common_node_multipoles": "edge_free_zero_neighbor_context",
+            "implicit_scales": [
+                args.local_cutoff,
+                2.0 * args.local_cutoff,
+                4.0 * args.local_cutoff,
+            ],
+        }
+    else:
+        refined = args.benchmark_model == "equivariant_linear_attention"
+        metrics["baseline_details"] = {
+            "name": args.benchmark_model,
             "official_reproduction": False,
             "coordinate_updates": False,
             "edge_topology": "precomputed_radius_candidates_with_self",
             "input_irreps": f"{node_dim}x0e",
             "readout": "canonical_0e_graph_mean",
+            "architecture": (
+                "equivariant_linear_attention"
+                if refined
+                else "canonical_multipole_parity_factorized_moment"
+            ),
         }
     metrics["gradient_norms"] = _gradient_norms(model)
     gradient_parameters = _gradient_parameter_diagnostics(model)
@@ -371,9 +404,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=[
             "factorized_moment",
             "unified_multipole",
+            "equivariant_linear_attention",
+            "ela_spatial",
             *_EGNN_BENCHMARK_MODEL_CHOICES,
         ],
         default="factorized_moment",
+    )
+    parser.add_argument(
+        "--spatial-arm",
+        choices=["explicit", "implicit", "hybrid"],
+        default="explicit",
     )
     parser.add_argument(
         "--architecture-arm",
@@ -539,6 +579,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error(
             "--architecture-arm is available only with factorized_moment"
         )
+    if args.benchmark_model != "ela_spatial" and args.spatial_arm != "explicit":
+        parser.error("--spatial-arm is available only with ela_spatial")
     if (
         not torch.isfinite(torch.tensor(args.whitened_global_ridge))
         or args.whitened_global_ridge <= 0.0
@@ -569,16 +611,45 @@ def _build_benchmark_model(
     *,
     node_dim: int,
 ) -> torch.nn.Module:
-    if args.benchmark_model == "unified_multipole":
+    if args.benchmark_model == "ela_spatial":
+        needs_edges = args.spatial_arm in {"explicit", "hybrid"}
+        if needs_edges and not args.precompute_local_edges:
+            raise ValueError(
+                f"ela_spatial {args.spatial_arm} requires precomputed local edges"
+            )
+        if not needs_edges and args.precompute_local_edges:
+            raise ValueError(
+                "ela_spatial implicit must not preload unused edge tensors"
+            )
+        return SpatialOperatorRegressionModel(
+            arm=args.spatial_arm,
+            node_dim=node_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            num_heads=args.num_heads,
+            local_rank=max(2, args.num_heads),
+            local_cutoff=args.local_cutoff,
+            num_rbf=args.num_rbf,
+            implicit_residual_scale_init=0.0,
+        )
+    if args.benchmark_model in {
+        "unified_multipole",
+        "equivariant_linear_attention",
+    }:
         if args.architecture_arm != "flat":
             raise ValueError(
-                "unified_multipole does not use legacy architecture arms"
+                f"{args.benchmark_model} does not use legacy architecture arms"
             )
         if not args.precompute_local_edges:
             raise ValueError(
-                "unified_multipole requires precomputed local edges"
+                f"{args.benchmark_model} requires precomputed local edges"
             )
-        return UnifiedRegressionModel(
+        model_type = (
+            UnifiedRegressionModel
+            if args.benchmark_model == "unified_multipole"
+            else EquivariantLinearAttentionRegressionModel
+        )
+        return model_type(
             node_dim=node_dim,
             hidden_dim=args.hidden_dim,
             num_layers=args.num_layers,
@@ -2121,7 +2192,7 @@ def _run_config(
             "diagnostic_sample_count": args.diagnostic_sample_count,
             "diagnostic_effective_rank": args.diagnostic_effective_rank,
         }
-    if args.benchmark_model == "unified_multipole":
+    if args.benchmark_model == "ela_spatial":
         return {
             "dataset": args.dataset,
             "data_root": str(args.data_root),
@@ -2132,7 +2203,8 @@ def _run_config(
             "batch_size": args.batch_size,
             "steps": args.steps,
             "model": args.benchmark_model,
-            "comparison_role": "canonical_generic_3d_candidate",
+            "comparison_role": "matched_spatial_operator_attribution",
+            "spatial_arm": args.spatial_arm,
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "num_heads": args.num_heads,
@@ -2154,7 +2226,64 @@ def _run_config(
             "target_normalized": not args.no_target_normalize,
             "validation_evaluated": True,
             "test_evaluated": args.evaluate_test,
-            "architecture": "canonical_multipole_parity_factorized_moment",
+            "architecture": "equivariant_linear_attention_spatial_ablation",
+            "common_node_multipoles": "edge_free_zero_neighbor_context",
+            "implicit_scales": [
+                args.local_cutoff,
+                2.0 * args.local_cutoff,
+                4.0 * args.local_cutoff,
+            ],
+            "implicit_order": 2,
+            "implicit_normalization": "one_plus_mass",
+            "implicit_exclude_self": True,
+            "readout": "canonical_0e_graph_mean",
+        }
+    if args.benchmark_model in {
+        "unified_multipole",
+        "equivariant_linear_attention",
+    }:
+        refined = args.benchmark_model == "equivariant_linear_attention"
+        return {
+            "dataset": args.dataset,
+            "data_root": str(args.data_root),
+            "qm9_target_index": args.qm9_target_index,
+            "num_samples": args.num_samples,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "batch_size": args.batch_size,
+            "steps": args.steps,
+            "model": args.benchmark_model,
+            "comparison_role": (
+                "refined_equivariant_linear_attention_candidate"
+                if refined
+                else "frozen_canonical_generic_3d_candidate"
+            ),
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "num_heads": args.num_heads,
+            "local_rank": max(2, args.num_heads),
+            "local_cutoff": args.local_cutoff,
+            "num_rbf": args.num_rbf,
+            "precompute_local_edges": args.precompute_local_edges,
+            "input_irreps": "dataset_node_dim x 0e",
+            "output_irreps": "1x0e",
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "grad_clip": args.grad_clip,
+            "split_seed": split_seed,
+            "model_seed": model_seed,
+            "dataset_seed": args.seed,
+            "determinism": args.determinism,
+            "device": args.device,
+            "amp_dtype": args.amp_dtype,
+            "target_normalized": not args.no_target_normalize,
+            "validation_evaluated": True,
+            "test_evaluated": args.evaluate_test,
+            "architecture": (
+                "equivariant_linear_attention"
+                if refined
+                else "canonical_multipole_parity_factorized_moment"
+            ),
             "persistent_irreps": "0e + 0o + 1e + 1o + 2e + 2o",
             "readout": "canonical_0e_graph_mean",
         }

@@ -5,6 +5,7 @@ import torch
 
 from equivariant_attention import (
     EquivariantAttentionResidualConfig,
+    EquivariantAttentionResidualCore,
     EquivariantAttentionResiduals,
     EquivariantBlockAttentionResidual,
     prepare_3d_graph,
@@ -183,6 +184,75 @@ def test_attention_residual_config_rejects_too_many_blocks() -> None:
             input_irreps="4x0e",
             num_layers=2,
             attention_residual_blocks=3,
+        )
+
+
+def test_nondivisible_depth_uses_exact_requested_block_count() -> None:
+    starts = EquivariantAttentionResidualCore._block_start_indices(6, 4)
+    assert starts == (2, 4, 5)
+    assert len(starts) + 1 == 4
+
+
+def test_final_state_retains_routed_embedding_when_residuals_are_zero() -> None:
+    torch.manual_seed(19)
+    config = EquivariantAttentionResidualConfig(
+        input_irreps="4x0e",
+        output_irreps="1x0e",
+        hidden_dim=16,
+        num_layers=1,
+        num_heads=4,
+        local_rank=3,
+        local_cutoff=10.0,
+        num_rbf=8,
+        attention_residual_blocks=1,
+    )
+    model = EquivariantAttentionResiduals(config).double().eval()
+    layer = model.layers[0]
+    with torch.no_grad():
+        for name, parameter in layer.named_parameters():
+            if name in {
+                "scalar_scale",
+                "odd_scale",
+                "polar_scale",
+                "axial_scale",
+                "even_tensor_scale",
+                "odd_tensor_scale",
+                "closure_scalar_scale",
+                "closure_odd_scale",
+                "closure_polar_scale",
+                "closure_axial_scale",
+                "closure_even_tensor_scale",
+                "closure_odd_tensor_scale",
+                "ffn_scalar_scale",
+                "ffn_odd_scale",
+                "ffn_polar_scale",
+                "ffn_axial_scale",
+                "ffn_even_tensor_scale",
+                "ffn_odd_tensor_scale",
+            }:
+                parameter.zero_()
+    nodes = 5
+    features = torch.randn(nodes, 4, dtype=torch.float64)
+    positions = torch.randn(nodes, 3, dtype=torch.float64)
+    graph = prepare_3d_graph(
+        torch.zeros(nodes, dtype=torch.long),
+        _complete_edges(nodes),
+    )
+    embedding, _ = model.embed_input(features, positions, graph)
+    final, _, _ = model.forward_features(features, positions, graph)
+    for name in (
+        "even_scalar",
+        "odd_scalar",
+        "polar_vector",
+        "axial_vector",
+        "even_tensor",
+        "odd_tensor",
+    ):
+        torch.testing.assert_close(
+            getattr(final, name),
+            0.5 * getattr(embedding, name),
+            atol=2e-10,
+            rtol=2e-10,
         )
 
 

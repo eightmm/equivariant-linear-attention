@@ -177,7 +177,11 @@ class Unified3DConfig:
                 if self.coordinate_updates
                 else "fixed_input_geometry"
             ),
-            "node_geometry": "dynamic_l0_l1_l2_radial_multipoles",
+            "node_geometry": (
+                "dynamic_l0_l1_l2_radial_multipoles"
+                if self.coordinate_updates
+                else "static_l0_l1_l2_radial_multipoles"
+            ),
             "global_operator": "exact_positive_feature_gemm_l0_l1_l2",
             "global_balancing": "one_cycle",
             "local_operator": "single_positive_mass_damped_rank_r",
@@ -385,6 +389,7 @@ class UnifiedEquivariantAttention(nn.Module):
     ) -> UnifiedSE3Context:
         dummy = pos.new_zeros((graph.num_nodes, self.config.input_layout.dim))
         self._validate_graph_inputs(dummy, pos, graph)
+        self.core._assert_finite("pos", pos)
         return self.core.prepare_context(
             pos,
             graph.batch,

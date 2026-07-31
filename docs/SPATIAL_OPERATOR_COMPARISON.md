@@ -21,11 +21,13 @@ stage.
 
 ### Timing boundary
 
-The implicit arm runs the common backbone with a precomputed empty explicit
-CSR graph. This removes all edge-dependent sparse work while retaining the same
-module schema and some dormant node-side local projections. Its timing is
-therefore a **conservative schema-matched implicit timing**, not the final speed
-of a purpose-built implicit-only model.
+All arms build input multipoles and tensor closure from the same precomputed
+empty CSR context. Explicit and hybrid alone evaluate sparse local geometry in
+the local-message branch. This isolates the spatial operator instead of
+silently removing edge-derived input multipoles only from the implicit arm.
+The implicit timing retains the same module schema and some dormant node-side
+local projections, so it is a **conservative schema-matched timing**, not the
+final speed of a purpose-built implicit-only model.
 
 ## 2. What the protocol can establish
 
@@ -380,6 +382,7 @@ artifacts/spatial-operator-comparison/<run-id>/
   implicit-accuracy.json
   fragment-locality.json
   scaling.json
+  scaling-backward.json
   environment.txt
   git.txt
   manifest.json

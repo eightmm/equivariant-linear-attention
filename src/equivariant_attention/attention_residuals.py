@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from math import ceil, isfinite, sqrt
+from math import isfinite, sqrt
 
 import torch
 from torch import nn
@@ -14,9 +14,7 @@ from .equivariant_linear_attention import (
     EquivariantLinearAttentionLayer,
 )
 from .graph_layout import PackedGraphLayout
-from .irreps import IrrepLayout
 from .layered_se3 import (
-    UnifiedSE3Context,
     UnifiedSE3State,
     _state_add,
     _state_subtract,
@@ -275,6 +273,21 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
             return tuple(completed)
         return (*completed, partial)
 
+    @staticmethod
+    def _block_start_indices(
+        num_layers: int,
+        num_blocks: int,
+    ) -> tuple[int, ...]:
+        """Return balanced starts for exactly ``num_blocks`` contiguous blocks."""
+
+        base, remainder = divmod(num_layers, num_blocks)
+        starts: list[int] = []
+        offset = 0
+        for block in range(num_blocks - 1):
+            offset += base + int(block < remainder)
+            starts.append(offset)
+        return tuple(starts)
+
     def forward_features(
         self,
         node_irreps: torch.Tensor,
@@ -303,16 +316,22 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
 
         completed: list[UnifiedSE3State] = [embedding]
         partial: UnifiedSE3State | None = None
-        layers_per_block = ceil(self.num_layers / self.attention_residual_blocks)
+        block_starts = set(
+            self._block_start_indices(
+                self.num_layers,
+                self.attention_residual_blocks,
+            )
+        )
         current_positions = positions
         total_delta = positions.new_zeros(positions.shape)
+        final_state: UnifiedSE3State | None = None
 
         for index, layer_module in enumerate(self.blocks):
             if not isinstance(layer_module, EquivariantAttentionResidualLayer):
                 raise RuntimeError("unexpected attention-residual layer type")
             layer = layer_module
 
-            if index and index % layers_per_block == 0:
+            if index in block_starts:
                 if partial is None:
                     raise RuntimeError("completed block has no partial state")
                 completed.append(partial)
@@ -355,9 +374,10 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
             partial = UnifiedSE3State._from_internal(
                 _state_add(partial._to_internal(), ffn_delta)
             )
+            final_state = UnifiedSE3State._from_internal(ffn_output)
 
             coordinate_delta = layer._coordinate_delta_internal(
-                partial._to_internal(),
+                ffn_output,
                 modulation,
             )
             current_positions = context.positions + coordinate_delta
@@ -373,9 +393,9 @@ class EquivariantAttentionResidualCore(EquivariantLinearAttentionCore):
             elif not self.coordinate_updates:
                 current_positions = positions
 
-        if partial is None:
+        if partial is None or final_state is None:
             raise RuntimeError("attention-residual stack produced no state")
-        return partial, current_positions, total_delta
+        return final_state, current_positions, total_delta
 
 
 class EquivariantAttentionResiduals(EquivariantLinearAttention):

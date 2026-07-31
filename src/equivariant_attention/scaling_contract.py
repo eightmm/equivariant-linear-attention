@@ -157,13 +157,19 @@ def estimate_implicit_spatial_kernel(
         name="implicit_spatial_kernel",
         arithmetic_proxy=arithmetic,
         inference_memory_proxy=working,
-        training_memory_proxy=applications * working,
+        # The chunk bounds forward workspace, but eager autograd retains
+        # per-chunk outer products/contractions across the full node axis.
+        training_memory_proxy=(
+            working
+            + 2 * applications * nodes * feature_rank * value_width
+        ),
         formula="O(A * N * F * D)",
         assumptions=(
             "fixed finite feature rank F",
             "fixed transported value width D",
             "chunk size is bounded independently of N",
             "no explicit edge list or pair matrix",
+            "eager-autograd saved tensors contribute O(A*N*F*D)",
         ),
         node_linear=True,
         depth_linear=True,

@@ -42,6 +42,15 @@ def _segment_sum(
     return output
 
 
+def _assert_finite(name: str, value: torch.Tensor) -> None:
+    finite = torch.isfinite(value).all()
+    async_assert = getattr(torch, "_assert_async", None)
+    if value.device.type == "cuda" and async_assert is not None:
+        async_assert(finite, f"{name} must be finite")
+    elif not bool(finite):
+        raise ValueError(f"{name} must be finite")
+
+
 @dataclass(frozen=True, slots=True)
 class ImplicitSpatialKernelConfig:
     """Configuration for an edge-free isotropic spatial-kernel reference.
@@ -64,7 +73,11 @@ class ImplicitSpatialKernelConfig:
         if not isinstance(self.scales, tuple) or not self.scales:
             raise ValueError("scales must be a non-empty tuple")
         for scale in self.scales:
-            _positive_real("scales", scale)
+            numeric = _positive_real("scales", scale)
+            if numeric < torch.finfo(torch.float32).tiny:
+                raise ValueError(
+                    "scales must be representable as positive float32 values"
+                )
         if self.order not in {0, 2}:
             raise ValueError("implicit spatial kernel supports order 0 or 2")
         if not isinstance(self.exclude_self, bool):
@@ -206,8 +219,8 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             raise TypeError("batch must use torch.long")
         if batch.device != positions.device:
             raise ValueError("positions and batch must share one device")
-        if positions.numel() and not torch.isfinite(positions).all():
-            raise ValueError("positions must be finite")
+        if positions.numel():
+            _assert_finite("positions", positions)
         if batch.numel() == 0:
             return 0
         if int(batch.min().item()) < 0:
@@ -227,8 +240,16 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             batch,
             num_graphs,
         ).clamp_min(1.0)
-        center = _segment_sum(work, batch, num_graphs) / counts
-        return work - center[batch]
+        # Divide before reduction so a graph with many large, same-sign finite
+        # coordinates does not overflow merely while computing its mean.
+        center = _segment_sum(
+            work / counts[batch],
+            batch,
+            num_graphs,
+        )
+        centered = work - center[batch]
+        _assert_finite("graph-centered positions", centered)
+        return centered
 
     def _single_scale_features(
         self,
@@ -284,6 +305,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             for index in range(scales.numel())
         ]
         features = torch.cat(blocks, dim=-1)
+        _assert_finite("spatial features", features)
         return centered, features, num_graphs
 
     def prepare(
@@ -313,8 +335,8 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             raise ValueError("values and positions must have the same node count")
         if values.device != context.positions.device:
             raise ValueError("values and context must share one device")
-        if values.numel() and not torch.isfinite(values).all():
-            raise ValueError("values must be finite")
+        if values.numel():
+            _assert_finite("values", values)
 
         original_shape = values.shape
         flat = values.reshape(values.shape[0], -1)
@@ -342,6 +364,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             value = flat_work[start:stop]
             outer = phi.unsqueeze(-1) * value.unsqueeze(-2)
             statistics.index_add_(0, context.batch[start:stop], outer)
+        _assert_finite("spatial sufficient statistics", statistics)
 
         output_chunks: list[torch.Tensor] = []
         mass_chunks: list[torch.Tensor] = []
@@ -362,6 +385,8 @@ class ImplicitGaussianSpatialKernel(nn.Module):
 
         output = torch.cat(output_chunks, dim=0)
         mass = torch.cat(mass_chunks, dim=0)
+        _assert_finite("spatial transport output", output)
+        _assert_finite("spatial transport mass", mass)
         return ImplicitSpatialTransport(
             output=output.reshape(original_shape),
             mass=mass,

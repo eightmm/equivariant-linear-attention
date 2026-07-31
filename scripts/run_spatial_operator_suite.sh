@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE="${SPATIAL_SUITE_MODE:-smoke}"
-DEVICE="${SPATIAL_SUITE_DEVICE:-$(python - <<'PY'
+DEVICE="${SPATIAL_SUITE_DEVICE:-$(uv run python - <<'PY'
 import torch
 print('cuda' if torch.cuda.is_available() else 'cpu')
 PY
@@ -62,7 +62,7 @@ esac
   echo "mode=$MODE"
   echo "device=$DEVICE"
   echo "dtype=$DTYPE"
-  python --version
+  uv run python --version
   uv --version
   uv pip freeze
   nvidia-smi 2>/dev/null || true
@@ -125,7 +125,7 @@ uv run python scripts/compare_spatial_operators.py \
   --output "$RUN_DIR/result.json" \
   > "$RUN_DIR/comparison.log"
 
-python -m json.tool "$RUN_DIR/result.json" > /dev/null
+uv run python -m json.tool "$RUN_DIR/result.json" > /dev/null
 uv run python scripts/validate_spatial_operator_result.py \
   "$RUN_DIR/result.json" \
   2>&1 | tee "$RUN_DIR/protocol-validation.log"
@@ -167,6 +167,21 @@ uv run python scripts/benchmark_scaling.py \
   --output "$RUN_DIR/scaling.json" \
   > "$RUN_DIR/scaling.log"
 
+uv run python scripts/benchmark_scaling.py \
+  --modes base,attnres,implicit \
+  --nodes "$SCALE_NODES" \
+  --graphs 1 \
+  --depths "$SCALE_DEPTHS" \
+  --blocks "$SCALE_BLOCKS" \
+  --degrees "$SCALE_DEGREES" \
+  --warmup "$PROFILE_WARMUP" \
+  --repeats "$PROFILE_REPEATS" \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
+  --backward \
+  --output "$RUN_DIR/scaling-backward.json" \
+  > "$RUN_DIR/scaling-backward.log"
+
 cat > "$RUN_DIR/manifest.json" <<EOF
 {
   "schema_version": 1,
@@ -182,6 +197,7 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "implicit-accuracy.json",
     "fragment-locality.json",
     "scaling.json",
+    "scaling-backward.json",
     "environment.txt",
     "git.txt",
     "focused-tests.log",
@@ -190,7 +206,8 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "report.log",
     "implicit-accuracy.log",
     "fragment-locality.log",
-    "scaling.log"
+    "scaling.log",
+    "scaling-backward.log"
   ]
 }
 EOF

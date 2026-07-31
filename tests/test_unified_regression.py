@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from equivariant_attention import (
+    EquivariantLinearAttentionRegressionModel,
     GraphSample,
     UnifiedRegressionModel,
     collate_graphs,
@@ -51,3 +52,47 @@ def test_unified_regression_runs_shared_graph_batch_contract() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     loss = train_regression_step(model, batch, optimizer)
     assert torch.isfinite(torch.tensor(loss))
+
+
+def test_historical_unified_benchmark_keeps_frozen_schema_and_parameter_count() -> None:
+    model = UnifiedRegressionModel(
+        node_dim=11,
+        hidden_dim=64,
+        num_layers=3,
+        num_heads=4,
+        local_rank=4,
+        local_cutoff=2.5,
+    )
+
+    assert sum(parameter.numel() for parameter in model.parameters()) == 209_229
+    keys = set(model.state_dict())
+    assert "model.core.blocks.0.query_scalar.weight" in keys
+    assert not any(key.endswith(".query_scalar.gain") for key in keys)
+
+
+def test_refined_equivariant_linear_attention_is_a_separate_runnable_arm() -> None:
+    torch.manual_seed(733)
+    batch = collate_graphs([_sample("a", 0.0), _sample("b", 0.5)])
+    model = EquivariantLinearAttentionRegressionModel(
+        node_dim=4,
+        hidden_dim=16,
+        num_layers=1,
+        num_heads=4,
+        local_rank=2,
+        local_cutoff=3.0,
+    )
+
+    output = model(
+        batch.node_feats,
+        batch.pos,
+        batch=batch.batch,
+        edge_index=batch.edge_index,
+        edge_index_is_validated=True,
+        readout_mask=batch.readout_mask,
+    )
+
+    assert output["graph_scalars"].shape == (2, 1)
+    assert torch.isfinite(output["graph_scalars"]).all()
+    assert any(
+        key.endswith(".query_scalar.gain") for key in model.state_dict()
+    )

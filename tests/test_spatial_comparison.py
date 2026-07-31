@@ -37,6 +37,7 @@ def _payload(*, hybrid_pass: bool = True) -> dict[str, object]:
                     "seed": seed,
                     "initial_equivalence": {
                         "explicit_vs_hybrid_max_abs": 0.0,
+                        "explicit_vs_implicit_max_abs": 0.0,
                         "implicit_edge_independence_max_abs": 0.0,
                     },
                 }
@@ -54,6 +55,12 @@ def _payload(*, hybrid_pass: bool = True) -> dict[str, object]:
                         "initial_state_sha256": f"hash-{task}-{seed}",
                         "audit": {"parameter_count": 1000},
                         "best_validation": {
+                            "mae": mae,
+                            "rmse": mae,
+                            "normalized_mse": mae**2,
+                            "pearson": 0.9,
+                        },
+                        "final_validation": {
                             "mae": mae,
                             "rmse": mae,
                             "normalized_mse": mae**2,
@@ -79,6 +86,7 @@ def _payload(*, hybrid_pass: bool = True) -> dict[str, object]:
                             "implicit": 70,
                             "hybrid": 85,
                         }[arm],
+                        "clip_fraction": 0.0,
                     }
                 )
     return {
@@ -126,6 +134,28 @@ def test_incomplete_seed_count_is_insufficient_evidence() -> None:
     payload["seeds"] = [0, 1]
     thresholds = SpatialPromotionThresholds(min_seeds=3)
     decision = spatial_promotion_decision(payload, thresholds)
+    assert decision["verdict"] == "insufficient_synthetic_evidence"
+
+
+def test_nonfinite_seed_cannot_be_dropped_from_promotion_gate() -> None:
+    payload = _payload()
+    for run in payload["runs"]:
+        if run["arm"] == "hybrid" and run["seed"] in {1, 2}:
+            run["best_validation"]["mae"] = float("nan")
+    errors = validate_spatial_comparison(payload)
+    assert any("non-finite best_validation.mae" in error for error in errors)
+    decision = spatial_promotion_decision(payload)
+    assert decision["verdict"] == "insufficient_synthetic_evidence"
+
+
+def test_cpu_zero_memory_smoke_cannot_promote_architecture() -> None:
+    payload = _payload()
+    payload["device"] = "cpu"
+    for run in payload["runs"]:
+        run["training_peak_allocated_bytes"] = 0
+        run["inference_peak_allocated_bytes"] = 0
+    decision = spatial_promotion_decision(payload)
+    assert decision["resource_evidence_complete"] is False
     assert decision["verdict"] == "insufficient_synthetic_evidence"
 
 

@@ -60,6 +60,71 @@ def test_run_config_records_single_architecture() -> None:
     assert config["global_attention_formula"] == "factorized_learned_kernel"
 
 
+def test_unified_and_refined_linear_attention_are_distinct_benchmark_arms() -> None:
+    symbols = _script_symbols()
+    unified_args = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "unified_multipole",
+            "--precompute-local-edges",
+        ]
+    )
+    refined_args = symbols["parse_args"](
+        [
+            "--benchmark-model",
+            "equivariant_linear_attention",
+            "--precompute-local-edges",
+        ]
+    )
+    unified = symbols["_build_benchmark_model"](unified_args, node_dim=11)
+    refined = symbols["_build_benchmark_model"](refined_args, node_dim=11)
+
+    assert sum(parameter.numel() for parameter in unified.parameters()) == 209_229
+    assert sum(parameter.numel() for parameter in refined.parameters()) == 249_555
+    assert tuple(unified.state_dict()) != tuple(refined.state_dict())
+    assert (
+        symbols["_run_config"](unified_args, split_seed=42, model_seed=43)[
+            "architecture"
+        ]
+        == "canonical_multipole_parity_factorized_moment"
+    )
+    assert (
+        symbols["_run_config"](refined_args, split_seed=42, model_seed=43)[
+            "architecture"
+        ]
+        == "equivariant_linear_attention"
+    )
+
+
+@pytest.mark.parametrize(
+    ("arm", "precompute"),
+    [("explicit", True), ("implicit", False), ("hybrid", True)],
+)
+def test_spatial_benchmark_arms_enforce_matched_edge_contract(
+    arm: str,
+    precompute: bool,
+) -> None:
+    symbols = _script_symbols()
+    argv = ["--benchmark-model", "ela_spatial", "--spatial-arm", arm]
+    if precompute:
+        argv.append("--precompute-local-edges")
+    args = symbols["parse_args"](argv)
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert model.arm == arm
+    assert config["spatial_arm"] == arm
+    assert config["common_node_multipoles"] == "edge_free_zero_neighbor_context"
+    assert sum(parameter.numel() for parameter in model.parameters()) == 249_816
+
+    invalid_argv = ["--benchmark-model", "ela_spatial", "--spatial-arm", arm]
+    if not precompute:
+        invalid_argv.append("--precompute-local-edges")
+    invalid = symbols["parse_args"](invalid_argv)
+    with pytest.raises(ValueError, match="precomputed local edges|unused edge tensors"):
+        symbols["_build_benchmark_model"](invalid, node_dim=11)
+
+
 def test_matched_vnext_arm_is_explicit_and_requires_precomputed_edges() -> None:
     symbols = _script_symbols()
     args = symbols["parse_args"](

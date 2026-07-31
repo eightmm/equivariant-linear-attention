@@ -26,6 +26,7 @@ from equivariant_attention.pdbbind import (
     ATOM3D_LBA_REVISION,
     load_atom3d_lba_samples,
 )
+from equivariant_attention.reproducibility import configure_reproducibility
 from equivariant_attention.training import (
     TargetNormalizer,
     build_regression_model,
@@ -33,10 +34,14 @@ from equivariant_attention.training import (
     fit_target_normalizer,
     train_regression_step,
 )
+from equivariant_attention.spatial_regression import (
+    SpatialOperatorRegressionModel,
+)
 from equivariant_attention.unified_regression import UnifiedRegressionModel
 
 
 PACKET_ID = "pdbbind-overfit-persistent2e-20260723"
+SPATIAL_PACKET_ID = "pdbbind-overfit-ela-spatial-20260731"
 DATASET_REVISION = ATOM3D_LBA_REVISION
 SUBSET_INDICES = tuple(range(16))
 FROZEN_SAMPLE_IDS = (
@@ -205,7 +210,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--arms",
         nargs="+",
-        choices=(*registered_arms(), "unified"),
+        choices=(
+            *registered_arms(),
+            "unified",
+            "ela_explicit",
+            "ela_implicit",
+            "ela_hybrid",
+        ),
         default=["attention", "egnn"],
     )
     parser.add_argument(
@@ -241,6 +252,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         print(json.dumps(plan, indent=2, sort_keys=True))
         return 0
+    reproducibility = configure_reproducibility(
+        seed=MODEL_SEED,
+        mode="strict",
+    )
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("registered CUDA run requested but CUDA is unavailable")
@@ -280,6 +295,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if sample.readout_mask is not None
         ],
         "target_normalizer": normalizer.as_dict(),
+        "reproducibility": reproducibility,
         "matched_egnn_width": egnn_width,
         "arms": [],
         "validation_evaluated": False,
@@ -300,14 +316,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 continue
             arm_samples = (
-                samples if arm == "attention" else _with_radius_edges(samples)
+                samples
+                if arm in {"attention", "ela_implicit"}
+                else _with_radius_edges(samples)
             )
             if arm == "attention":
                 model = _build_attention()
             elif arm == "egnn":
                 model = _build_egnn(egnn_width)
-            else:
+            elif arm == "unified":
                 model = _build_unified()
+            else:
+                model = _build_spatial(arm.removeprefix("ela_"))
             arm_result = _run_arm(
                 arm=arm,
                 model=model,
@@ -334,6 +354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     result["attention_overfit_passed"] = _arm_passed(result, "attention")
     result["egnn_overfit_passed"] = _arm_passed(result, "egnn")
     result["unified_overfit_passed"] = _arm_passed(result, "unified")
+    for arm in ("ela_explicit", "ela_implicit", "ela_hybrid"):
+        result[f"{arm}_overfit_passed"] = _arm_passed(result, arm)
     _write_result(args.output, result)
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
     return 0
@@ -342,12 +364,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run_plan(args: argparse.Namespace) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "packet_id": PACKET_ID,
+        "packet_id": (
+            SPATIAL_PACKET_ID
+            if any(arm.startswith("ela_") for arm in args.arms)
+            else PACKET_ID
+        ),
         "dataset": "vector-institute/atom3d-lba",
         "dataset_revision": DATASET_REVISION,
         "split": "train",
         "subset_indices": list(SUBSET_INDICES),
         "device": args.device,
+        "determinism": "strict",
         "arms_registered": list(args.arms),
         "max_steps": args.max_steps,
         "threshold_train_mae_pK": args.threshold,
@@ -391,6 +418,26 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
             "cutoff_angstrom": EGNN_CUTOFF_ANGSTROM,
             "readout": "ligand_mask_mean_0e",
         },
+        "ela_spatial": {
+            "kind": "equivariant_linear_attention_spatial_ablation",
+            "arms": [
+                arm for arm in args.arms if arm.startswith("ela_")
+            ],
+            "input_irreps": f"{ATOM3D_LBA_NODE_DIM}x0e",
+            "output_irreps": "1x0e",
+            "hidden_dim": HIDDEN_DIM,
+            "num_layers": NUM_LAYERS,
+            "num_heads": NUM_HEADS,
+            "local_rank": NUM_HEADS,
+            "cutoff_angstrom": EGNN_CUTOFF_ANGSTROM,
+            "implicit_scales_angstrom": [
+                EGNN_CUTOFF_ANGSTROM,
+                2.0 * EGNN_CUTOFF_ANGSTROM,
+                4.0 * EGNN_CUTOFF_ANGSTROM,
+            ],
+            "common_node_multipoles": "edge_free_zero_neighbor_context",
+            "readout": "ligand_mask_mean_0e",
+        },
         "model_seed": MODEL_SEED,
         "order_seed": ORDER_SEED,
         "validation_evaluated": False,
@@ -431,6 +478,20 @@ def _build_unified() -> torch.nn.Module:
         num_heads=NUM_HEADS,
         local_rank=NUM_HEADS,
         local_cutoff=EGNN_CUTOFF_ANGSTROM,
+    )
+
+
+def _build_spatial(arm: str) -> torch.nn.Module:
+    torch.manual_seed(MODEL_SEED)
+    return SpatialOperatorRegressionModel(
+        arm=arm,
+        node_dim=ATOM3D_LBA_NODE_DIM,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        num_heads=NUM_HEADS,
+        local_rank=NUM_HEADS,
+        local_cutoff=EGNN_CUTOFF_ANGSTROM,
+        implicit_residual_scale_init=0.0,
     )
 
 
@@ -566,7 +627,7 @@ def _run_arm(
             for sample in samples
             if sample.edge_index is not None
         )
-        if arm in {"egnn", "unified"}
+        if arm in {"egnn", "unified", "ela_explicit", "ela_hybrid"}
         else 0
     )
     return {

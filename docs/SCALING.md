@@ -87,16 +87,29 @@ T_{\rm implicit}=O(ANFD),
 \]
 
 \[
-M_{\rm implicit}
+M_{\rm implicit,infer}
 =
 O\left(N(F+D)+GFD+CFD\right).
 \]
 
 The \(GFD\) term stores one sufficient statistic per graph. The \(CFD\) term is
 the bounded chunked outer-product workspace. The implementation does not create
-a full \(NFD\) temporary. For fixed \(F,D,C\), arithmetic is node-linear and
-memory is linear in total input size. The claim is about a smooth low-rank
-spatial-kernel approximation, not exact hard-cutoff neighborhoods.
+a full \(NFD\) forward temporary. Eager autograd nevertheless retains
+chunk-local contractions across the node axis, so without checkpointing a
+conservative training bound is
+
+\[
+M_{\rm implicit,train}
+=
+O\left(
+N(F+D)+GFD+CFD+ANFD
+\right).
+\]
+
+For fixed \(F,D,C,A\), both bounds remain node-linear, but chunking alone does
+not make training activation memory independent of \(NFD\). The claim is about
+a smooth low-rank spatial-kernel approximation, not exact hard-cutoff
+neighborhoods.
 
 ## 5. Memory statements
 

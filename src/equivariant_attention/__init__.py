@@ -152,7 +152,11 @@ from .spatial_comparison import (
     spatial_promotion_decision,
     validate_spatial_comparison,
 )
-from .unified_regression import UnifiedRegressionModel
+from .spatial_regression import SpatialOperatorRegressionModel
+from .unified_regression import (
+    EquivariantLinearAttentionRegressionModel,
+    UnifiedRegressionModel,
+)
 
 __all__ = [
     "ArchitectureConfig",
@@ -173,6 +177,7 @@ __all__ = [
     "EquivariantLinearAttentionConfig",
     "EquivariantLinearAttentionCore",
     "EquivariantLinearAttentionLayer",
+    "EquivariantLinearAttentionRegressionModel",
     "ExternalCallableNeighborProvider",
     "ExecutionMetadata",
     "ExecutableTensorProductPlan",
@@ -216,6 +221,7 @@ __all__ = [
     "SpatialOperatorAblationConfig",
     "SpatialOperatorAblationModel",
     "SpatialOperatorArm",
+    "SpatialOperatorRegressionModel",
     "SpatialPromotionThresholds",
     "SpatialSyntheticTask",
     "SyntheticMoleculeDataset",

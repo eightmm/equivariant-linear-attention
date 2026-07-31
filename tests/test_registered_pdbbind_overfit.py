@@ -117,6 +117,52 @@ def test_cli_defaults_cannot_enable_validation_test_or_coordinate_updates() -> N
     assert not hasattr(args, "coordinate_updates")
 
 
+def test_spatial_lba_plan_records_matched_operator_contract() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/run/spatial.json",
+            "--arms",
+            "ela_explicit",
+            "ela_implicit",
+            "ela_hybrid",
+            "--dry-run",
+        ]
+    )
+    plan = symbols["_run_plan"](args)
+
+    assert plan["packet_id"] == symbols["SPATIAL_PACKET_ID"]
+    assert plan["determinism"] == "strict"
+    assert plan["arms_registered"] == [
+        "ela_explicit",
+        "ela_implicit",
+        "ela_hybrid",
+    ]
+    assert plan["ela_spatial"]["common_node_multipoles"] == (
+        "edge_free_zero_neighbor_context"
+    )
+    assert plan["ela_spatial"]["readout"] == "ligand_mask_mean_0e"
+
+
+@pytest.mark.parametrize(
+    ("arm", "expects_edges"),
+    [
+        ("explicit", True),
+        ("implicit", False),
+        ("hybrid", True),
+    ],
+)
+def test_spatial_lba_builders_share_parameter_schema(
+    arm: str,
+    expects_edges: bool,
+) -> None:
+    symbols = _symbols()
+    model = symbols["_build_spatial"](arm)
+
+    assert model.consumes_external_neighbors is expects_edges
+    assert sum(parameter.numel() for parameter in model.parameters()) == 258_072
+
+
 def test_radius_edges_include_self_and_respect_cutoff() -> None:
     symbols = _symbols()
     pos = torch.tensor(
