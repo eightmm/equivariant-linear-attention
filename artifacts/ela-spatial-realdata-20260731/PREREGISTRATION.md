@@ -81,10 +81,30 @@ or affinity-ranking claim.
 After the spatial comparison is frozen, run the current-source controls with
 the same data/split/seed/update budgets:
 
-- QM9: accepted factorized LGL, frozen `unified_multipole`, and private static
-  EGNN;
-- LBA train-only: historical factorized attention and frozen unified core.
+- QM9: frozen `unified_multipole` and private static EGNN;
+- LBA train-only: historical factorized attention, frozen unified core, and
+  private static EGNN.
 
 These controls contextualize the new arm. They are not part of the
 explicit/implicit/hybrid attribution gate and cannot rescue a failed spatial
 prediction.
+
+One LGL reproducibility receipt was produced before the project decision to
+retire that family. It is excluded from architecture selection and no further
+LGL experiment is authorized.
+
+## Periodic implicit follow-up
+
+The first screen showed that always-on implicit transport can improve QM9 but
+raises memory, while always-on hybrid loses LBA capacity. Expose the existing
+`implicit_every` execution contract and screen `implicit_every=3` in the
+three-layer model:
+
+- QM9 scheduled implicit and hybrid use the same 500-update recipe and state
+  schema as above;
+- LBA scheduled hybrid uses the same 1,000-update train-only recipe.
+
+Prediction: scheduled QM9 implicit remains within `0.020 eV` of always-on
+implicit, uses at most `1.10x` explicit latency and at most `1.35x` explicit
+memory. Scheduled LBA hybrid reaches `<=0.10 pK`, with at most `1.10x`
+explicit latency and memory. Failure leaves the option experimental.

@@ -76,3 +76,42 @@ scale/layer rather than running it at every layer.
 
 These are one-seed QM9 validation and train-only LBA capacity results, not test
 performance or a generalization claim.
+
+## Current-source contextual controls
+
+The controls were run after freezing the spatial result. LGL has since been
+retired by project decision and is excluded from architecture selection.
+
+### QM9
+
+| Model | Val MAE (eV) | Median step (s) | Peak CUDA (MB) | Parameters |
+|---|---:|---:|---:|---:|
+| ELA implicit | **0.627661** | 0.18172 | 322.8 | 249,816 |
+| frozen unified | 0.664455 | 0.16560 | 250.7 | 209,229 |
+| private static EGNN | 0.718706 | **0.00543** | **133.8** | 162,154 |
+
+ELA implicit improved MAE by `0.036794 eV` over frozen unified at
+`1.097x` latency and `1.288x` memory. It improved MAE by `0.091045 eV`
+over the private EGNN but used `33.49x` latency and `2.412x` memory. This is an
+accuracy win at the fixed 500-update screen, not an efficiency win or an
+official-EGNN result.
+
+### LBA train-only
+
+| Model | Train MAE (pK) | Steps | Median step (s) | Peak CUDA (MB) |
+|---|---:|---:|---:|---:|
+| ELA explicit | **0.051845** | **900** | 0.15151 | 915.6 |
+| frozen unified | 0.078332 | 1,000 | 0.13875 | 902.7 |
+| private static EGNN | 0.473982 | 1,000 | **0.00783** | **779.1** |
+
+ELA explicit improved train MAE by `0.026487 pK` over frozen unified while
+using `1.092x` latency and `1.014x` memory. It improved MAE by `0.422137 pK`
+over private EGNN but used `19.36x` latency and `1.175x` memory. This is
+train-set memorization capacity only.
+
+The combined evidence favors an architecture policy, not one universal arm:
+
+- explicit sparse local geometry for interaction-heavy or sharp local tasks;
+- implicit smooth spatial transport only as a selectively scheduled global
+  residual where its accuracy gain justifies the workspace;
+- no always-on hybrid until its memory and optimization behavior improve.

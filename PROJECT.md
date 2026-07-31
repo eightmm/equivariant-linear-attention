@@ -2,6 +2,25 @@
 
 ## Status
 
+- The 2026-07-31 architecture direction retires LGL from all future candidate,
+  baseline, default, and promotion decisions. Historical LGL receipts remain
+  provenance records only; compatibility code may remain but is not an active
+  model path. The project target is homogeneous equivariant linear attention
+  for unordered point clouds and optional sparse 3D graphs.
+  A same-schema explicit/implicit/hybrid spatial screen now provides the first
+  real-data evidence for that target. On QM9 gap at seed 42 / 500 updates,
+  validation MAEs were `0.671843/0.627661/0.638748 eV`; implicit beat frozen
+  unified by `0.036794 eV` and private static EGNN by `0.091045 eV`, but used
+  `1.097x/33.49x` their step latency. On the frozen 16-complex LBA train-only
+  probe, explicit reached `0.051845 pK` at step 900, versus frozen unified
+  `0.078332 pK` and private EGNN `0.473982 pK` at step 1,000. Edge-free
+  implicit used only `0.394x` explicit peak memory on LBA but failed capacity
+  at `0.286117 pK`; always-on hybrid also failed at `0.198044 pK`. Therefore
+  explicit local geometry remains necessary for sharp interaction tasks,
+  implicit transport is an experimental selectively scheduled smooth
+  long-range residual, and always-on hybrid is not promoted. QM9 test and all
+  LBA validation/test data remained closed. See
+  `artifacts/ela-spatial-realdata-20260731/RESULTS.md`.
 - The 2026-07-30 canonical generic-3D input contract now accepts one flattened
   `l<=2` carrier over arbitrary `0e/0o/1e/1o/2e/2o` multiplicities, with
   positions kept separate, same-irrep channel projection, bias restricted to
@@ -1091,12 +1110,14 @@ H_(t+1) = FFN_t(H_t + G_t(H_t, X) + I[t in R] S_t(H_t, X, E))
   immediately and never enters a checkpoint or global layer. Persistent model
   input/hidden/output layouts still accept only Cartesian `0e/1o/2e`.
 
-The previous adaptive multiscale middle-global LGL packet remains available
-and mechanically verified, but it no longer defines the architectural target.
-No real-data accuracy, CUDA speed, or CUDA peak-memory claim is attached to
-this new packet yet. The next scientific gate is a matched downstream
-comparison of homogeneous sparse-plus-global blocks against accepted gated
-LGL on a bounded-degree generic 3D task, followed by CUDA backend profiling.
+The previous adaptive multiscale middle-global LGL packet is archived for
+provenance and compatibility only. It no longer defines the architectural
+target and must not be used as a candidate, baseline, or default. The first
+real-data spatial comparison is now recorded in
+`artifacts/ela-spatial-realdata-20260731/RESULTS.md`. The next scientific gate
+is a multi-seed confirmation of the homogeneous ELA spatial policy against
+frozen unified and private/official EGNN controls, followed by CUDA backend
+profiling.
 The PyTorch ELL/streamed references, cache modes, automatic dispatch, and
 general reference CG executor now exist, but their performance has not been
 established. Chunk-streamed gated MLP fusion, a custom reverse-CSR backward,
