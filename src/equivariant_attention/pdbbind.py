@@ -25,6 +25,43 @@ _REVISION = re.compile(r"^[0-9a-f]{40}$")
 TOPOLOGY_CHUNK_NODES = 128
 
 
+def _load_cached_atom3d_train(
+    root: Path,
+    *,
+    revision: str,
+) -> object | None:
+    """Load the exact-revision Arrow cache without resolving a remote URI.
+
+    ``datasets>=5`` resolves ``hf://`` data-file patterns against the Hub even
+    when the processed Arrow shards already exist. That makes an otherwise
+    reproducible offline packet fail before consulting its cache. The pinned
+    dataset cache stores the revision in the directory name, so it is safe to
+    prefer a complete two-shard train cache and retain the network loader as
+    the fallback.
+    """
+
+    cache = (
+        root
+        / "vector-institute___atom3d-lba"
+        / "default"
+        / "0.0.0"
+        / revision
+    )
+    shards = tuple(sorted(cache.glob("atom3d-lba-train-*.arrow")))
+    if not shards:
+        return None
+    if len(shards) != len(_TRAIN_FILES):
+        raise ValueError(
+            "cached ATOM3D-LBA train split is incomplete: "
+            f"expected {len(_TRAIN_FILES)} shards, found {len(shards)}"
+        )
+    from datasets import Dataset, concatenate_datasets
+
+    return concatenate_datasets(
+        [Dataset.from_file(str(shard)) for shard in shards]
+    )
+
+
 def topology_sha256(samples: Sequence[GraphSample]) -> str:
     """Canonical identity of a precomputed candidate list.
 
@@ -247,19 +284,22 @@ def load_atom3d_lba_samples(
             "ATOM3D-LBA loading requires the optional 'pdbbind' dependencies"
         ) from exc
 
-    train_files = [
-        (
-            f"hf://datasets/{ATOM3D_LBA_REPO}@{revision}/"
-            f"{relative_path}"
+    root = Path(root)
+    dataset = _load_cached_atom3d_train(root, revision=revision)
+    if dataset is None:
+        train_files = [
+            (
+                f"hf://datasets/{ATOM3D_LBA_REPO}@{revision}/"
+                f"{relative_path}"
+            )
+            for relative_path in _TRAIN_FILES
+        ]
+        dataset = load_dataset(
+            "parquet",
+            data_files={"train": train_files},
+            split=split,
+            cache_dir=str(root),
         )
-        for relative_path in _TRAIN_FILES
-    ]
-    dataset = load_dataset(
-        "parquet",
-        data_files={"train": train_files},
-        split=split,
-        cache_dir=str(root),
-    )
     if max(validated_indices) >= len(dataset):
         raise IndexError(
             f"ATOM3D-LBA {split} has {len(dataset)} rows; "

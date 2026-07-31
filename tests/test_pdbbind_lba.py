@@ -7,6 +7,7 @@ from types import ModuleType
 import pytest
 import torch
 
+import equivariant_attention.pdbbind as pdbbind
 from equivariant_attention.pdbbind import (
     ATOM3D_LBA_REPO,
     atom3d_lba_row_to_sample,
@@ -174,6 +175,33 @@ def test_loader_pins_repo_revision_split_indices_and_cache(
         "0000002",
         "0000000",
     ]
+
+
+def test_loader_prefers_complete_exact_revision_arrow_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    rows = [_row(), {**_row(), "labels": 6.5}]
+    fake = ModuleType("datasets")
+
+    def reject_network(*args: object, **kwargs: object) -> object:
+        raise AssertionError((args, kwargs))
+
+    fake.load_dataset = reject_network  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+    monkeypatch.setattr(
+        pdbbind,
+        "_load_cached_atom3d_train",
+        lambda root, *, revision: rows,
+    )
+
+    samples = load_atom3d_lba_samples(
+        root=tmp_path,
+        indices=(1, 0),
+        revision=_REVISION,
+    )
+
+    assert [sample.target.item() for sample in samples] == [6.5, 7.25]
 
 
 def test_loader_rejects_nontrain_split_and_duplicate_indices(tmp_path: object) -> None:
