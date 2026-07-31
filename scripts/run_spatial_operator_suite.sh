@@ -89,6 +89,13 @@ if [[ "$DEVICE" == cuda* ]]; then
     2>&1 | tee "$RUN_DIR/cuda-tests.log"
 fi
 
+if [[ "$MODE" == "full" ]]; then
+  bash scripts/check.sh fast 2>&1 | tee "$RUN_DIR/fast-gate.log"
+  if [[ "$DEVICE" == cuda* ]]; then
+    bash scripts/check.sh gpu 2>&1 | tee "$RUN_DIR/gpu-gate.log"
+  fi
+fi
+
 uv run python scripts/compare_spatial_operators.py \
   --tasks local_directional,smooth_gaussian,mixed \
   --seeds "$SEEDS" \
@@ -100,7 +107,7 @@ uv run python scripts/compare_spatial_operators.py \
   --heads 4 \
   --local-rank "$LOCAL_RANK" \
   --cutoff 1.75 \
-  --candidate-skin 0.25 \
+  --candidate-skin 0 \
   --gaussian-scale 2.5 \
   --implicit-scales 2,4,8 \
   --implicit-scale-init 0 \
@@ -112,6 +119,8 @@ uv run python scripts/compare_spatial_operators.py \
   --dtype "$DTYPE" \
   --output "$RUN_DIR/result.json" \
   > "$RUN_DIR/comparison.log"
+
+python -m json.tool "$RUN_DIR/result.json" > /dev/null
 
 uv run python scripts/report_spatial_operator_comparison.py \
   "$RUN_DIR/result.json" \
@@ -147,6 +156,7 @@ cat > "$RUN_DIR/manifest.json" <<EOF
   "mode": "$MODE",
   "device": "$DEVICE",
   "dtype": "$DTYPE",
+  "result_schema": "schemas/spatial_operator_comparison.schema.json",
   "files": [
     "result.json",
     "report.md",
@@ -155,7 +165,11 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "scaling.json",
     "environment.txt",
     "git.txt",
-    "focused-tests.log"
+    "focused-tests.log",
+    "comparison.log",
+    "report.log",
+    "implicit-accuracy.log",
+    "scaling.log"
   ]
 }
 EOF
