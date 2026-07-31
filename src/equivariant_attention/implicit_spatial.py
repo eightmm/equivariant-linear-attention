@@ -44,12 +44,12 @@ def _segment_sum(
 
 @dataclass(frozen=True, slots=True)
 class ImplicitSpatialKernelConfig:
-    """Configuration for an edge-free isotropic spatial kernel.
+    """Configuration for an edge-free isotropic spatial-kernel reference.
 
-    The production path supports an order-two Gaussian--Taylor feature map. For
-    each fixed scale it has feature rank ten and yields a pointwise-positive
-    approximation to an isotropic Gaussian kernel. No edge list, neighbor list,
-    or node-pair matrix is constructed.
+    The implemented reference supports an order-two Gaussian--Taylor feature
+    map. For each fixed scale it has feature rank ten and yields a
+    pointwise-positive approximation to an isotropic Gaussian kernel. No edge
+    list, neighbor list, or node-pair matrix is constructed.
     """
 
     scales: tuple[float, ...] = (1.0, 2.0, 4.0)
@@ -120,7 +120,12 @@ class ImplicitSpatialContext:
 
 @dataclass(frozen=True)
 class ImplicitSpatialTransport:
-    """One edge-free kernel transport result."""
+    """One edge-free kernel transport result.
+
+    ``output`` follows the input value dtype. ``mass`` and ``self_kernel`` retain
+    the geometry accumulation dtype (FP32 for FP16/BF16 inputs) so downstream
+    diagnostics and repeated normalization do not quantize the receiver mass.
+    """
 
     output: torch.Tensor
     mass: torch.Tensor
@@ -316,8 +321,8 @@ class ImplicitGaussianSpatialKernel(nn.Module):
         if flat.shape[0] == 0:
             return ImplicitSpatialTransport(
                 output=values.clone(),
-                mass=values.new_zeros((0,)),
-                self_kernel=values.new_zeros((0,)),
+                mass=context.features.new_zeros((0,)),
+                self_kernel=context.features.new_zeros((0,)),
             )
 
         dtype = torch.promote_types(context.features.dtype, flat.dtype)
@@ -358,9 +363,9 @@ class ImplicitGaussianSpatialKernel(nn.Module):
         output = torch.cat(output_chunks, dim=0)
         mass = torch.cat(mass_chunks, dim=0)
         return ImplicitSpatialTransport(
-            output=output.reshape(original_shape).to(dtype=values.dtype),
-            mass=mass.to(dtype=values.dtype),
-            self_kernel=context.self_kernel.to(dtype=values.dtype),
+            output=output.reshape(original_shape),
+            mass=mass,
+            self_kernel=context.self_kernel.to(dtype=dtype),
         )
 
     def _denominator(self, mass: torch.Tensor) -> torch.Tensor:
@@ -382,7 +387,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
             *((1,) * (raw.output.ndim - 1)),
         )
         return ImplicitSpatialTransport(
-            output=output,
+            output=output.to(dtype=values.dtype),
             mass=raw.mass,
             self_kernel=raw.self_kernel,
         )
@@ -405,10 +410,7 @@ class ImplicitGaussianSpatialKernel(nn.Module):
         second = self._raw_transport(centered_tensor, context)
         mass = first.mass.to(dtype=centered.dtype)
 
-        relative_vector = (
-            first.output.to(dtype=centered.dtype)
-            - mass.unsqueeze(-1) * centered
-        )
+        relative_vector = first.output.to(dtype=centered.dtype) - mass.unsqueeze(-1) * centered
         relative_tensor = (
             second.output.to(dtype=centered.dtype)
             + mass.unsqueeze(-1) * centered_tensor
