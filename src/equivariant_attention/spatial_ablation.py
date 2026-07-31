@@ -16,6 +16,7 @@ from .implicit_spatial import (
     ImplicitSpatialKernelConfig,
 )
 from .implicit_spatial_residual import ImplicitSpatialResidual
+from .irreps import IrrepLayout
 from .unified import Prepared3DGraph, prepare_3d_graph
 
 
@@ -95,7 +96,7 @@ def state_dict_sha256(module: nn.Module) -> str:
         digest.update(name.encode("utf-8"))
         digest.update(str(tensor.dtype).encode("ascii"))
         digest.update(str(tuple(tensor.shape)).encode("ascii"))
-        digest.update(tensor.numpy().tobytes())
+        digest.update(tensor.view(torch.uint8).numpy().tobytes())
     return digest.hexdigest()
 
 
@@ -137,15 +138,32 @@ class SpatialOperatorAblationModel(nn.Module):
         return self.arm in {"implicit", "hybrid"}
 
     @property
-    def input_irreps(self):  # type: ignore[no-untyped-def]
+    def input_irreps(self) -> IrrepLayout:
         return self.backbone.config.input_layout
 
     @property
-    def output_irreps(self):  # type: ignore[no-untyped-def]
+    def output_irreps(self) -> IrrepLayout:
         return self.backbone.output_irreps
 
-    def _execution_graph(self, graph: Prepared3DGraph) -> Prepared3DGraph:
-        return graph if self.uses_explicit_local else empty_prepared_graph_like(graph)
+    def _execution_graph(
+        self,
+        graph: Prepared3DGraph,
+        no_edge_graph: Prepared3DGraph | None,
+    ) -> Prepared3DGraph:
+        if self.uses_explicit_local:
+            return graph
+        candidate = (
+            empty_prepared_graph_like(graph)
+            if no_edge_graph is None
+            else no_edge_graph
+        )
+        if candidate.num_nodes != graph.num_nodes:
+            raise ValueError("no_edge_graph node count must match graph")
+        if candidate.num_edges:
+            raise ValueError("no_edge_graph must contain zero edges")
+        if not torch.equal(candidate.batch, graph.batch):
+            raise ValueError("no_edge_graph batch must match graph")
+        return candidate
 
     @staticmethod
     def _graph_mean(
@@ -168,10 +186,11 @@ class SpatialOperatorAblationModel(nn.Module):
         positions: torch.Tensor,
         graph: Prepared3DGraph,
         *,
+        no_edge_graph: Prepared3DGraph | None = None,
         node_role_id: torch.Tensor | None = None,
         condition: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        execution_graph = self._execution_graph(graph)
+        execution_graph = self._execution_graph(graph, no_edge_graph)
         state, context = self.backbone.embed_input(
             node_irreps,
             positions,
