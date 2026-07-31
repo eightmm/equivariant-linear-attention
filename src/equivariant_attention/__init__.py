@@ -122,6 +122,7 @@ from .implicit_spatial import (
     ImplicitSpatialStateTransport,
     ImplicitSpatialTransport,
 )
+from .implicit_spatial_residual import ImplicitSpatialResidual
 from .scaling_contract import (
     ComplexityEstimate,
     EdgeScaling,
@@ -164,6 +165,7 @@ __all__ = [
     "ImplicitSpatialContext",
     "ImplicitSpatialKernelConfig",
     "ImplicitSpatialMoments",
+    "ImplicitSpatialResidual",
     "ImplicitSpatialStateTransport",
     "ImplicitSpatialTransport",
     "Irrep",
