@@ -228,6 +228,7 @@ def _base_row(
         "degree": degree,
         "layers": layers,
         "blocks": None,
+        "blocks_policy": None,
         "layer_only_ms": layer_ms,
         "with_graph_pack_ms": graph_pack_ms,
         "peak_allocated_bytes": peak,
@@ -243,6 +244,7 @@ def _attnres_row(
     degree: int,
     layers: int,
     blocks: int,
+    blocks_policy: str,
     device: torch.device,
     dtype: torch.dtype,
     warmup: int,
@@ -252,6 +254,8 @@ def _attnres_row(
 ) -> dict[str, Any]:
     if blocks > layers:
         raise ValueError("AttnRes blocks must not exceed layers")
+    if blocks_policy not in {"fixed", "equal_depth"}:
+        raise ValueError("blocks_policy must be fixed or equal_depth")
     config = EquivariantAttentionResidualConfig(
         input_irreps="16x0e",
         output_irreps="1x0e",
@@ -319,7 +323,7 @@ def _attnres_row(
         blocks=blocks,
         channel_factor=64,
         edge_scaling="linear",
-        blocks_fixed_with_depth=True,
+        blocks_fixed_with_depth=blocks_policy == "fixed",
     )
     return {
         "mode": "attnres",
@@ -329,11 +333,13 @@ def _attnres_row(
         "degree": degree,
         "layers": layers,
         "blocks": blocks,
+        "blocks_policy": blocks_policy,
         "layer_only_ms": layer_ms,
         "with_graph_pack_ms": graph_pack_ms,
         "peak_allocated_bytes": peak,
         "arithmetic_proxy": estimate.arithmetic_proxy,
         "formula": estimate.formula,
+        "depth_linear_contract": estimate.depth_linear,
     }
 
 
@@ -405,6 +411,7 @@ def _implicit_row(
         "degree": 0,
         "layers": applications,
         "blocks": None,
+        "blocks_policy": None,
         "layer_only_ms": milliseconds,
         "with_graph_pack_ms": None,
         "peak_allocated_bytes": peak,
@@ -414,38 +421,83 @@ def _implicit_row(
     }
 
 
-def _fits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _fit_group(
+    rows: list[dict[str, Any]],
+    *,
+    axis: str,
+    size_key: str,
+    grouping: Callable[[dict[str, Any]], tuple[Any, ...]],
+) -> list[dict[str, Any]]:
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (
-            row["mode"],
-            row["graphs"],
-            row["degree"],
-            row["layers"],
-            row["blocks"],
-        )
-        groups.setdefault(key, []).append(row)
+        groups.setdefault(grouping(row), []).append(row)
     output = []
     for key, group in groups.items():
-        if len(group) < 2:
+        unique = {row[size_key] for row in group}
+        if len(unique) < 2:
             continue
-        group.sort(key=lambda item: item["nodes"])
+        group.sort(key=lambda item: item[size_key])
         fit = fit_log_log_slope(
-            [row["nodes"] for row in group],
+            [row[size_key] for row in group],
             [row["layer_only_ms"] for row in group],
         )
         output.append(
             {
-                "mode": key[0],
-                "graphs": key[1],
-                "degree": key[2],
-                "layers": key[3],
-                "blocks": key[4],
-                "node_slope": fit.slope,
-                "node_r_squared": fit.r_squared,
+                "axis": axis,
+                "group": list(key),
+                "slope": fit.slope,
+                "r_squared": fit.r_squared,
             }
         )
     return output
+
+
+def _fits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    node_fits = _fit_group(
+        rows,
+        axis="nodes",
+        size_key="nodes",
+        grouping=lambda row: (
+            row["mode"],
+            row["graphs"],
+            row["degree"],
+            row["layers"],
+            row["blocks_policy"],
+            row["blocks"],
+        ),
+    )
+
+    def depth_group(row: dict[str, Any]) -> tuple[Any, ...]:
+        block_key = row["blocks"] if row["blocks_policy"] == "fixed" else None
+        return (
+            row["mode"],
+            row["graphs"],
+            row["nodes"],
+            row["degree"],
+            row["blocks_policy"],
+            block_key,
+        )
+
+    depth_fits = _fit_group(
+        rows,
+        axis="layers",
+        size_key="layers",
+        grouping=depth_group,
+    )
+    degree_fits = _fit_group(
+        [row for row in rows if row["mode"] != "implicit"],
+        axis="edges",
+        size_key="edges",
+        grouping=lambda row: (
+            row["mode"],
+            row["graphs"],
+            row["nodes"],
+            row["layers"],
+            row["blocks_policy"],
+            row["blocks"],
+        ),
+    )
+    return [*node_fits, *depth_fits, *degree_fits]
 
 
 def main() -> None:
@@ -461,7 +513,7 @@ def main() -> None:
     parser.add_argument("--graphs", type=_csv_ints, default=[1])
     parser.add_argument("--depths", type=_csv_ints, default=[4, 8, 16])
     parser.add_argument("--blocks", type=_csv_ints, default=[4, 8])
-    parser.add_argument("--degree", type=int, default=32)
+    parser.add_argument("--degrees", type=_csv_ints, default=[32])
     parser.add_argument(
         "--scales",
         type=_csv_floats,
@@ -497,60 +549,7 @@ def main() -> None:
             if graphs > nodes or nodes % graphs:
                 continue
             nodes_per_graph = nodes // graphs
-            if args.degree >= nodes_per_graph and modes & {"base", "attnres"}:
-                continue
             for depth in args.depths:
-                if "base" in modes:
-                    rows.append(
-                        _base_row(
-                            nodes=nodes,
-                            graphs=graphs,
-                            degree=args.degree,
-                            layers=depth,
-                            device=device,
-                            dtype=dtype,
-                            warmup=args.warmup,
-                            repeats=args.repeats,
-                            backward=args.backward,
-                            include_graph_pack=args.include_graph_pack,
-                        )
-                    )
-                if "attnres" in modes:
-                    for blocks in args.blocks:
-                        if blocks > depth:
-                            continue
-                        rows.append(
-                            _attnres_row(
-                                nodes=nodes,
-                                graphs=graphs,
-                                degree=args.degree,
-                                layers=depth,
-                                blocks=blocks,
-                                device=device,
-                                dtype=dtype,
-                                warmup=args.warmup,
-                                repeats=args.repeats,
-                                backward=args.backward,
-                                include_graph_pack=args.include_graph_pack,
-                            )
-                        )
-                    # Explicit B=L lane exposes the expected quadratic depth term.
-                    if depth not in args.blocks:
-                        rows.append(
-                            _attnres_row(
-                                nodes=nodes,
-                                graphs=graphs,
-                                degree=args.degree,
-                                layers=depth,
-                                blocks=depth,
-                                device=device,
-                                dtype=dtype,
-                                warmup=args.warmup,
-                                repeats=args.repeats,
-                                backward=args.backward,
-                                include_graph_pack=args.include_graph_pack,
-                            )
-                        )
                 if "implicit" in modes:
                     rows.append(
                         _implicit_row(
@@ -566,9 +565,63 @@ def main() -> None:
                             backward=args.backward,
                         )
                     )
+                for degree in args.degrees:
+                    if degree >= nodes_per_graph:
+                        continue
+                    if "base" in modes:
+                        rows.append(
+                            _base_row(
+                                nodes=nodes,
+                                graphs=graphs,
+                                degree=degree,
+                                layers=depth,
+                                device=device,
+                                dtype=dtype,
+                                warmup=args.warmup,
+                                repeats=args.repeats,
+                                backward=args.backward,
+                                include_graph_pack=args.include_graph_pack,
+                            )
+                        )
+                    if "attnres" in modes:
+                        for blocks in args.blocks:
+                            if blocks > depth:
+                                continue
+                            rows.append(
+                                _attnres_row(
+                                    nodes=nodes,
+                                    graphs=graphs,
+                                    degree=degree,
+                                    layers=depth,
+                                    blocks=blocks,
+                                    blocks_policy="fixed",
+                                    device=device,
+                                    dtype=dtype,
+                                    warmup=args.warmup,
+                                    repeats=args.repeats,
+                                    backward=args.backward,
+                                    include_graph_pack=args.include_graph_pack,
+                                )
+                            )
+                        rows.append(
+                            _attnres_row(
+                                nodes=nodes,
+                                graphs=graphs,
+                                degree=degree,
+                                layers=depth,
+                                blocks=depth,
+                                blocks_policy="equal_depth",
+                                device=device,
+                                dtype=dtype,
+                                warmup=args.warmup,
+                                repeats=args.repeats,
+                                backward=args.backward,
+                                include_graph_pack=args.include_graph_pack,
+                            )
+                        )
 
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "device": str(device),
         "dtype": args.dtype,
         "backward": args.backward,
