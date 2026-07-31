@@ -40,6 +40,21 @@ def _topk_overlap(
     return float(matches.float().mean().item())
 
 
+def _relative_error(actual: torch.Tensor, reference: torch.Tensor) -> float:
+    value = torch.linalg.vector_norm(actual - reference) / torch.linalg.vector_norm(
+        reference
+    ).clamp_min(1e-12)
+    return float(value.item())
+
+
+def _c2_cutoff(squared_distance: torch.Tensor, cutoff: float) -> torch.Tensor:
+    ratio = squared_distance / cutoff**2
+    inside = ratio < 1.0
+    u = ratio.clamp(min=0.0, max=1.0)
+    value = 1.0 - 10.0 * u.pow(3) + 15.0 * u.pow(4) - 6.0 * u.pow(5)
+    return torch.where(inside, value, torch.zeros_like(value))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare the edge-free feature kernel with dense references"
@@ -47,6 +62,7 @@ def main() -> None:
     parser.add_argument("--nodes", type=int, default=256)
     parser.add_argument("--value-width", type=int, default=32)
     parser.add_argument("--scales", type=_csv_floats, default=(1.0, 2.0, 4.0))
+    parser.add_argument("--cutoff", type=float, default=3.0)
     parser.add_argument("--topk", type=int, default=32)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
@@ -57,6 +73,8 @@ def main() -> None:
         raise ValueError("nodes must exceed one")
     if args.value_width <= 0:
         raise ValueError("value-width must be positive")
+    if args.cutoff <= 0.0:
+        raise ValueError("cutoff must be positive")
 
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
@@ -83,34 +101,56 @@ def main() -> None:
 
     difference = positions[:, None, :] - positions[None, :, :]
     squared_distance = difference.square().sum(dim=-1)
-    exact = torch.stack(
+    exact_gaussian = torch.stack(
         [
             torch.exp(-squared_distance / (2.0 * scale**2))
             for scale in args.scales
         ],
         dim=0,
     ).mean(dim=0)
-    exact.fill_diagonal_(0.0)
+    exact_gaussian.fill_diagonal_(0.0)
 
-    exact_message = exact @ values
+    cutoff_kernel = _c2_cutoff(squared_distance, args.cutoff)
+    cutoff_kernel.fill_diagonal_(0.0)
+
     approximate_message = kernel(values, positions, batch).output
-    kernel_error = torch.linalg.vector_norm(approximate - exact) / torch.linalg.vector_norm(
-        exact
-    ).clamp_min(1e-12)
-    message_error = torch.linalg.vector_norm(
-        approximate_message - exact_message
-    ) / torch.linalg.vector_norm(exact_message).clamp_min(1e-12)
+    gaussian_message = exact_gaussian @ values
+    cutoff_message = cutoff_kernel @ values
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "nodes": args.nodes,
         "value_width": args.value_width,
         "scales": list(args.scales),
+        "cutoff": args.cutoff,
         "feature_rank": kernel.feature_rank,
         "dense_reference_only": True,
-        "kernel_relative_frobenius_error": float(kernel_error.item()),
-        "message_relative_l2_error": float(message_error.item()),
-        "topk_overlap": _topk_overlap(exact, approximate, args.topk),
+        "gaussian_kernel_relative_frobenius_error": _relative_error(
+            approximate,
+            exact_gaussian,
+        ),
+        "gaussian_message_relative_l2_error": _relative_error(
+            approximate_message,
+            gaussian_message,
+        ),
+        "gaussian_topk_overlap": _topk_overlap(
+            exact_gaussian,
+            approximate,
+            args.topk,
+        ),
+        "cutoff_kernel_relative_frobenius_error": _relative_error(
+            approximate,
+            cutoff_kernel,
+        ),
+        "cutoff_message_relative_l2_error": _relative_error(
+            approximate_message,
+            cutoff_message,
+        ),
+        "cutoff_topk_overlap": _topk_overlap(
+            cutoff_kernel,
+            approximate,
+            args.topk,
+        ),
         "topk": min(args.topk, args.nodes - 1),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
