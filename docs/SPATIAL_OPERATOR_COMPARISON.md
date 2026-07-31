@@ -1,38 +1,51 @@
 # Explicit, implicit, and hybrid spatial-operator comparison
 
-This document is the execution and reporting protocol for deciding how the
-edge-free spatial kernel should be used in equivariant linear attention.
+This document is the canonical execution and reporting protocol for deciding how
+the edge-free spatial kernel should be used in equivariant linear attention.
 
-It compares three resource-matched arms:
+## 1. Compared arms
 
-| Arm | Global operator | Explicit sparse local | Implicit spatial residual |
-|---|---|---:|---:|
-| `explicit` | exact equivariant linear attention | yes | no |
-| `implicit` | exact equivariant linear attention | no | yes |
-| `hybrid` | exact equivariant linear attention | yes | yes |
+| Arm | Exact global ELA | Explicit sparse local | Implicit residual |
+|---|---:|---:|---:|
+| `explicit` | yes | yes | no |
+| `implicit` | yes | no | yes |
+| `hybrid` | yes | yes | yes |
 
-All three models instantiate the same module tree and load the same initial
-state dict. The arm changes execution only. This prevents parameter count,
-initialization, or output-layout differences from being mistaken for operator
-effects.
+All arms instantiate the same module tree and load the same initial state dict.
+The arm changes execution only. Parameter count, initialization, hidden/output
+irreps, optimizer, and compute budget are paired.
 
-## 1. What this protocol can establish
+The comparison model intentionally disables coordinate updates so every arm sees
+one frozen geometry. Coordinate-refinement comparison is a later task-specific
+stage.
 
-The protocol can establish:
+### Timing boundary
 
-- whether the edge-free kernel retains short-range directional fidelity;
-- whether it improves smooth long-range targets;
-- whether hybridization adds value beyond explicit local interactions;
-- paired optimization stability, latency, and memory differences;
-- whether implicit execution is genuinely independent of explicit edge metadata;
-- whether the measured scaling is consistent with the documented complexity.
+The implicit arm runs the common backbone with a precomputed empty explicit
+CSR graph. This removes all edge-dependent sparse work while retaining the same
+module schema and some dormant node-side local projections. Its timing is
+therefore a **conservative schema-matched implicit timing**, not the final speed
+of a purpose-built implicit-only model.
 
-It cannot establish general downstream superiority from synthetic tasks alone.
-A synthetic pass only advances an arm to real-task validation.
+## 2. What the protocol can establish
 
-## 2. Audit invariants
+It can test:
 
-For every task and seed, the runner records and checks:
+- sharp short-range and edge-axis fidelity;
+- smooth long-range spatial modeling;
+- value of explicit-short-range plus implicit-long-range hybridization;
+- optimization stability, clipping, latency, and peak memory;
+- exact initial state and parameter-schema matching;
+- implicit independence from explicit edge metadata;
+- measured scaling against the documented complexity contracts;
+- fragment and graph-size locality risk.
+
+It cannot establish downstream superiority from synthetic data alone. A
+synthetic pass only advances an arm to real-task validation.
+
+## 3. Audit invariants
+
+For every task and seed, the runner records and validates:
 
 1. identical train and validation data hashes across arms;
 2. identical initial state-dict hash across arms;
@@ -40,27 +53,29 @@ For every task and seed, the runner records and checks:
 4. identical optimizer, learning rate, step budget, clipping threshold, and
    evaluation schedule;
 5. validation labels are not used for training;
-6. no-edge CSR metadata is prepared before the timed implicit forward;
+6. no-edge graph metadata is prepared outside the timed implicit forward;
 7. zero-initialized hybrid output equals explicit output before training;
-8. implicit output is unchanged when the supplied explicit edge metadata is
-   replaced, provided graph membership is unchanged.
+8. implicit output is unchanged when explicit edge metadata is removed, while
+   graph membership is held fixed;
+9. exactly three arms and exactly one audit exist for every declared task/seed
+   pair.
 
-The last two numerical gates default to
+Default numerical audit tolerance:
 
 ```text
 max absolute error <= 1e-7
 ```
 
-and should be tightened to FP64-scale tolerances for double-precision audits.
+Use tighter FP64 tolerances for double-precision audits.
 
-## 3. Synthetic tasks
+## 4. Synthetic tasks
 
-Every graph contains scalar node features `a_i`, one polar input vector `v_i`,
-and positions `x_i`.
+Every graph contains scalar features `a_i`, one polar input vector `v_i`, and
+positions `x_i`.
 
-### 3.1 Local directional target
+### 4.1 Local directional target
 
-For one unordered pair `i<j`, let
+For one unordered pair `i<j`,
 
 \[
 r_{ij}=\lVert x_j-x_i\rVert,
@@ -68,7 +83,7 @@ r_{ij}=\lVert x_j-x_i\rVert,
 \widehat r_{ij}=\frac{x_j-x_i}{r_{ij}},
 \]
 
-and let `f_c` be the C2 compact cutoff. The target is
+and `f_c` is the compact C2 cutoff. The target is
 
 \[
 y_{\rm local}
@@ -84,10 +99,9 @@ f_c(r_{ij}/R_c)
 \right].
 \]
 
-This target probes sharp locality and edge-axis anisotropy. The explicit arm is
-the reference.
+This probes hard locality and edge-axis anisotropy. `explicit` is the reference.
 
-### 3.2 Smooth Gaussian target
+### 4.2 Smooth Gaussian target
 
 \[
 y_{\rm smooth}
@@ -101,24 +115,45 @@ y_{\rm smooth}
 \right].
 \]
 
-This target probes a graph-global smooth spatial field. It is the favorable lane
-for the implicit kernel.
+This probes a graph-global smooth field and is the favorable lane for the
+implicit kernel.
 
-### 3.3 Mixed target
+### 4.3 Mixed target
 
 \[
 y_{\rm mixed}=y_{\rm local}+\frac12y_{\rm smooth}.
 \]
 
-This target probes whether hybridization can preserve local fidelity while
-adding smooth long-range context.
+This probes whether hybridization preserves local fidelity while adding smooth
+long-range information.
 
-Targets are normalized using train statistics only. Validation is never used to
-select normalization.
+Targets are normalized with train statistics only.
 
-## 4. Model comparison runner
+## 5. One-command workflow
 
-Quick CPU smoke:
+Smoke:
+
+```bash
+SPATIAL_SUITE_MODE=smoke \
+  bash scripts/run_spatial_operator_suite.sh \
+  artifacts/spatial-operator-comparison/smoke
+```
+
+Full CUDA evaluation:
+
+```bash
+SPATIAL_SUITE_MODE=full \
+SPATIAL_SUITE_DEVICE=cuda \
+SPATIAL_SUITE_DTYPE=bfloat16 \
+  bash scripts/run_spatial_operator_suite.sh \
+  artifacts/spatial-operator-comparison/full-$(date +%Y%m%d-%H%M%S)
+```
+
+See `SPATIAL_OPERATOR_SUITE.md` for environment overrides and artifact details.
+
+## 6. Direct comparison command
+
+Minimal CPU smoke:
 
 ```bash
 uv run python scripts/compare_spatial_operators.py \
@@ -131,6 +166,7 @@ uv run python scripts/compare_spatial_operators.py \
   --layers 1 \
   --heads 4 \
   --local-rank 2 \
+  --candidate-skin 0 \
   --steps 5 \
   --evaluation-interval 1 \
   --profile-warmup 1 \
@@ -140,7 +176,7 @@ uv run python scripts/compare_spatial_operators.py \
   --output artifacts/spatial-operator-comparison/smoke/result.json
 ```
 
-Recommended CUDA screen:
+Recommended paired CUDA screen:
 
 ```bash
 RUN=artifacts/spatial-operator-comparison/$(date +%Y%m%d-%H%M%S)
@@ -157,7 +193,7 @@ uv run python scripts/compare_spatial_operators.py \
   --heads 4 \
   --local-rank 4 \
   --cutoff 1.75 \
-  --candidate-skin 0.25 \
+  --candidate-skin 0 \
   --gaussian-scale 2.5 \
   --implicit-scales 2,4,8 \
   --implicit-scale-init 0 \
@@ -170,13 +206,20 @@ uv run python scripts/compare_spatial_operators.py \
   --output "$RUN/result.json"
 ```
 
-The implicit scales are intentionally longer than the compact local cutoff in
-the hybrid screen. This reduces role duplication between exact short-range and
-smooth long-range paths.
+`candidate_skin=0` is required for the canonical operator attribution: the
+explicit model cutoff exactly equals the local-target cutoff. Wider candidate
+skins belong in a separate neighbor-list robustness experiment.
 
-## 5. Report generation
+The default implicit scales are intentionally larger than the explicit cutoff,
+so the hybrid arm evaluates a longer-range complement instead of duplicating the
+short-range lane.
+
+## 7. Result validation and report
 
 ```bash
+uv run python scripts/validate_spatial_operator_result.py \
+  "$RUN/result.json"
+
 uv run python scripts/report_spatial_operator_comparison.py \
   "$RUN/result.json" \
   --output "$RUN/report.md" \
@@ -187,39 +230,42 @@ The report contains:
 
 - protocol violations;
 - zero-init and edge-independence audits;
-- per-task accuracy and resource tables;
-- paired per-seed differences versus explicit;
-- synthetic promotion gate checks;
+- per-task accuracy and resources;
+- paired seed differences versus explicit;
+- synthetic gate checks;
 - required downstream follow-up.
 
-Default hybrid synthetic gate:
+The result bundle follows
+`schemas/spatial_operator_comparison.schema.json`.
+
+## 8. Default synthetic gates
+
+### Hybrid candidate
 
 ```text
-local MAE regression <= 2%
-smooth MAE improvement >= 5%
-mixed MAE improvement >= 2%
-train-time overhead <= 25%
-inference-time overhead <= 25%
-training-memory overhead <= 25%
-minimum seeds = 3
+minimum paired seeds          3
+local MAE regression         <= 2%
+smooth MAE improvement       >= 5%
+mixed MAE improvement        >= 2%
+train-time overhead          <= 25%
+inference-time overhead      <= 25%
+training-memory overhead     <= 25%
 ```
 
-Default implicit replacement gate additionally requires:
+### Implicit replacement candidate
 
 ```text
-local MAE regression <= 2%
-smooth MAE improvement >= 5%
-inference time <= explicit
-training memory <= explicit
+minimum paired seeds          3
+local MAE regression         <= 2%
+smooth MAE improvement       >= 5%
+inference time               <= explicit
+training memory              <= explicit
 ```
 
 These are screening thresholds, not universal scientific constants. Override
-them explicitly in the report command when the target workload has different
-resource constraints.
+them explicitly when the intended workload has a different resource budget.
 
-## 6. Kernel approximation diagnostics
-
-Before interpreting model performance, quantify the kernel approximation:
+## 9. Kernel approximation diagnostic
 
 ```bash
 uv run python scripts/evaluate_implicit_spatial.py \
@@ -231,20 +277,35 @@ uv run python scripts/evaluate_implicit_spatial.py \
   --output "$RUN/implicit-accuracy.json"
 ```
 
-This reports:
+This records exact-Gaussian and compact-cutoff kernel/message relative errors and
+top-k overlap. A poor cutoff approximation does not automatically reject the
+hybrid path; it confirms that the implicit operator is acting as a smooth
+long-range complement rather than a hard local replacement.
 
-- Gaussian-kernel relative Frobenius error;
-- Gaussian message relative error;
-- Gaussian top-k overlap;
-- compact C2 cutoff relative error;
-- cutoff message relative error;
-- cutoff top-k overlap.
+## 10. Fragment and size-locality diagnostic
 
-The implicit kernel is not expected to approximate a sharp cutoff well at low
-rank. That result is informative rather than automatically a failure: the
-hybrid arm is intended to use the kernel as a longer-range complement.
+```bash
+uv run python scripts/evaluate_fragment_locality.py \
+  --base-nodes 64 \
+  --fragment-nodes 16 \
+  --fragment-distance 20 \
+  --value-width 16 \
+  --cutoff 1.75 \
+  --scales 2,4,8 \
+  --output "$RUN/fragment-locality.json"
+```
 
-## 7. Scaling and memory diagnostics
+This separates:
+
+- implicit original-pair kernel drift caused by graph centering and truncation;
+- zero-value fragment message drift;
+- random-value long-range coupling;
+- explicit compact-cutoff drift, which should be zero beyond the cutoff.
+
+See `FRAGMENT_LOCALITY.md`. For molecular and extensive/conservative tasks,
+repeat over several fragment sizes and distances.
+
+## 11. Scaling diagnostic
 
 ```bash
 uv run python scripts/benchmark_scaling.py \
@@ -261,7 +322,7 @@ uv run python scripts/benchmark_scaling.py \
   --output "$RUN/scaling.json"
 ```
 
-Interpret the fitted slopes under the contracts in `docs/SCALING.md`:
+Interpret slopes under `SCALING.md`:
 
 \[
 T_{\rm explicit}=O(L(N+E)),
@@ -275,15 +336,17 @@ T_{\rm AttnRes}=O(L(N+E)+LBN),
 T_{\rm implicit}=O(ANFD).
 \]
 
-A wall-clock slope near one is empirical evidence for that device and regime,
-not a proof for arbitrary graph shapes.
+A measured slope is device- and regime-specific evidence, not an unconditional
+runtime proof.
 
-## 8. Focused correctness tests
+## 12. Correctness gates
 
 ```bash
 uv run pytest \
   tests/test_spatial_ablation.py \
+  tests/test_spatial_benchmarks.py \
   tests/test_spatial_comparison.py \
+  tests/test_fragment_locality.py \
   tests/test_implicit_spatial.py \
   tests/test_implicit_spatial_chunks.py \
   tests/test_implicit_spatial_gradients.py \
@@ -300,16 +363,14 @@ CUDA:
 uv run pytest tests/test_implicit_spatial_cuda.py
 ```
 
-Repository gate:
+Repository gates:
 
 ```bash
 scripts/check.sh fast
 scripts/check.sh gpu
 ```
 
-## 9. Artifact layout
-
-Every completed comparison should use one immutable directory:
+## 13. Artifact layout
 
 ```text
 artifacts/spatial-operator-comparison/<run-id>/
@@ -317,29 +378,21 @@ artifacts/spatial-operator-comparison/<run-id>/
   report.md
   decision.json
   implicit-accuracy.json
+  fragment-locality.json
   scaling.json
   environment.txt
   git.txt
+  manifest.json
+  *.log
 ```
 
-Recommended provenance:
+Record Python, dependencies, GPU, git SHA, worktree state, and exact command.
+Large raw traces should remain outside `main`; commit compact summaries, hashes,
+commands, and a manifest.
 
-```bash
-python --version > "$RUN/environment.txt"
-uv pip freeze >> "$RUN/environment.txt"
-nvidia-smi >> "$RUN/environment.txt" 2>/dev/null || true
-git status --short > "$RUN/git.txt"
-git rev-parse HEAD >> "$RUN/git.txt"
-git diff --stat >> "$RUN/git.txt"
-```
+## 14. Downstream validation matrix
 
-Do not commit large repeated raw traces to `main`. Keep compact summaries,
-commands, hashes, and a manifest in Git; use release assets or external artifact
-storage for large bundles.
-
-## 10. Downstream validation matrix
-
-A synthetic pass must be followed by at least two task families.
+A synthetic pass must be followed by both lanes.
 
 ### General 3D lane
 
@@ -354,69 +407,58 @@ Choose at least one:
 
 Choose at least one:
 
-- QM9-like scalar property with a fixed split;
-- force/energy prediction with smooth derivative checks;
+- scalar molecular property with a frozen split;
+- force/energy prediction with derivative and fragment tests;
 - protein--ligand affinity with protein-cluster or target-disjoint validation;
 - pose or coordinate refinement with geometry metrics.
 
-For each lane compare the same three arms and retain:
+For each lane retain:
 
 - data revision and split hashes;
 - sample/node/edge counts;
-- initial state hash;
-- parameter count;
+- initial state and parameter hashes;
 - task metric and paired seed differences;
-- train/inference time and peak memory;
-- gradient clipping and instability counts;
-- neighbor construction/rebuild time where applicable.
+- train/inference latency and peak memory;
+- clipping and numerical-instability counts;
+- neighbor discovery/rebuild time where applicable.
 
-## 11. Promotion policy
+## 15. Promotion policy
 
 ### Keep explicit canonical
 
-Default outcome unless another arm demonstrates stable value. Explicit local is
-the reference for sharp directional contact and typed relations.
+This is the default unless another arm demonstrates stable value. Explicit local
+is the reference for sharp directional contact and typed relations.
 
-### Promote hybrid as an optional long-range mode
+### Advance hybrid
 
-Allowed after:
+Allowed only after the synthetic hybrid gate passes. Canonical promotion still
+requires one general 3D and one molecular/protein validation with acceptable
+overhead and stable paired-seed improvement.
 
-1. synthetic hybrid gate passes;
-2. at least one general 3D and one molecular/protein validation improve or stay
-   within their predeclared tolerance;
-3. overhead remains inside the workload budget;
-4. benefit is stable across seeds.
+If hybrid repeatedly helps, the cleaner final implementation is likely to
+concatenate the positive implicit spatial features into the global linear-
+attention feature map, avoiding a second full value-transport pass. That change
+requires mathematical equivalence and performance validation.
 
-The clean final implementation should preferably merge the implicit spatial
-feature into the global linear-attention feature map rather than execute a full
-second transport pass, provided mathematical equivalence and speed are verified.
+### Replace explicit local
 
-### Replace explicit local with implicit
+Requires the strongest evidence: local directional fidelity, force/contact and
+stereochemical tasks, fragment/additivity tests, resource benefit, and both
+real-task lanes. Until then, implicit-only remains experimental.
 
-Requires the strongest evidence:
-
-1. implicit synthetic replacement gate passes;
-2. no meaningful loss on local directional, force, contact, or stereochemical
-   tasks;
-3. measured latency or memory benefit on intended hardware;
-4. real-task results across both workload families;
-5. the approximation limitation is acceptable for the target use case.
-
-Until those conditions hold, implicit-only remains experimental.
-
-## 12. Handoff checklist
-
-Before merging or promoting:
+## 16. Handoff checklist
 
 - [ ] focused CPU tests pass;
 - [ ] CUDA BF16 test passes;
-- [ ] `scripts/check.sh fast` passes;
-- [ ] explicit/hybrid zero-init error passes;
-- [ ] implicit edge-independence error passes;
-- [ ] at least three seeds are present for every arm/task;
-- [ ] approximation diagnostic is attached;
-- [ ] scaling result and fitted slopes are attached;
-- [ ] report and decision JSON are generated;
-- [ ] real-task follow-up is complete or the feature remains explicitly
+- [ ] repository fast/GPU gates pass;
+- [ ] protocol validator passes;
+- [ ] explicit/hybrid zero-init audit passes;
+- [ ] implicit edge-independence audit passes;
+- [ ] at least three paired seeds per task;
+- [ ] approximation diagnostic attached;
+- [ ] fragment-locality diagnostic attached;
+- [ ] scaling result and slopes attached;
+- [ ] report and decision JSON generated;
+- [ ] downstream matrix complete, or the feature remains explicitly
       experimental;
 - [ ] no claim exceeds the evidence boundary.
