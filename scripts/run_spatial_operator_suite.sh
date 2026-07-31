@@ -121,6 +121,9 @@ uv run python scripts/compare_spatial_operators.py \
   > "$RUN_DIR/comparison.log"
 
 python -m json.tool "$RUN_DIR/result.json" > /dev/null
+uv run python scripts/validate_spatial_operator_result.py \
+  "$RUN_DIR/result.json" \
+  2>&1 | tee "$RUN_DIR/protocol-validation.log"
 
 uv run python scripts/report_spatial_operator_comparison.py \
   "$RUN_DIR/result.json" \
@@ -166,6 +169,7 @@ cat > "$RUN_DIR/manifest.json" <<EOF
     "environment.txt",
     "git.txt",
     "focused-tests.log",
+    "protocol-validation.log",
     "comparison.log",
     "report.log",
     "implicit-accuracy.log",
