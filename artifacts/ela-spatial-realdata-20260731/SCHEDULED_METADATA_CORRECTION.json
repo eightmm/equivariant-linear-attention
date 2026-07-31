@@ -1,0 +1,37 @@
+{
+  "date": "2026-07-31",
+  "reason": "The scheduled runs were generated before the receipt schema distinguished a periodic frequency-and-placement ablation from the every-layer matched spatial-operator attribution.",
+  "raw_artifacts_are_unmodified": true,
+  "corrected_contract": {
+    "comparison_role": "periodic_spatial_frequency_and_placement_ablation",
+    "implicit_every": 3,
+    "implicit_active_layer_indices": [
+      0
+    ],
+    "implicit_schedule_anchor": "zero_based_layer_0",
+    "num_layers": 3
+  },
+  "artifacts": {
+    "qm9-implicit-every3.json": {
+      "sha256": "c3b80ba5758e74672e42a3a328b01409d3281cf8c5d273f262f9d57b76e6b86a",
+      "validation_evaluated": true,
+      "test_evaluated": false
+    },
+    "qm9-hybrid-every3.json": {
+      "sha256": "66cb6749c2f38896d49aba88eff6b5ca3138f3ce83581a44377ed2536ccd08ff",
+      "validation_evaluated": true,
+      "test_evaluated": false
+    },
+    "lba-hybrid-every3.json": {
+      "sha256": "83e4e8bfb745beaf6fcf935ff6eb29f606600c00f1422be17660d15385d2dd47",
+      "validation_evaluated": false,
+      "test_evaluated": false
+    }
+  },
+  "implementation_correction": {
+    "rejects_implicit_every_above_num_layers": true,
+    "future_receipts_record_active_layer_indices": true,
+    "future_lba_arm_results_record_the_schedule_directly": true,
+    "execution_and_gradient_selection_are_regression_tested": true
+  }
+}

@@ -49,6 +49,14 @@ class SpatialOperatorAblationConfig:
             raise TypeError("implicit_every must be an integer")
         if self.implicit_every <= 0:
             raise ValueError("implicit_every must be positive")
+        if self.implicit_every > self.model.num_layers:
+            raise ValueError("implicit_every must not exceed model.num_layers")
+
+    @property
+    def implicit_scheduled_layer_indices(self) -> tuple[int, ...]:
+        """Zero-based layers selected by the periodic schedule."""
+
+        return tuple(range(0, self.model.num_layers, self.implicit_every))
 
     def contract(self) -> dict[str, object]:
         return {
@@ -61,6 +69,10 @@ class SpatialOperatorAblationConfig:
             "same_input_output_irreps": True,
             "coordinate_updates": False,
             "implicit_every": self.implicit_every,
+            "implicit_scheduled_layer_indices": (
+                self.implicit_scheduled_layer_indices
+            ),
+            "implicit_schedule_anchor": "zero_based_layer_0",
             "implicit_zero_init": self.implicit_residual_scale_init == 0.0,
         }
 
@@ -195,7 +207,10 @@ class SpatialOperatorAblationModel(nn.Module):
             )
         for index, layer in enumerate(self.backbone.layers):
             state = layer.attention_residual(state, context, condition)
-            if self.uses_implicit_local and index % self.config.implicit_every == 0:
+            if (
+                self.uses_implicit_local
+                and index in self.config.implicit_scheduled_layer_indices
+            ):
                 state = self.implicit_residuals[index](
                     state,
                     positions,
@@ -216,6 +231,12 @@ class SpatialOperatorAblationModel(nn.Module):
             "arm": self.arm,
             "uses_explicit_local": self.uses_explicit_local,
             "uses_implicit_local": self.uses_implicit_local,
+            "implicit_active_layer_indices": (
+                self.config.implicit_scheduled_layer_indices
+                if self.uses_implicit_local
+                else ()
+            ),
+            "implicit_schedule_anchor": "zero_based_layer_0",
             "parameter_count": sum(p.numel() for p in self.parameters()),
             "trainable_parameter_count": sum(
                 p.numel() for p in self.parameters() if p.requires_grad

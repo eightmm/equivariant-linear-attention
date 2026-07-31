@@ -143,6 +143,11 @@ def test_spatial_lba_plan_records_matched_operator_contract() -> None:
     )
     assert plan["ela_spatial"]["readout"] == "ligand_mask_mean_0e"
     assert plan["ela_spatial"]["implicit_every"] == 1
+    assert plan["ela_spatial"]["implicit_active_layer_indices"] == [0, 1, 2]
+    assert (
+        plan["ela_spatial"]["comparison_role"]
+        == "matched_spatial_operator_attribution"
+    )
 
 
 @pytest.mark.parametrize(
@@ -180,7 +185,29 @@ def test_spatial_lba_periodic_schedule_is_recorded_and_built() -> None:
     model = symbols["_build_spatial"]("hybrid", implicit_every=3)
 
     assert plan["ela_spatial"]["implicit_every"] == 3
+    assert plan["ela_spatial"]["implicit_active_layer_indices"] == [0]
+    assert plan["ela_spatial"]["implicit_schedule_anchor"] == "zero_based_layer_0"
+    assert (
+        plan["ela_spatial"]["comparison_role"]
+        == "periodic_spatial_frequency_and_placement_ablation"
+    )
     assert model.config.implicit_every == 3
+
+
+def test_spatial_lba_rejects_period_longer_than_registered_stack() -> None:
+    symbols = _symbols()
+
+    with pytest.raises(SystemExit):
+        symbols["parse_args"](
+            [
+                "artifacts/run/invalid.json",
+                "--arms",
+                "ela_hybrid",
+                "--spatial-implicit-every",
+                "4",
+                "--dry-run",
+            ]
+        )
 
 
 def test_radius_edges_include_self_and_respect_cutoff() -> None:

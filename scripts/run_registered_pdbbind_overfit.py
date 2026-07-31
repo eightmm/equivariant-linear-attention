@@ -251,6 +251,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--eval-interval must be positive")
     if args.spatial_implicit_every <= 0:
         parser.error("--spatial-implicit-every must be positive")
+    if args.spatial_implicit_every > NUM_LAYERS:
+        parser.error(
+            "--spatial-implicit-every must not exceed the registered layer count"
+        )
     if (
         not any(
             arm in {"ela_implicit", "ela_hybrid"}
@@ -360,6 +364,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 batch_size=args.batch_size,
                 eval_interval=args.eval_interval,
                 budget_seconds=min(MAX_ARM_GPU_SECONDS, remaining),
+                spatial_implicit_every=(
+                    args.spatial_implicit_every
+                    if arm in {"ela_implicit", "ela_hybrid"}
+                    else None
+                ),
             )
             result["arms"].append(arm_result)
             result["packet_elapsed_seconds"] = time.perf_counter() - packet_started
@@ -441,6 +450,11 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
         },
         "ela_spatial": {
             "kind": "equivariant_linear_attention_spatial_ablation",
+            "comparison_role": (
+                "matched_spatial_operator_attribution"
+                if args.spatial_implicit_every == 1
+                else "periodic_spatial_frequency_and_placement_ablation"
+            ),
             "arms": [
                 arm for arm in args.arms if arm.startswith("ela_")
             ],
@@ -457,6 +471,15 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
                 4.0 * EGNN_CUTOFF_ANGSTROM,
             ],
             "implicit_every": args.spatial_implicit_every,
+            "implicit_active_layer_indices": (
+                list(range(0, NUM_LAYERS, args.spatial_implicit_every))
+                if any(
+                    arm in {"ela_implicit", "ela_hybrid"}
+                    for arm in args.arms
+                )
+                else []
+            ),
+            "implicit_schedule_anchor": "zero_based_layer_0",
             "common_node_multipoles": "edge_free_zero_neighbor_context",
             "readout": "ligand_mask_mean_0e",
         },
@@ -553,6 +576,7 @@ def _run_arm(
     batch_size: int,
     eval_interval: int,
     budget_seconds: float,
+    spatial_implicit_every: int | None = None,
 ) -> dict[str, object]:
     model = model.to(device=device, dtype=torch.float32)
     normalizer = normalizer.to(device=device, dtype=torch.float32)
@@ -657,6 +681,11 @@ def _run_arm(
         if arm in {"egnn", "unified", "ela_explicit", "ela_hybrid"}
         else 0
     )
+    implicit_active_layer_indices = (
+        list(range(0, NUM_LAYERS, spatial_implicit_every))
+        if spatial_implicit_every is not None
+        else []
+    )
     return {
         "arm": arm,
         "status": "completed",
@@ -683,6 +712,13 @@ def _run_arm(
         "initial_state_sha256": initial_state_sha256,
         "final_state_sha256": _state_hash(model),
         "edge_count_with_self": edge_count,
+        "implicit_every": spatial_implicit_every,
+        "implicit_active_layer_indices": implicit_active_layer_indices,
+        "implicit_schedule_anchor": (
+            "zero_based_layer_0"
+            if spatial_implicit_every is not None
+            else None
+        ),
         "history": history,
         "validation_evaluated": False,
         "test_evaluated": False,

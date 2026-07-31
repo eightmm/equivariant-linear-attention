@@ -286,6 +286,11 @@ def main() -> None:
             "readout": "layernorm_node_linear_graph_mean",
         }
     elif args.benchmark_model == "ela_spatial":
+        implicit_active_layer_indices = (
+            list(range(0, args.num_layers, args.spatial_implicit_every))
+            if args.spatial_arm in {"implicit", "hybrid"}
+            else []
+        )
         metrics["baseline_details"] = {
             "name": f"ela_spatial_{args.spatial_arm}",
             "official_reproduction": False,
@@ -300,6 +305,8 @@ def main() -> None:
             "architecture": "equivariant_linear_attention_spatial_ablation",
             "spatial_arm": args.spatial_arm,
             "implicit_every": args.spatial_implicit_every,
+            "implicit_active_layer_indices": implicit_active_layer_indices,
+            "implicit_schedule_anchor": "zero_based_layer_0",
             "common_node_multipoles": "edge_free_zero_neighbor_context",
             "implicit_scales": [
                 args.local_cutoff,
@@ -597,6 +604,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error(
             "--spatial-implicit-every requires ela_spatial implicit or hybrid"
         )
+    if args.spatial_implicit_every > args.num_layers:
+        parser.error("--spatial-implicit-every must not exceed --num-layers")
     if (
         not torch.isfinite(torch.tensor(args.whitened_global_ridge))
         or args.whitened_global_ridge <= 0.0
@@ -2210,6 +2219,11 @@ def _run_config(
             "diagnostic_effective_rank": args.diagnostic_effective_rank,
         }
     if args.benchmark_model == "ela_spatial":
+        implicit_active_layer_indices = (
+            list(range(0, args.num_layers, args.spatial_implicit_every))
+            if args.spatial_arm in {"implicit", "hybrid"}
+            else []
+        )
         return {
             "dataset": args.dataset,
             "data_root": str(args.data_root),
@@ -2220,9 +2234,15 @@ def _run_config(
             "batch_size": args.batch_size,
             "steps": args.steps,
             "model": args.benchmark_model,
-            "comparison_role": "matched_spatial_operator_attribution",
+            "comparison_role": (
+                "matched_spatial_operator_attribution"
+                if args.spatial_implicit_every == 1
+                else "periodic_spatial_frequency_and_placement_ablation"
+            ),
             "spatial_arm": args.spatial_arm,
             "implicit_every": args.spatial_implicit_every,
+            "implicit_active_layer_indices": implicit_active_layer_indices,
+            "implicit_schedule_anchor": "zero_based_layer_0",
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "num_heads": args.num_heads,

@@ -115,6 +115,10 @@ def test_spatial_benchmark_arms_enforce_matched_edge_contract(
     assert model.arm == arm
     assert config["spatial_arm"] == arm
     assert config["common_node_multipoles"] == "edge_free_zero_neighbor_context"
+    assert config["comparison_role"] == "matched_spatial_operator_attribution"
+    assert config["implicit_active_layer_indices"] == (
+        [] if arm == "explicit" else [0, 1, 2]
+    )
     assert sum(parameter.numel() for parameter in model.parameters()) == 249_816
 
     invalid_argv = ["--benchmark-model", "ela_spatial", "--spatial-arm", arm]
@@ -143,6 +147,12 @@ def test_spatial_benchmark_records_periodic_implicit_schedule(arm: str) -> None:
     model = symbols["_build_benchmark_model"](args, node_dim=11)
 
     assert config["implicit_every"] == 3
+    assert config["implicit_active_layer_indices"] == [0]
+    assert config["implicit_schedule_anchor"] == "zero_based_layer_0"
+    assert (
+        config["comparison_role"]
+        == "periodic_spatial_frequency_and_placement_ablation"
+    )
     assert model.config.implicit_every == 3
 
 
@@ -158,6 +168,19 @@ def test_spatial_schedule_rejects_irrelevant_model_or_explicit_arm() -> None:
                 "ela_spatial",
                 "--spatial-arm",
                 "explicit",
+                "--spatial-implicit-every",
+                "3",
+            ]
+        )
+    with pytest.raises(SystemExit):
+        symbols["parse_args"](
+            [
+                "--benchmark-model",
+                "ela_spatial",
+                "--spatial-arm",
+                "implicit",
+                "--num-layers",
+                "2",
                 "--spatial-implicit-every",
                 "3",
             ]

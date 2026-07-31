@@ -108,3 +108,9 @@ Prediction: scheduled QM9 implicit remains within `0.020 eV` of always-on
 implicit, uses at most `1.10x` explicit latency and at most `1.35x` explicit
 memory. Scheduled LBA hybrid reaches `<=0.10 pK`, with at most `1.10x`
 explicit latency and memory. Failure leaves the option experimental.
+
+For the three-layer model, `implicit_every=3` is anchored at zero-based layer
+0 and therefore activates layer `[0]`. It is a frequency-and-placement
+ablation, not the every-layer matched-operator attribution above. The
+scheduled QM9 hybrid is an exploratory companion arm; no post-hoc promotion
+threshold is assigned to it.

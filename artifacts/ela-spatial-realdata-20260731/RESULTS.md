@@ -115,3 +115,52 @@ The combined evidence favors an architecture policy, not one universal arm:
 - implicit smooth spatial transport only as a selectively scheduled global
   residual where its accuracy gain justifies the workspace;
 - no always-on hybrid until its memory and optimization behavior improve.
+
+## Periodic implicit follow-up
+
+`implicit_every=3` in this three-layer implementation executes the implicit
+residual at zero-based layer `[0]` only. This is a frequency-and-placement
+ablation, not another matched operator-replacement comparison.
+
+### QM9
+
+| Arm | Val MAE (eV) | Median step (s) | Peak CUDA (MB) |
+|---|---:|---:|---:|
+| explicit | 0.671843 | 0.19988 | 262.6 |
+| implicit, every layer | **0.627661** | 0.18172 | 322.8 |
+| implicit, layer `[0]` | 0.652378 | **0.17440** | **239.5** |
+| hybrid, every layer | 0.638748 | 0.20132 | 390.6 |
+| hybrid, layer `[0]` | 0.632676 | 0.20079 | 306.1 |
+
+Scheduled implicit improved explicit by `0.019466 eV`, with `0.873x` latency
+and `0.912x` memory. It nevertheless regressed always-on implicit by
+`0.024716 eV`, exceeding the registered `0.020 eV` guard. It therefore failed
+promotion and remains experimental.
+
+Scheduled hybrid is the best exploratory resource/accuracy compromise in this
+one seed: versus explicit it improved MAE by `0.039167 eV` at `1.005x`
+latency and `1.166x` memory; versus always-on hybrid it improved MAE by
+`0.006072 eV` and reduced memory to `0.784x`. The preregistration did not give
+this companion arm a numeric promotion gate, so this is a Pareto observation,
+not a promotion or default change.
+
+### LBA train-only
+
+| Arm | Train MAE (pK) | Median step (s) | Peak CUDA (MB) | Capacity gate |
+|---|---:|---:|---:|---:|
+| explicit | **0.051845** | **0.15151** | **915.6** | pass |
+| hybrid, every layer | 0.198044 | 0.16963 | 1,064.2 | fail |
+| hybrid, layer `[0]` | 0.241412 | 0.16680 | 965.0 | fail |
+
+Scheduling did not recover sharp-interaction capacity. It was `1.101x` the
+explicit latency and `1.054x` its memory, while missing the `0.10 pK` capacity
+threshold. The exact latency ratio was `1.100904x`, so it also exceeded the
+registered `<=1.10x` ceiling by `0.000904x`; the memory ceiling passed.
+Relative to always-on hybrid it used `0.907x` memory but fit worse. Thus
+explicit remains the only admitted LBA-capacity policy.
+
+The raw run receipts predate the corrected schedule metadata and retain their
+original fields. Their hashes and the non-destructive semantic correction are
+recorded in `SCHEDULED_METADATA_CORRECTION.json`. Future receipts now record
+the actual active layer indices and reject periods longer than the model
+stack. No LGL result participates in this decision.

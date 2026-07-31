@@ -17,13 +17,18 @@ from equivariant_attention.spatial_ablation import (
 from equivariant_attention.spatial_benchmarks import make_synthetic_spatial_batch
 
 
-def _config(*, scale_init: float = 0.0) -> SpatialOperatorAblationConfig:
+def _config(
+    *,
+    scale_init: float = 0.0,
+    num_layers: int = 1,
+    implicit_every: int = 1,
+) -> SpatialOperatorAblationConfig:
     return SpatialOperatorAblationConfig(
         model=EquivariantLinearAttentionConfig(
             input_irreps="4x0e + 1x1o",
             output_irreps="1x0e",
             hidden_dim=16,
-            num_layers=1,
+            num_layers=num_layers,
             num_heads=4,
             local_rank=3,
             local_cutoff=2.5,
@@ -35,6 +40,7 @@ def _config(*, scale_init: float = 0.0) -> SpatialOperatorAblationConfig:
             learnable_scale_weights=True,
         ),
         implicit_residual_scale_init=scale_init,
+        implicit_every=implicit_every,
     )
 
 
@@ -67,6 +73,18 @@ def test_all_arms_have_one_parameter_schema_and_hash() -> None:
         hashes.add(state_dict_sha256(model))
     assert len(counts) == 1
     assert hashes == {reference_hash}
+
+
+def test_audit_distinguishes_configured_schedule_from_active_layers() -> None:
+    config = _config(num_layers=3, implicit_every=3)
+
+    assert config.contract()["implicit_scheduled_layer_indices"] == (0,)
+    assert SpatialOperatorAblationModel(config, arm="explicit").audit()[
+        "implicit_active_layer_indices"
+    ] == ()
+    assert SpatialOperatorAblationModel(config, arm="implicit").audit()[
+        "implicit_active_layer_indices"
+    ] == (0,)
 
 
 def test_zero_initialized_hybrid_is_exactly_explicit() -> None:
@@ -163,3 +181,46 @@ def test_zero_implicit_layerscale_receives_gradient() -> None:
     assert scale.grad is not None
     assert torch.isfinite(scale.grad).all()
     assert torch.count_nonzero(scale.grad) > 0
+
+
+def test_periodic_implicit_contract_rejects_period_longer_than_stack() -> None:
+    with pytest.raises(ValueError, match="must not exceed"):
+        _config(num_layers=2, implicit_every=3)
+
+
+def test_periodic_implicit_executes_and_differentiates_selected_layers_only() -> None:
+    torch.manual_seed(17)
+    config = _config(num_layers=3, implicit_every=3)
+    model = SpatialOperatorAblationModel(config, arm="hybrid").double()
+    batch, graph, no_edge_graph = _fixture()
+    calls = [0, 0, 0]
+    hooks = [
+        residual.register_forward_hook(
+            lambda _module, _inputs, _output, index=index: calls.__setitem__(
+                index,
+                calls[index] + 1,
+            )
+        )
+        for index, residual in enumerate(model.implicit_residuals)
+    ]
+
+    output = model(
+        batch.node_irreps,
+        batch.positions,
+        graph,
+        no_edge_graph=no_edge_graph,
+    )["graph_irreps"]
+    output.square().mean().backward()
+    for hook in hooks:
+        hook.remove()
+
+    assert config.implicit_scheduled_layer_indices == (0,)
+    assert config.contract()["implicit_schedule_anchor"] == "zero_based_layer_0"
+    assert calls == [1, 0, 0]
+    assert model.implicit_residuals[0].even_scale.grad is not None
+    assert torch.count_nonzero(model.implicit_residuals[0].even_scale.grad) > 0
+    assert all(
+        parameter.grad is None
+        for residual in model.implicit_residuals[1:]
+        for parameter in residual.parameters()
+    )

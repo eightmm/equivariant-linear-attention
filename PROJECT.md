@@ -18,8 +18,14 @@
   at `0.286117 pK`; always-on hybrid also failed at `0.198044 pK`. Therefore
   explicit local geometry remains necessary for sharp interaction tasks,
   implicit transport is an experimental selectively scheduled smooth
-  long-range residual, and always-on hybrid is not promoted. QM9 test and all
-  LBA validation/test data remained closed. See
+  long-range residual, and always-on hybrid is not promoted. A follow-up that
+  ran implicit transport only at zero-based layer `[0]` produced QM9 MAEs of
+  `0.652378 eV` for implicit and `0.632676 eV` for hybrid. Scheduled implicit
+  missed its accuracy guard by `0.004716 eV`; scheduled hybrid was a useful
+  exploratory Pareto point but failed LBA train capacity at `0.241412 pK` and
+  exceeded its `1.10x` latency ceiling by `0.000904x` (memory passed).
+  No scheduled arm is promoted. QM9 test and all LBA validation/test data
+  remained closed. See
   `artifacts/ela-spatial-realdata-20260731/RESULTS.md`.
 - The 2026-07-30 canonical generic-3D input contract now accepts one flattened
   `l<=2` carrier over arbitrary `0e/0o/1e/1o/2e/2o` multiplicities, with
@@ -1114,10 +1120,13 @@ The previous adaptive multiscale middle-global LGL packet is archived for
 provenance and compatibility only. It no longer defines the architectural
 target and must not be used as a candidate, baseline, or default. The first
 real-data spatial comparison is now recorded in
-`artifacts/ela-spatial-realdata-20260731/RESULTS.md`. The next scientific gate
-is a multi-seed confirmation of the homogeneous ELA spatial policy against
-frozen unified and private/official EGNN controls, followed by CUDA backend
-profiling.
+`artifacts/ela-spatial-realdata-20260731/RESULTS.md`. The periodic follow-up
+did not promote a schedule: layer-0-only implicit failed its registered
+accuracy guard, while layer-0-only hybrid remained exploratory and failed the
+LBA train-capacity and latency gates. A future candidate must first improve
+the task-conditional local/global gate or fuse the implicit workspace; only
+then does it earn multi-seed confirmation against frozen unified and an
+officially reproduced EGNN, followed by CUDA backend profiling.
 The PyTorch ELL/streamed references, cache modes, automatic dispatch, and
 general reference CG executor now exist, but their performance has not been
 established. Chunk-streamed gated MLP fusion, a custom reverse-CSR backward,

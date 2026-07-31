@@ -316,8 +316,10 @@ kernel, which is a separate future backend.
 Current evidence keeps sparse local geometry in the canonical architecture.
 The implicit kernel is an experimental, selectively scheduled smooth
 long-range residual; it is not a universal local replacement, and the
-always-on explicit-plus-implicit hybrid is not promoted. LGL routing is retired
-from active architecture work. See the preregistered QM9/LBA comparison in
+always-on explicit-plus-implicit hybrid is not promoted. A layer-0-only hybrid
+improved the one-seed QM9 Pareto point but failed the LBA train-capacity gate,
+so it also remains experimental. LGL routing is retired from active
+architecture work. See the preregistered QM9/LBA comparison in
 `artifacts/ela-spatial-realdata-20260731/RESULTS.md`.
 
 ## Complexity
