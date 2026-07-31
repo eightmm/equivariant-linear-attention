@@ -142,6 +142,7 @@ def test_spatial_lba_plan_records_matched_operator_contract() -> None:
         "edge_free_zero_neighbor_context"
     )
     assert plan["ela_spatial"]["readout"] == "ligand_mask_mean_0e"
+    assert plan["ela_spatial"]["implicit_every"] == 1
 
 
 @pytest.mark.parametrize(
@@ -161,6 +162,25 @@ def test_spatial_lba_builders_share_parameter_schema(
 
     assert model.consumes_external_neighbors is expects_edges
     assert sum(parameter.numel() for parameter in model.parameters()) == 258_072
+
+
+def test_spatial_lba_periodic_schedule_is_recorded_and_built() -> None:
+    symbols = _symbols()
+    args = symbols["parse_args"](
+        [
+            "artifacts/run/scheduled.json",
+            "--arms",
+            "ela_hybrid",
+            "--spatial-implicit-every",
+            "3",
+            "--dry-run",
+        ]
+    )
+    plan = symbols["_run_plan"](args)
+    model = symbols["_build_spatial"]("hybrid", implicit_every=3)
+
+    assert plan["ela_spatial"]["implicit_every"] == 3
+    assert model.config.implicit_every == 3
 
 
 def test_radius_edges_include_self_and_respect_cutoff() -> None:

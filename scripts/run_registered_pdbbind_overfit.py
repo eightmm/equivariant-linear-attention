@@ -220,6 +220,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=["attention", "egnn"],
     )
     parser.add_argument(
+        "--spatial-implicit-every",
+        type=int,
+        default=1,
+        help="execute implicit spatial residuals every k layers",
+    )
+    parser.add_argument(
         "--allow-label-blind-sample-ids",
         action="store_true",
         help=(
@@ -243,6 +249,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error(f"--batch-size must lie in [1, {BATCH_SIZE}]")
     if args.eval_interval <= 0:
         parser.error("--eval-interval must be positive")
+    if args.spatial_implicit_every <= 0:
+        parser.error("--spatial-implicit-every must be positive")
+    if (
+        not any(
+            arm in {"ela_implicit", "ela_hybrid"}
+            for arm in args.arms
+        )
+        and args.spatial_implicit_every != 1
+    ):
+        parser.error(
+            "--spatial-implicit-every requires ela_implicit or ela_hybrid"
+        )
     return args
 
 
@@ -327,7 +345,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif arm == "unified":
                 model = _build_unified()
             else:
-                model = _build_spatial(arm.removeprefix("ela_"))
+                model = _build_spatial(
+                    arm.removeprefix("ela_"),
+                    implicit_every=args.spatial_implicit_every,
+                )
             arm_result = _run_arm(
                 arm=arm,
                 model=model,
@@ -435,6 +456,7 @@ def _run_plan(args: argparse.Namespace) -> dict[str, object]:
                 2.0 * EGNN_CUTOFF_ANGSTROM,
                 4.0 * EGNN_CUTOFF_ANGSTROM,
             ],
+            "implicit_every": args.spatial_implicit_every,
             "common_node_multipoles": "edge_free_zero_neighbor_context",
             "readout": "ligand_mask_mean_0e",
         },
@@ -481,7 +503,11 @@ def _build_unified() -> torch.nn.Module:
     )
 
 
-def _build_spatial(arm: str) -> torch.nn.Module:
+def _build_spatial(
+    arm: str,
+    *,
+    implicit_every: int = 1,
+) -> torch.nn.Module:
     torch.manual_seed(MODEL_SEED)
     return SpatialOperatorRegressionModel(
         arm=arm,
@@ -492,6 +518,7 @@ def _build_spatial(arm: str) -> torch.nn.Module:
         local_rank=NUM_HEADS,
         local_cutoff=EGNN_CUTOFF_ANGSTROM,
         implicit_residual_scale_init=0.0,
+        implicit_every=implicit_every,
     )
 
 

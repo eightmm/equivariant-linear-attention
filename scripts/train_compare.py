@@ -299,6 +299,7 @@ def main() -> None:
             "readout": "canonical_0e_graph_mean",
             "architecture": "equivariant_linear_attention_spatial_ablation",
             "spatial_arm": args.spatial_arm,
+            "implicit_every": args.spatial_implicit_every,
             "common_node_multipoles": "edge_free_zero_neighbor_context",
             "implicit_scales": [
                 args.local_cutoff,
@@ -414,6 +415,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--spatial-arm",
         choices=["explicit", "implicit", "hybrid"],
         default="explicit",
+    )
+    parser.add_argument(
+        "--spatial-implicit-every",
+        type=_positive_int,
+        default=1,
+        help=(
+            "execute the implicit residual every k layers for ela_spatial "
+            "implicit/hybrid arms"
+        ),
     )
     parser.add_argument(
         "--architecture-arm",
@@ -582,6 +592,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.benchmark_model != "ela_spatial" and args.spatial_arm != "explicit":
         parser.error("--spatial-arm is available only with ela_spatial")
     if (
+        args.benchmark_model != "ela_spatial" or args.spatial_arm == "explicit"
+    ) and args.spatial_implicit_every != 1:
+        parser.error(
+            "--spatial-implicit-every requires ela_spatial implicit or hybrid"
+        )
+    if (
         not torch.isfinite(torch.tensor(args.whitened_global_ridge))
         or args.whitened_global_ridge <= 0.0
     ):
@@ -631,6 +647,7 @@ def _build_benchmark_model(
             local_cutoff=args.local_cutoff,
             num_rbf=args.num_rbf,
             implicit_residual_scale_init=0.0,
+            implicit_every=args.spatial_implicit_every,
         )
     if args.benchmark_model in {
         "unified_multipole",
@@ -2205,6 +2222,7 @@ def _run_config(
             "model": args.benchmark_model,
             "comparison_role": "matched_spatial_operator_attribution",
             "spatial_arm": args.spatial_arm,
+            "implicit_every": args.spatial_implicit_every,
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "num_heads": args.num_heads,

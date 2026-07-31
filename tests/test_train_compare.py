@@ -125,6 +125,45 @@ def test_spatial_benchmark_arms_enforce_matched_edge_contract(
         symbols["_build_benchmark_model"](invalid, node_dim=11)
 
 
+@pytest.mark.parametrize("arm", ["implicit", "hybrid"])
+def test_spatial_benchmark_records_periodic_implicit_schedule(arm: str) -> None:
+    symbols = _script_symbols()
+    argv = [
+        "--benchmark-model",
+        "ela_spatial",
+        "--spatial-arm",
+        arm,
+        "--spatial-implicit-every",
+        "3",
+    ]
+    if arm == "hybrid":
+        argv.append("--precompute-local-edges")
+    args = symbols["parse_args"](argv)
+    config = symbols["_run_config"](args, split_seed=42, model_seed=43)
+    model = symbols["_build_benchmark_model"](args, node_dim=11)
+
+    assert config["implicit_every"] == 3
+    assert model.config.implicit_every == 3
+
+
+def test_spatial_schedule_rejects_irrelevant_model_or_explicit_arm() -> None:
+    symbols = _script_symbols()
+
+    with pytest.raises(SystemExit):
+        symbols["parse_args"](["--spatial-implicit-every", "3"])
+    with pytest.raises(SystemExit):
+        symbols["parse_args"](
+            [
+                "--benchmark-model",
+                "ela_spatial",
+                "--spatial-arm",
+                "explicit",
+                "--spatial-implicit-every",
+                "3",
+            ]
+        )
+
+
 def test_matched_vnext_arm_is_explicit_and_requires_precomputed_edges() -> None:
     symbols = _script_symbols()
     args = symbols["parse_args"](
