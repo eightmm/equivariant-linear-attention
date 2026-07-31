@@ -19,24 +19,12 @@ from .implicit_spatial_residual import ImplicitSpatialResidual
 from .irreps import IrrepLayout
 from .unified import Prepared3DGraph, prepare_3d_graph
 
-
 SpatialOperatorArm = Literal["explicit", "implicit", "hybrid"]
 
 
 @dataclass(frozen=True, slots=True)
 class SpatialOperatorAblationConfig:
-    """Resource-matched comparison of three spatial-operator arms.
-
-    All arms contain the same modules and therefore have the same parameter
-    schema. The arm changes only execution:
-
-    - ``explicit``: exact global linear attention + explicit sparse local;
-    - ``implicit``: exact global linear attention + edge-free implicit residual;
-    - ``hybrid``: exact global linear attention + both spatial residuals.
-
-    Coordinate updates are intentionally excluded from this comparison layer so
-    every arm sees one frozen geometry and the operator attribution is clean.
-    """
+    """Matched explicit, implicit, and hybrid execution configuration."""
 
     model: EquivariantLinearAttentionConfig
     implicit: ImplicitSpatialKernelConfig = ImplicitSpatialKernelConfig()
@@ -77,33 +65,23 @@ class SpatialOperatorAblationConfig:
 
 
 def empty_prepared_graph_like(graph: Prepared3DGraph) -> Prepared3DGraph:
-    """Create the no-edge topology used by the implicit-only arm."""
-
-    edge_index = torch.empty(
-        (2, 0),
-        device=graph.device,
-        dtype=torch.long,
-    )
+    edge_index = torch.empty((2, 0), device=graph.device, dtype=torch.long)
     return prepare_3d_graph(graph.batch, edge_index)
 
 
 def state_dict_sha256(module: nn.Module) -> str:
-    """Hash parameter and buffer names, dtypes, shapes, and exact bytes."""
-
     digest = sha256()
     for name, value in sorted(module.state_dict().items()):
         tensor = value.detach().cpu().contiguous()
         digest.update(name.encode("utf-8"))
         digest.update(str(tensor.dtype).encode("ascii"))
         digest.update(str(tuple(tensor.shape)).encode("ascii"))
-        digest.update(
-            tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
-        )
+        digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
     return digest.hexdigest()
 
 
 class SpatialOperatorAblationModel(nn.Module):
-    """One schema-matched model used for explicit/implicit/hybrid comparisons."""
+    """One module schema whose arm flag changes spatial execution only."""
 
     def __init__(
         self,
@@ -159,12 +137,14 @@ class SpatialOperatorAblationModel(nn.Module):
             if no_edge_graph is None
             else no_edge_graph
         )
+        if candidate.device != graph.device:
+            raise ValueError("no_edge_graph and graph must share one device")
         if candidate.num_nodes != graph.num_nodes:
             raise ValueError("no_edge_graph node count must match graph")
         if candidate.num_edges:
             raise ValueError("no_edge_graph must contain zero edges")
-        if not torch.equal(candidate.batch, graph.batch):
-            raise ValueError("no_edge_graph batch must match graph")
+        if candidate.graph_layout.num_graphs != graph.graph_layout.num_graphs:
+            raise ValueError("no_edge_graph graph count must match graph")
         return candidate
 
     @staticmethod
@@ -222,13 +202,9 @@ class SpatialOperatorAblationModel(nn.Module):
             "arm": self.arm,
             "uses_explicit_local": self.uses_explicit_local,
             "uses_implicit_local": self.uses_implicit_local,
-            "parameter_count": sum(
-                parameter.numel() for parameter in self.parameters()
-            ),
+            "parameter_count": sum(p.numel() for p in self.parameters()),
             "trainable_parameter_count": sum(
-                parameter.numel()
-                for parameter in self.parameters()
-                if parameter.requires_grad
+                p.numel() for p in self.parameters() if p.requires_grad
             ),
             "state_dict_sha256": state_dict_sha256(self),
             "contract": self.config.contract(),
