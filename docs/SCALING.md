@@ -1,128 +1,121 @@
-# Scaling contract and benchmark protocol
+# ELA scaling contract
 
-This document states exactly when the repository may claim linear complexity.
-Algorithmic order, measured wall-clock time, neighbor construction, and training
-activation memory are separate claims.
+This document states exactly when the single canonical ELA architecture may be
+described as linear. Algorithmic arithmetic, wall-clock time, neighbor
+construction, refinement, and training activation memory are separate claims.
 
-## 1. Base equivariant linear attention
+## 1. Base layer stack
 
-For
+Let
 
-- \(N\) nodes;
-- \(E\) directed candidate edges;
-- \(L\) layers;
-- fixed hidden width, head count, radial rank, local rank, and multipole rank;
+- \(N\) be the node count;
+- \(E\) be the directed candidate-edge count;
+- \(L\) be the number of `ELALayer` applications;
+- channel widths, head count, local rank, radial rank, and multipole rank be
+  fixed.
 
-one layer contains an \(O(N)\) exact finite-feature global operator and an
-\(O(E)\) sparse local operator. Therefore
+One layer contains:
+
+- an exact finite-feature global operator with \(O(N)\) arithmetic;
+- an exact sparse local operator with \(O(E)\) arithmetic;
+- an invariant branch router and pointwise update with \(O(N)\) arithmetic.
+
+Therefore
 
 \[
-T_{\rm base}=O\left(L(N+E)\right).
+\boxed{
+T_{\rm ELA}=O\left(L(N+E)\right)
+}
 \]
 
-This does **not** by itself imply node-linear scaling. Node-linear scaling
-requires a candidate family with
+and no `N x N` attention tensor is materialized.
+
+## 2. Node-linear condition
+
+The expression above does not by itself imply node-linear scaling. Node-linear
+scaling requires a graph family satisfying
 
 \[
 E=O(N).
 \]
 
-Examples include fixed-degree kNN, bounded-density radius graphs, and fixed
-valence meshes. A complete candidate graph has \(E=\Theta(N^2)\), yielding
+Examples:
+
+- fixed-degree kNN;
+- bounded-density radius graphs;
+- fixed-valence meshes;
+- fixed-cutoff Verlet candidates under bounded density.
+
+A complete candidate graph has
 
 \[
-T_{\rm base}=O(LN^2).
+E=\Theta(N^2),
 \]
 
-Edges outside the smooth cutoff still incur candidate geometry and score costs
-if they are present in the prepared graph.
-
-## 2. Coordinate updates
-
-With fixed candidate topology, coordinate refinement recomputes graph centers,
-normalized coordinates, edge geometry, RBF values, cutoff weights, and node
-multipoles after each layer. This is \(O(N+E)\) per layer and does not change the
-asymptotic order:
+so the local part becomes
 
 \[
-T_{\rm coordinate}=O\left(L(N+E)\right).
+O(LN^2).
 \]
 
-Neighbor-list rebuild is external. Its cost depends on the provider:
+Candidate edges outside the smooth cutoff still incur indexing and geometry
+cost if they are present in the prepared graph.
 
-- cell/Verlet list: expected \(O(N+E)\) under bounded density;
+## 3. Optional context
+
+Invariant condition and semantic-order PE are node-level context. With fixed
+context width they add
+
+\[
+O(LN)
+\]
+
+and do not change the base asymptotic order.
+
+If both are absent, their layer modulation is bypassed entirely. Allocating the
+capability does not force its runtime cost on a context-free call, aside from the
+small parameter storage of dormant modules.
+
+## 4. Coordinate refinement
+
+A `RefinementRequest` with \(S\) outer update steps evaluates the ELA stack once
+per update and once more at the final geometry:
+
+\[
+T_{\rm refine}
+=
+O\left((S+1)L(N+E)\right)
+\]
+
+while candidate topology is fixed.
+
+Each update recomputes graph centering, edge displacement, distance, cutoff,
+radial features, and node multipoles.
+
+Graph reconstruction is external. Typical provider costs are:
+
+- cell/Verlet list under bounded density: expected \(O(N+E)\);
 - spatial tree: commonly \(O(N\log N+E)\);
 - brute-force pair search: \(O(N^2)\).
 
-No end-to-end linear claim may omit that distinction.
+No end-to-end linear claim may exclude a rebuild that is actually performed.
 
-## 3. Attention Residuals
+## 5. Memory
 
-With \(B\) retained block-level depth sources, the two depth routers per layer
-add an \(O(LBN)\) term:
+### No-gradient inference
 
-\[
-T_{\rm AttnRes}
-=
-O\left(L(N+E)+LBN\right).
-\]
-
-If \(B\) is fixed independently of depth, the model remains linear in \(L\). If
-\(B=\Theta(L)\), depth routing contributes
-
-\[
-O(L^2N).
-\]
-
-Inference cache adds \(O(BN)\) hidden storage. Training activation memory can
-contain an \(O(LBN)\) term unless checkpointing or recomputation removes it.
-
-## 4. Edge-free implicit spatial kernel
-
-For finite feature rank \(F\), transported value width \(D\), \(A\)
-applications, \(G\) graphs, and bounded node chunk size \(C\),
-
-\[
-T_{\rm implicit}=O(ANFD),
-\]
-
-\[
-M_{\rm implicit,infer}
-=
-O\left(N(F+D)+GFD+CFD\right).
-\]
-
-The \(GFD\) term stores one sufficient statistic per graph. The \(CFD\) term is
-the bounded chunked outer-product workspace. The implementation does not create
-a full \(NFD\) forward temporary. Eager autograd nevertheless retains
-chunk-local contractions across the node axis, so without checkpointing a
-conservative training bound is
-
-\[
-M_{\rm implicit,train}
-=
-O\left(
-N(F+D)+GFD+CFD+ANFD
-\right).
-\]
-
-For fixed \(F,D,C,A\), both bounds remain node-linear, but chunking alone does
-not make training activation memory independent of \(NFD\). The claim is about
-a smooth low-rank spatial-kernel approximation, not exact hard-cutoff
-neighborhoods.
-
-## 5. Memory statements
-
-The phrase “persistent state is \(O(N)\)” refers to one inference hidden state.
-More complete bounds are:
-
-### Base no-grad inference
+At fixed widths and ranks,
 
 \[
 M_{\rm infer}=O(N+E).
 \]
 
-### Base training without activation checkpointing
+This includes node state, graph metadata, geometry, and bounded layer
+workspace.
+
+### Training without activation checkpointing
+
+Autograd may retain node and edge activations for every depth:
 
 \[
 M_{\rm train}=O\left(L(N+E)\right)
@@ -130,79 +123,43 @@ M_{\rm train}=O\left(L(N+E)\right)
 
 up to fixed channel/rank factors.
 
-### AttnRes inference
+### Refinement training
+
+Backpropagating through all \(S\) refinement steps without recomputation gives a
+conservative bound
 
 \[
-M_{\rm infer,AttnRes}=O(N+E+BN).
-\]
-
-### AttnRes training
-
-A conservative activation upper bound is
-
-\[
-M_{\rm train,AttnRes}
+M_{\rm refine,train}
 =
-O\left(L(N+E)+LBN\right).
+O\left((S+1)L(N+E)\right).
 \]
 
-## 6. Why wall-clock may not look linear
+Outer-step checkpointing or truncated-gradient policies must be reported when
+used.
 
-Big-O arithmetic does not imply exact proportional GPU time. Relevant effects
+## 6. Why wall-clock need not be perfectly linear
+
+Big-O arithmetic does not imply exact proportional device time. Relevant effects
 include:
 
 - kernel launch and Python dispatch overhead at small sizes;
-- changing occupancy and tensor-core utilization;
-- padded or bucketed graph schedules;
+- changing GPU occupancy;
+- tensor-core utilization;
 - memory-bandwidth saturation;
 - allocator and cache behavior;
 - degree skew in sparse reductions;
-- graph-count growth in per-graph sufficient statistics;
-- autograd saved tensors and recomputation.
+- graph padding and bucketing;
+- autograd saved tensors;
+- optional graph reconstruction.
 
-Measured wall-clock linearity must therefore be established empirically.
+Measured wall-clock linearity must be established for the target hardware and
+batch regime.
 
-## 7. Benchmark harness
+## 7. Required benchmark sweeps
 
-Use
+### Node count
 
-```bash
-uv run python scripts/benchmark_scaling.py \
-  --modes base,attnres,implicit \
-  --nodes 256,512,1024,2048,4096,8192 \
-  --depths 4,8,16,32 \
-  --blocks 4,8 \
-  --degree 32 \
-  --warmup 10 \
-  --repeats 30 \
-  --device cuda \
-  --dtype bfloat16 \
-  --output artifacts/scaling.json
-```
-
-The harness records:
-
-- prepared-model forward or forward+backward latency;
-- optional CSR graph-pack-inclusive latency;
-- peak allocated CUDA memory;
-- \(N,E,L,B\), feature rank, and symbolic formula;
-- log-log node-size slope.
-
-It deliberately records
-
-```text
-neighbor_discovery_included = false
-```
-
-because the synthetic benchmark starts from a fixed-degree candidate topology.
-`--include-graph-pack` adds CSR packing but still does not perform geometric
-neighbor discovery.
-
-## 8. Required sweeps
-
-### Node scaling
-
-Hold \(L,k,B\) fixed and sweep
+Hold depth and degree fixed and sweep
 
 \[
 N\in\{128,512,2048,8192,32768\}.
@@ -211,30 +168,28 @@ N\in\{128,512,2048,8192,32768\}.
 Fit
 
 \[
-\alpha_N=\frac{d\log t}{d\log N}.
+\alpha_N
+=
+\frac{d\log t}{d\log N}.
 \]
 
-Expected arithmetic slope for fixed-degree base and fixed-rank implicit kernels:
+For a fixed-degree graph, the expected arithmetic slope is approximately one.
 
-\[
-\alpha_N\approx1.
-\]
+### Depth
 
-### Depth scaling
-
-Hold \(N,k\) fixed and sweep
+Hold \(N\) and degree fixed and sweep
 
 \[
 L\in\{2,4,8,16,32\}.
 \]
 
-Expected:
+Expected arithmetic slope:
 
-- base: \(\alpha_L\approx1\);
-- AttnRes with fixed \(B\): \(\alpha_L\approx1\);
-- AttnRes with \(B=L\): \(\alpha_L\approx2\) once routing dominates.
+\[
+\alpha_L\approx1.
+\]
 
-### Degree scaling
+### Degree
 
 Hold \(N,L\) fixed and sweep
 
@@ -242,39 +197,75 @@ Hold \(N,L\) fixed and sweep
 k\in\{8,16,32,64,128\}.
 \]
 
-The local term should be approximately affine in \(E=kN\), while the global
-term remains unchanged.
+The sparse-local contribution should be approximately affine in
 
-### Batch-shape scaling
+\[
+E=kN.
+\]
+
+The global linear-attention contribution remains independent of degree.
+
+### Context
+
+Compare the same trained architecture with:
+
+```text
+context absent
+invariant condition only
+semantic order only
+condition + order
+```
+
+Record latency and peak memory. The context-free path must not execute learned
+conditioner modulation.
+
+### Refinement
+
+Sweep
+
+\[
+S\in\{0,1,2,4,8\}
+\]
+
+with and without graph reconstruction. Record ELA time and rebuild time
+separately.
+
+### Batch shape
 
 Compare:
 
 - one large graph;
-- many uniform small graphs;
-- strongly ragged graph batches;
+- uniform small graphs;
+- strongly ragged graphs;
 - skewed degree distributions.
 
-This identifies padding, bucketing, graph-statistic, and segment-reduction
-overhead that a simple Big-O formula does not expose.
+## 8. Measurement protocol
 
-## 9. Promotion language
+For each setting record:
 
-A safe public statement is:
+- warmup count;
+- repeat count;
+- median and p90 latency;
+- forward-only and forward+backward separately;
+- peak allocated and reserved device memory;
+- node and edge counts;
+- graph count and degree distribution;
+- dtype and autocast policy;
+- whether graph packing is included;
+- whether neighbor discovery or rebuild is included;
+- git SHA and environment receipt.
+
+Prepared-model and end-to-end measurements must be labeled separately.
+
+## 9. Safe public statement
 
 > For a precomputed directed candidate graph with \(N\) nodes and \(E\) edges,
-> fixed architectural widths and ranks, the base equivariant linear-attention
-> stack has \(O(L(N+E))\) forward arithmetic and does not materialize an
-> \(N\times N\) attention tensor. When \(E=O(N)\), it is linear in node count.
-> Neighbor construction is excluded.
+> fixed architectural widths and ranks, the ELA stack has
+> \(O(L(N+E))\) forward arithmetic and does not materialize an \(N\times N\)
+> attention tensor. It is linear in node count when \(E=O(N)\). Neighbor
+> discovery is excluded unless explicitly included in the reported measurement.
 
-For AttnRes add:
+For refinement add:
 
-> With \(B\) retained block sources, total arithmetic is
-> \(O(L(N+E)+LBN)\). Depth linearity requires \(B\) to remain bounded
-> independently of \(L\).
-
-For the implicit kernel add:
-
-> The edge-free spatial approximation has \(O(ANFD)\) arithmetic at fixed
-> finite feature rank and uses chunked per-graph sufficient statistics; it
-> approximates a smooth isotropic kernel rather than an exact radius graph.
+> With \(S\) outer coordinate-update steps, ELA stack arithmetic is
+> \(O((S+1)L(N+E))\), excluding any separately reported neighbor reconstruction.
