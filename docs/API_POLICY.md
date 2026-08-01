@@ -1,26 +1,21 @@
-# API policy
+# ELA public API policy
 
-The repository has one public architecture and one public architecture layer:
+The repository exposes one public architecture, one architecture layer, and one
+graph container:
 
 ```text
 ELA
 ELALayer
+ELABatch
 ```
 
-No public legacy, implicit, AttnRes, conditioned, padded, or coordinate-updating
-model class may be added. Input convenience and optional capabilities remain
+No public legacy, implicit, AttnRes, conditioned, padded, scalar-only, or
+coordinate-updating model class may be added. Optional capabilities remain
 facades around the same `ELA` and `ELALayer` implementation.
 
-## 1. Default user surface
+## 1. Representation policy
 
-The shortest scalar path is:
-
-```python
-model = ELA.scalar(node_dim=32, output_dim=1, cutoff=6.0)
-out = model(x, pos)
-```
-
-Generic irreps use:
+Input and output representations are declared only with irreps.
 
 ```python
 model = ELA(
@@ -32,76 +27,88 @@ model = ELA(
 )
 ```
 
-The direct constructor is a facade that builds `ELAConfig`, `SparseGeometry`,
-and `ELAFeatures`. The lower-level form remains valid:
+Scalar-only data use scalar irreps:
+
+```text
+32 scalar input channels  -> "32x0e"
+1 scalar output channel   -> "1x0e"
+```
+
+The public model must not introduce parallel representation arguments such as
+`node_dim`, `output_dim`, or a separate scalar model factory. One representation
+language prevents ambiguous checkpoints and keeps scalar, vector, and tensor
+models on the same API.
+
+The lower-level configuration form remains valid:
 
 ```python
 model = ELA(ELAConfig(...))
 ```
 
-The two construction forms are mutually exclusive.
+A config and direct constructor fields are mutually exclusive.
 
-## 2. Public input layouts
+## 2. Model input policy
 
-One `ELA.forward` accepts:
-
-### Flat single graph
+`ELA.forward` accepts one `ELABatch`:
 
 ```python
-model(x, pos)
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    ptr=ptr,
+    edge_index=edge_index,
+)
+
+output = model(batch)
 ```
 
-### Flat packed batch
+Convenience constructors normalize external layouts before model execution:
 
 ```python
-model(x, pos, batch=batch)
+batch = ELA.batch(x, pos, batch=batch_index, edge_index=edge_index)
+batch = ELA.padded(x_padded, pos_padded, mask=node_mask)
+batch = ELA.collate(samples)
 ```
 
-### Flat packed batch with supplied candidates
-
-```python
-model(x, pos, batch=batch, edge_index=edge_index)
-```
-
-### Padded batch
-
-```python
-model(x_padded, pos_padded, mask=node_mask)
-```
-
-### Collated plain mapping
-
-```python
-loader = DataLoader(dataset, collate_fn=ELA.collate)
-for batch in loader:
-    output = model(batch)
-```
-
-All layouts normalize to one packed ragged node axis and one
-`Prepared3DGraph`. There is no separate padded model, graph model, or dataset
-adapter architecture.
+The numerical core always receives packed nodes and one receiver-major sparse
+execution graph. There is no separate padded model, dense-adjacency model, or
+framework-specific graph architecture.
 
 ## 3. Graph policy
 
-If `graph` is supplied, it is used directly and no edge input may also be
-supplied.
+`ELABatch.edge_index` uses receiver/sender COO:
 
-If `edge_index` or `adjacency` is supplied, ELA packs it to receiver-major CSR.
-
-If neither is supplied, ELA constructs exact radius candidates using the model
-cutoff. This dependency-free path is a correctness and convenience reference;
-it has quadratic pair-test arithmetic within each graph. Repeated or large
-workloads should call:
-
-```python
-graph = model.prepare_graph(...)
-output = model(x, pos, graph)
+```text
+edge_index[0] = receiver
+edge_index[1] = sender
 ```
 
-Automatic geometric candidates do not infer bond, relation, mesh, or temporal
-semantics. Those must be supplied explicitly when required.
+If edges are supplied, ELA packs them to receiver-major CSR. If edges are absent,
+ELA constructs exact radius candidates using the model cutoff.
 
-## 4. Configuration policy
+Automatic candidates represent geometric proximity only. Bond, mesh, temporal,
+periodic, or typed-relation semantics must be supplied explicitly.
+
+The public graph boundary is `ELABatch`. Internal types such as
+`Prepared3DGraph`, `PackedNeighborGraph`, graph-layout schedules, and radius
+builders are not package-root API.
+
+## 4. Prepared execution policy
+
+For fixed topology:
+
+```python
+batch = model.prepare(batch)
+output = model.forward_prepared(batch)
+```
+
+Preparation may include radius discovery, COO validation, receiver sorting, CSR
+construction, and graph-layout planning. Performance claims must distinguish
+this work from the prepared layer/stack execution.
+
+Prepared metadata is an execution cache, not a second graph container.
+
+## 5. Configuration policy
 
 Canonical public architecture choices are:
 
@@ -114,56 +121,45 @@ geometry
 features
 ```
 
-The direct facade also exposes common fields such as `cutoff`, `condition_dim`,
-and `order_dim`, but they compile into the same config objects.
+The direct constructor may expose common geometry and feature fields such as
+`cutoff`, `num_rbf`, `condition_dim`, and `order_dim`; they compile into the same
+`ELAConfig` objects.
 
-The following remain derived or fixed:
+The following remain derived, fixed, or execution-only:
 
 ```text
 num_heads
 local_rank
 hidden_irreps
-residual_scale_init
-norm_eps
-residual_dropout
-drop_path_rate
-implicit schedule
-AttnRes block schedule
+residual scale
+normalization epsilon
+tensor-closure paths
+chirality construction
 kernel backend
+Triton launch policy
 ```
 
-Execution kernels are never model hyperparameters and do not enter checkpoints.
+Execution kernels never enter checkpoint schemas.
 
-## 5. Runtime optional features
+## 6. Runtime optional features
 
-The direct keyword API is preferred for one-off use:
+Condition, semantic order, and coordinate refinement are optional fields of the
+same `ELABatch`:
 
 ```python
-output = model(
-    x,
-    pos,
-    graph,
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
     condition=condition,
-    order=semantic_order,
-    order_group=component_id,
-    order_mask=ordered_nodes,
-    refine_steps=4,
-    max_coordinate_step=0.2,
-    update_mask=movable_nodes,
+    order=order,
+    refinement=refinement,
 )
 ```
 
-`ELAContext` remains the reusable advanced representation:
-
-```python
-output = model(x, pos, graph, context=ELAContext(...))
-```
-
-An explicit `ELAContext` and shortcut context keywords are mutually exclusive.
 If a field is absent, its path is bypassed rather than evaluated with a learned
 zero-input bias.
 
-## 6. Semantic order policy
+## 7. Semantic-order policy
 
 Order PE uses node-attached semantic coordinates, never the current tensor row
 index.
@@ -172,59 +168,64 @@ index.
 F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
 \]
 
-Valid examples include residue rank, polymer backbone rank, trajectory time,
+Valid examples include residue rank, polymer-backbone rank, trajectory time,
 grid coordinates, and stable topology coordinates. Arbitrary atom serialization
-or dataloader row order is not semantic order.
+or DataLoader row order is not semantic order.
 
-## 7. Conditioning policy
+## 8. Conditioning policy
 
-Condition is an invariant `0e` tensor and may be shared, graph-level, packed
-node-level, or padded node-level. Even scalars receive bounded shift and scale;
-non-scalar sectors receive invariant copy-wise scale only.
+Condition is invariant `0e` information and may be shared, graph-level, or
+node-level. Even scalars receive bounded affine modulation; non-scalar sectors
+receive invariant copy-wise scale only.
 
 Vector and tensor conditions belong in `input_irreps`.
 
-## 8. Coordinate policy
+## 9. Coordinate policy
 
-Coordinate refinement is a bounded outer loop inside the same `ELA.forward`
-entry point. It is activated per call and owns step count, maximum displacement,
+Coordinate refinement is a bounded outer loop activated by a
+`RefinementRequest` in the batch. It owns step count, maximum displacement,
 update mask, centering policy, and optional graph rebuild callback.
 
-Direct refinement is not a conservative integrator. Conservative forces use:
+Direct refinement is not a conservative integrator. Conservative forces use
 
 \[
 F_i=-\nabla_{x_i}E.
 \]
 
-## 9. Dependency policy
+## 10. Dependency policy
 
-The core package and data interface depend only on PyTorch.
+The core package and data interface depend only on PyTorch. Framework-specific
+dataset loaders may exist only as optional integrations.
 
-Framework-specific dataset loaders may exist only as optional integrations.
-Core batching, edge offsetting, masks, adjacency conversion, radius candidates,
-and model execution must remain usable without PyG or DGL.
+Core graph packing, batching, edge offsetting, masks, radius candidates, and
+model execution must remain usable without PyG or DGL.
 
-Plain mapping samples and `ELA.collate` are the canonical dataset boundary.
+Plain mapping samples plus `ELA.collate` are the canonical dataset boundary.
 
-## 10. Kernel policy
+## 11. Kernel policy
 
 The PyTorch implementation is the numerical reference. `torch.compile`, Triton,
-CUDA, or other kernels may accelerate the prepared flat path, but must not add a
-new architecture class, config option, state-dict key, or mathematical branch.
+CUDA, or other kernels may accelerate the prepared path but must not add:
 
-Backend selection is automatic or an execution/debug environment control. Every
-custom kernel must provide a PyTorch fallback and pass forward, gradient,
-equivariance, graph-isolation, dtype, and performance gates.
+- another architecture class;
+- a model hyperparameter;
+- a state-dict key;
+- a mathematical branch;
+- a different output contract.
 
-## 11. Root exports
+Backend selection is automatic or controlled by an execution/debug environment
+variable. Every custom kernel requires a PyTorch fallback and forward, gradient,
+equivariance, graph-isolation, dtype, and performance tests.
+
+## 12. Root exports
 
 The package root may expose:
 
-- `ELA`, `ELAConfig`, `ELALayer`;
-- context and geometry data types;
-- dependency-free graph/data helpers;
-- irrep packing helpers;
-- physics heads and neighbor providers.
+- `ELA`, `ELAConfig`, `ELAFeatures`, `ELALayer`;
+- `ELABatch` and optional context/geometry data types;
+- irrep construction helpers;
+- task-level physics heads.
 
-It must not expose a second backbone or architecture layer. The existing API
-policy test guards forbidden historical names.
+It must not expose a second backbone, a second architecture layer, or internal
+packed graph/runtime types. The API-policy test guards historical names and the
+irreps-only representation contract.
