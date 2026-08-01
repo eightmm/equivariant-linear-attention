@@ -74,15 +74,17 @@ class ELA(_TensorELA):
     ) -> bool:
         return any(key in payload for key in cls._MAPPING_ALIASES.get(name, (name,)))
 
-    @staticmethod
     def _flatten_optional_node_tensor(
+        self,
         value: torch.Tensor | None,
         layout: BatchLayout,
         *,
         name: str,
     ) -> torch.Tensor | None:
         # A graph condition is [B,C], whereas a padded node condition is
-        # [B,M,C]. Keep [B,C] intact even when C happens to equal M.
+        # [B,M,C]. Scalar node conditions may use [B,M] only when condition_dim
+        # is exactly one. This avoids mistaking graph [B,C] for node [B,M] when
+        # C happens to equal M.
         if (
             value is not None
             and layout.kind == "padded"
@@ -96,6 +98,7 @@ class ELA(_TensorELA):
                 value.ndim == 2
                 and value.shape == layout.node_mask.shape
                 and value.is_floating_point()
+                and self.config.features.condition_dim == 1
             ):
                 return layout.flatten_node_tensor(
                     value.unsqueeze(-1),
