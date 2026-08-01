@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from equivariant_attention import (
@@ -11,6 +12,7 @@ from equivariant_attention import (
     RefinementRequest,
     SparseGeometry,
 )
+from equivariant_attention import Prepared3DGraph
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:
@@ -23,7 +25,7 @@ def _fixture(
     *,
     nodes: int = 6,
     features: ELAFeatures = ELAFeatures(),
-) -> tuple[ELA, torch.Tensor, torch.Tensor, object]:
+) -> tuple[ELA, torch.Tensor, torch.Tensor, Prepared3DGraph]:
     config = ELAConfig(
         input_irreps="4x0e",
         output_irreps="1x0e + 1x1o",
@@ -63,8 +65,58 @@ def test_optional_context_is_neutral_at_initialization() -> None:
     torch.testing.assert_close(conditioned, reference, atol=0.0, rtol=0.0)
 
 
-def test_order_encoder_ignores_disabled_node_labels() -> None:
+def test_context_free_forward_bypasses_trained_conditioner() -> None:
+    torch.manual_seed(4)
+    model, node_irreps, positions, graph = _fixture(
+        features=ELAFeatures(condition_dim=5),
+    )
+    model.eval()
+    with torch.inference_mode():
+        reference = model(node_irreps, positions, graph)["node_irreps"]
+    for layer in model.layers:
+        assert layer.conditioner is not None
+        with torch.no_grad():
+            output = layer.conditioner.projection[-1]
+            output.weight.normal_(mean=0.0, std=0.1)
+            output.bias.normal_(mean=0.0, std=0.1)
+    with torch.inference_mode():
+        bypassed = model(node_irreps, positions, graph)["node_irreps"]
+        active = model(
+            node_irreps,
+            positions,
+            graph,
+            context=ELAContext(
+                condition=torch.randn(1, 5, dtype=torch.float64)
+            ),
+        )["node_irreps"]
+    torch.testing.assert_close(bypassed, reference, atol=0.0, rtol=0.0)
+    assert not torch.allclose(active, reference)
+
+
+def test_conditioner_projection_receives_first_step_gradient() -> None:
     torch.manual_seed(5)
+    model, node_irreps, positions, graph = _fixture(
+        features=ELAFeatures(condition_dim=5),
+    )
+    output = model(
+        node_irreps,
+        positions,
+        graph,
+        context=ELAContext(
+            condition=torch.randn(1, 5, dtype=torch.float64)
+        ),
+    )
+    output["node_irreps"].square().mean().backward()
+    conditioner = model.layers[0].conditioner
+    assert conditioner is not None
+    final = conditioner.projection[-1]
+    assert final.weight.grad is not None
+    assert torch.isfinite(final.weight.grad).all()
+    assert torch.count_nonzero(final.weight.grad) > 0
+
+
+def test_order_encoder_ignores_disabled_node_labels() -> None:
+    torch.manual_seed(7)
     model, node_irreps, _, graph = _fixture(
         features=ELAFeatures(order_dim=1),
     )
@@ -84,15 +136,15 @@ def test_order_encoder_ignores_disabled_node_labels() -> None:
     )
     torch.testing.assert_close(first, second, atol=0.0, rtol=0.0)
     torch.testing.assert_close(
-        first[~enabled, :-1],
-        torch.zeros_like(first[~enabled, :-1]),
+        first[~enabled],
+        torch.zeros_like(first[~enabled]),
         atol=0.0,
         rtol=0.0,
     )
 
 
 def test_activated_order_conditioning_preserves_node_permutation_equivariance() -> None:
-    torch.manual_seed(7)
+    torch.manual_seed(9)
     model, node_irreps, positions, graph = _fixture(
         features=ELAFeatures(order_dim=1),
     )
@@ -109,8 +161,7 @@ def test_activated_order_conditioning_preserves_node_permutation_equivariance() 
     permutation = torch.randperm(nodes)
     old_to_new = torch.empty_like(permutation)
     old_to_new[permutation] = torch.arange(nodes)
-    original_edges = _complete_edges(nodes)
-    permuted_edges = old_to_new[original_edges]
+    permuted_edges = old_to_new[_complete_edges(nodes)]
     permuted_graph = model.config.geometry.prepare(
         torch.zeros(nodes, dtype=torch.long),
         permuted_edges,
@@ -195,14 +246,10 @@ def test_context_fields_fail_closed_when_not_enabled() -> None:
     model, node_irreps, positions, graph = _fixture()
     rank = torch.arange(node_irreps.shape[0], dtype=torch.float64)
 
-    try:
+    with pytest.raises(ValueError, match="order_dim"):
         model(
             node_irreps,
             positions,
             graph,
             context=ELAContext(order=OrderContext.sequence(rank)),
         )
-    except ValueError as error:
-        assert "order_dim" in str(error)
-    else:
-        raise AssertionError("disabled order conditioning must fail closed")
