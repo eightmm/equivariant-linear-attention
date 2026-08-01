@@ -8,8 +8,9 @@ ELA_SUITE_MODE=smoke \
   artifacts/canonical-ela/smoke
 ```
 
-Smoke mode runs the focused canonical tests and a small same-weight numerical
-comparison between the internal pre-router reference and public `ELA`.
+Smoke mode runs the focused canonical and data-interface tests plus a small
+same-weight numerical comparison between the internal pre-router reference and
+public `ELA`.
 
 The runner pins `PYTHONPATH` to the current repository, verifies the imported
 package file, rejects a nonempty artifact directory, and uses the locked
@@ -36,7 +37,7 @@ scripts/check.sh gpu
 and a larger same-weight BF16 safety benchmark. Full mode requires a clean
 worktree. The benchmark still does not establish downstream superiority.
 
-## Focused contracts
+## Focused architecture contracts
 
 The suite checks:
 
@@ -61,6 +62,29 @@ The suite checks:
 - historical checkpoint migration fails closed;
 - the canonical regression adapter works.
 
+## Focused data-interface contracts
+
+The same suite also checks:
+
+- `ELA(config)` and the direct constructor compute the same function with shared
+  weights;
+- `ELA.scalar` creates the corresponding scalar irreps model;
+- automatic radius candidates agree with an equivalent cached prepared graph;
+- automatic topology discovery is detached while selected-edge geometry remains
+  coordinate differentiable;
+- flat packed mini-batches do not mix graphs;
+- padded `[B,M,D] + mask` execution matches the equivalent flat packed batch;
+- padded COO, ragged per-graph COO, and boolean adjacency produce the same graph;
+- padded node outputs/deltas and position restoration obey mask semantics;
+- graph-level and padded node-level conditions are distinguished even when
+  their dimensions are numerically equal;
+- condition, semantic order, and refinement shortcuts work on padded data;
+- plain mapping samples collate without PyG and run directly through
+  `model(batch)`;
+- edge offsets, targets, and sample IDs survive collation;
+- chunked radius discovery matches a dense reference and honors graph isolation,
+  self-edge policy, and maximum-neighbor bounds.
+
 ## Resource receipt
 
 `overhead.json` records:
@@ -78,8 +102,22 @@ The suite checks:
 - graph size and degree;
 - exclusion of neighbor discovery.
 
-Context and coordinate-refinement overhead require separate sweeps because they
-are runtime capabilities rather than a second architecture.
+Input-layout and graph-preparation overhead are measured separately:
+
+```bash
+uv run python scripts/benchmark_input_pipeline.py \
+  --graphs 8 \
+  --nodes-per-graph 64 \
+  --degree 16 \
+  --device cuda \
+  --dtype bfloat16 \
+  --output artifacts/input-pipeline.json
+```
+
+That benchmark distinguishes prepared forward, supplied-edge packing,
+automatic radius discovery, padded execution, and mapping execution. Context and
+coordinate-refinement overhead require separate sweeps because they are runtime
+capabilities rather than a second architecture.
 
 ## Artifact layout
 
