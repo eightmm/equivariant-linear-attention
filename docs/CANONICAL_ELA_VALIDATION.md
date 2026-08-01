@@ -1,6 +1,8 @@
 # Canonical ELA validation
 
-## Smoke
+Validation is explicit; automated push/PR CI is disabled.
+
+## Smoke suite
 
 ```bash
 ELA_SUITE_MODE=smoke \
@@ -8,16 +10,9 @@ ELA_SUITE_MODE=smoke \
   artifacts/canonical-ela/smoke
 ```
 
-Smoke mode runs the focused canonical and data-interface tests plus a small
-same-weight numerical comparison between the internal pre-router reference and
-public `ELA`.
+Smoke mode runs focused CPU contracts and a small kernel-backend benchmark.
 
-The runner pins `PYTHONPATH` to the current repository, verifies the imported
-package file, rejects a nonempty artifact directory, and uses the locked
-environment. Tiny CPU smoke receipts are functional diagnostics, not resource or
-accuracy promotion evidence.
-
-## Full
+## Full suite
 
 ```bash
 ELA_SUITE_MODE=full \
@@ -34,106 +29,115 @@ scripts/check.sh fast
 scripts/check.sh gpu
 ```
 
-and a larger same-weight BF16 safety benchmark. Full mode requires a clean
-worktree. The benchmark still does not establish downstream superiority.
+and a larger same-state PyTorch/Triton benchmark. Full mode requires a clean
+worktree.
 
-## Focused architecture contracts
+## Public API contracts
 
 The suite checks:
 
-- package root exposes one backbone `ELA` and one architecture layer
-  `ELALayer`;
-- zero-init branch fusion reproduces exact `G + L`;
-- shared internal reference weights reproduce the full pre-router function;
+- package root exposes one backbone `ELA`, one architecture layer `ELALayer`, and
+  one graph container `ELABatch`;
+- input and output representations are configured only with irreps;
+- no `node_dim`, `output_dim`, or scalar-only model factory is exposed;
+- `ELA` accepts one `ELABatch`;
+- `ELA.batch`, `ELA.padded`, and `ELA.collate` normalize external data into the
+  same packed representation;
+- prepared execution matches ordinary `model(batch)`;
+- graph mean and graph sum readouts are consistent.
+
+## Architecture contracts
+
+The suite checks:
+
+- zero-initialized branch fusion reproduces exact `G + L`;
 - learned fusion remains proper/improper O(3)-equivariant;
 - router and branch-balance parameters receive gradients;
 - minimal config derives heads and local rank deterministically;
-- all supported input/output parity sectors transform correctly;
+- all supported input/output sectors transform correctly;
 - forward, feature gradients, and coordinate gradients are finite;
-- graph isolation, edge-order invariance, node permutation, and required double
-  backward hold;
-- configured condition and semantic-order PE are neutral at initialization;
-- a context-free call bypasses a trained conditioner entirely;
-- semantic-order labels and enable masks follow the node permutation contract;
-- disabled-node order labels have no effect;
+- graph isolation, sparse-edge-order invariance, node permutation, and required
+  double backward hold;
+- condition and semantic-order PE are neutral at initialization;
+- context-free calls bypass trained optional conditioners;
 - coordinate refinement is identity initialized, bounded, masked, centered, and
   equivariant;
-- canonical CUDA FP32/BF16 forward and backward remain finite;
-- historical checkpoint migration fails closed;
-- the canonical regression adapter works.
+- migration from compatible historical checkpoints fails closed.
 
-## Focused data-interface contracts
+## Data and graph contracts
 
-The same suite also checks:
+The suite checks:
 
-- `ELA(config)` and the direct constructor compute the same function with shared
-  weights;
-- `ELA.scalar` creates the corresponding scalar irreps model;
-- automatic radius candidates agree with an equivalent cached prepared graph;
-- automatic topology discovery is detached while selected-edge geometry remains
-  coordinate differentiable;
-- flat packed mini-batches do not mix graphs;
-- padded `[B,M,D] + mask` execution matches the equivalent flat packed batch;
-- padded COO, ragged per-graph COO, and boolean adjacency produce the same graph;
-- padded node outputs/deltas and position restoration obey mask semantics;
-- graph-level and padded node-level conditions are distinguished even when
-  their dimensions are numerically equal;
-- condition, semantic order, and refinement shortcuts work on padded data;
-- plain mapping samples collate without PyG and run directly through
-  `model(batch)`;
-- edge offsets, targets, and sample IDs survive collation;
-- chunked radius discovery matches a dense reference and honors graph isolation,
-  self-edge policy, and maximum-neighbor bounds.
+- `ptr` is the canonical packed graph membership;
+- edges cannot cross graph boundaries;
+- mapping samples collate without PyG;
+- graph-local edge indices are offset correctly;
+- targets and sample IDs survive collation;
+- padded tensors pack and restore correctly;
+- dense and cell-list radius paths match a dense exact reference;
+- radius candidates honor graph isolation, self-edge policy, and
+  maximum-neighbor limits.
 
-## Resource receipt
+## Kernel contracts
 
-`overhead.json` records:
+The PyTorch path is the numerical reference. Focused tests cover:
 
-- exact source path, common-state/input hashes, and migration receipt;
-- git SHA plus GPU, PyTorch, and CUDA runtime fingerprint;
-- node/graph output and input/common-parameter gradient equivalence;
-- public ELA and internal numerical-reference parameter counts;
-- branch-router parameter count;
-- inference latency;
-- optimizer-inclusive train-step latency;
-- raw latency samples and IQR;
-- peak allocated CUDA memory, including optimizer state for the train step;
-- candidate/reference ratios;
-- graph size and degree;
-- exclusion of neighbor discovery.
+- CSR sum forward and first/second derivatives;
+- packed multi-payload reduction;
+- backend fail-closed behavior;
+- CUDA FP32 PyTorch/Triton output and gradient agreement;
+- CUDA BF16 finiteness;
+- full ELA feature, coordinate, and local-parameter gradient agreement.
 
-Input-layout and graph-preparation overhead are measured separately:
+Run backend tests directly:
 
 ```bash
-uv run python scripts/benchmark_input_pipeline.py \
-  --graphs 8 \
-  --nodes-per-graph 64 \
-  --degree 16 \
-  --device cuda \
-  --dtype bfloat16 \
-  --output artifacts/input-pipeline.json
+uv run pytest -q tests/test_triton_ops.py
+uv run pytest -q tests/test_triton_ops_cuda.py
 ```
 
-That benchmark distinguishes prepared forward, supplied-edge packing,
-automatic radius discovery, padded execution, and mapping execution. Context and
-coordinate-refinement overhead require separate sweeps because they are runtime
-capabilities rather than a second architecture.
+## Kernel benchmark
+
+```bash
+uv run python scripts/benchmark_ela.py \
+  --input-irreps "32x0e" \
+  --output-irreps "1x0e" \
+  --nodes 4096 \
+  --degree 32 \
+  --width 128 \
+  --depth 8 \
+  --device cuda \
+  --dtype bfloat16 \
+  --output artifacts/ela-kernels.json
+```
+
+The benchmark uses one prepared `ELABatch`, one model state, and separately
+records:
+
+- output error;
+- input-feature gradient error;
+- coordinate-gradient error;
+- local-parameter-gradient error;
+- inference latency and peak allocated memory;
+- forward/backward latency and peak allocated memory;
+- exclusion of neighbor discovery.
+
+Benchmark results are execution evidence, not downstream accuracy evidence.
 
 ## Artifact layout
 
 ```text
 artifacts/canonical-ela/<run-id>/
-  overhead.json
+  kernels.json
   environment.txt
   git.txt
-  source-provenance.txt
   manifest.json
   focused-tests.log
-  cuda-focused.log # CUDA
   benchmark.log
+  cuda-focused.log # CUDA
   fast-gate.log    # full
   gpu-gate.log     # full CUDA
 ```
 
-Store downstream receipts separately. Do not infer architecture promotion from
-contract or overhead tests alone.
+The manifest records the git SHA, dtype, device, public API contract, backend
+profiles, and hashes of required artifacts.
