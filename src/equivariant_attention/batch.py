@@ -19,6 +19,11 @@ _FLOAT_VALUE_KEYS = frozenset(
     }
 )
 _GEOMETRY_KEYS = frozenset({"pos", "positions"})
+_SAMPLE_ALIASES = {
+    "target": ("target", "y", "label", "labels"),
+    "edge_relation_id": ("edge_relation_id", "edge_type"),
+    "sample_id": ("sample_id", "id", "idx"),
+}
 
 
 def _move_value(
@@ -81,6 +86,19 @@ def _pin_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_pin_value(item) for item in value]
     return value
+
+
+def _normalize_sample(sample: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(sample)
+    for canonical, aliases in _SAMPLE_ALIASES.items():
+        present = [name for name in aliases if name in sample]
+        if len(present) > 1:
+            raise ValueError(
+                f"sample contains multiple aliases for {canonical}: {present}"
+            )
+        if present:
+            normalized[canonical] = sample[present[0]]
+    return normalized
 
 
 class ELABatch(dict[str, Any]):
@@ -147,7 +165,8 @@ class ELABatch(dict[str, Any]):
 def collate_graphs(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
     """Collate graph mappings and return an :class:`ELABatch`."""
 
-    return ELABatch(_collate_graphs(samples))
+    normalized = [_normalize_sample(sample) for sample in samples]
+    return ELABatch(_collate_graphs(normalized))
 
 
 __all__ = ["ELABatch", "collate_graphs"]
