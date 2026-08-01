@@ -36,7 +36,6 @@ def triton_local_message(
     if geometry.direction.shape[0] == 0 or active_backend(
         geometry.direction,
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     ) != "triton":
         return original(self, state, geometry)
 
@@ -159,7 +158,6 @@ def triton_local_message(
     mass, mass_square = csr_sum_many(
         (raw_weight, raw_weight.square()),
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     )
     denominator = 1.0 + mass
 
@@ -211,7 +209,6 @@ def triton_local_message(
             weight * radial_gate[..., 1] * odd_value[sender],
         ),
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     )
 
     # Group 3: vector values.
@@ -225,7 +222,6 @@ def triton_local_message(
             * axial_value[sender],
         ),
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     )
 
     # Group 4: symmetric-traceless tensor values.
@@ -240,7 +236,6 @@ def triton_local_message(
             * odd_tensor_value[sender],
         ),
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     )
 
     # Group 5: three directional moments used for chirality.
@@ -253,7 +248,6 @@ def triton_local_message(
             for index in range(3)
         ),
         geometry.row_ptr,
-        max_degree=geometry.max_degree,
     )
 
     # Normalize in work precision after the compact reductions.
