@@ -8,14 +8,13 @@ ELA_SUITE_MODE=smoke \
   artifacts/canonical-ela/smoke
 ```
 
-Smoke mode runs the focused canonical tests and a small same-weight resource
-comparison between the admitted refined `EquivariantLinearAttention` control and
-branch-aware `ELA`.
+Smoke mode runs the focused canonical tests and a small same-weight numerical
+comparison between the internal pre-router reference and public `ELA`.
 
 The runner pins `PYTHONPATH` to the current repository, verifies the imported
 package file, rejects a nonempty artifact directory, and uses the locked
-environment. Smoke receipts are diagnostic; their tiny CPU shapes are not a
-resource-promotion gate.
+environment. Tiny CPU smoke receipts are functional diagnostics, not resource or
+accuracy promotion evidence.
 
 ## Full
 
@@ -35,48 +34,52 @@ scripts/check.sh gpu
 ```
 
 and a larger same-weight BF16 safety benchmark. Full mode requires a clean
-worktree, but this single ordered run is not a resource-promotion decision.
-Promotion uses the separately preregistered FP32 CUDA, five-seed AB/BA matrix
-for both task-like shapes.
+worktree. The benchmark still does not establish downstream superiority.
 
 ## Focused contracts
 
 The suite checks:
 
-- zero-init branch fusion reproduces `G + L`;
-- shared refined-ELA weights reproduce the full old function before routing
-  learns;
-- learned fusion remains reflection-equivariant;
-- learned fusion remains equivariant under generic proper and improper O(3);
+- package root exposes one backbone `ELA` and one architecture layer
+  `ELALayer`;
+- zero-init branch fusion reproduces exact `G + L`;
+- shared internal reference weights reproduce the full pre-router function;
+- learned fusion remains proper/improper O(3)-equivariant;
 - router and branch-balance parameters receive gradients;
-- minimal config derives heads/rank deterministically;
-- forward, input gradients, and coordinate gradients are finite;
-- graph isolation, edge-order invariance, and input/coordinate double backward;
-- canonical CUDA FP32 and BF16 forward/backward;
-- advanced checkpoint migration fails closed;
-- conditioned wrapper is neutral at initialization and trainable;
-- coordinate refiner is neutral at initialization, bounded, and centered;
-- regression adapter and public namespace contracts work.
+- minimal config derives heads and local rank deterministically;
+- all supported input/output parity sectors transform correctly;
+- forward, feature gradients, and coordinate gradients are finite;
+- graph isolation, edge-order invariance, node permutation, and required double
+  backward hold;
+- configured condition and semantic-order PE are neutral at initialization;
+- a context-free call bypasses a trained conditioner entirely;
+- semantic-order labels and enable masks follow the node permutation contract;
+- disabled-node order labels have no effect;
+- coordinate refinement is identity initialized, bounded, masked, centered, and
+  equivariant;
+- canonical CUDA FP32/BF16 forward and backward remain finite;
+- historical checkpoint migration fails closed;
+- the canonical regression adapter works.
 
 ## Resource receipt
 
 `overhead.json` records:
 
 - exact source path, common-state/input hashes, and migration receipt;
-- clean-tree git SHA plus GPU, PyTorch, and CUDA runtime fingerprint;
+- git SHA plus GPU, PyTorch, and CUDA runtime fingerprint;
 - node/graph output and input/common-parameter gradient equivalence;
-- control and candidate parameter counts;
+- public ELA and internal numerical-reference parameter counts;
 - branch-router parameter count;
 - inference latency;
 - optimizer-inclusive train-step latency;
 - raw latency samples and IQR;
 - peak allocated CUDA memory, including optimizer state for the train step;
-- candidate/control ratios;
+- candidate/reference ratios;
 - graph size and degree;
 - exclusion of neighbor discovery.
 
-The benchmark does not establish downstream accuracy. It isolates the cost of
-the canonical branch router while holding the admitted backbone weights fixed.
+Context and coordinate-refinement overhead require separate sweeps because they
+are runtime capabilities rather than a second architecture.
 
 ## Artifact layout
 
@@ -94,5 +97,5 @@ artifacts/canonical-ela/<run-id>/
   gpu-gate.log     # full CUDA
 ```
 
-Store downstream receipts separately. Do not infer an architecture promotion
-from the overhead benchmark alone.
+Store downstream receipts separately. Do not infer architecture promotion from
+contract or overhead tests alone.
