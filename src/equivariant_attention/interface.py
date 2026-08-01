@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
 
 from .api import ELA as _TensorELA
+from .batch import ELABatch, collate_graphs
 from .canonical import ELA as _CanonicalELA
 from .context import ELAContext, GeometryRebuilder, OrderContext
 from .data import BatchLayout
@@ -55,6 +56,12 @@ class ELA(_TensorELA):
         "pos": ("pos", "positions"),
         "mask": ("mask", "node_mask"),
     }
+
+    @staticmethod
+    def collate(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
+        """Use as ``DataLoader(..., collate_fn=ELA.collate)``."""
+
+        return collate_graphs(samples)
 
     @staticmethod
     def _mapping_value(
