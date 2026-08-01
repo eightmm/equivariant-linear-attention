@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from .api import ELA as _TensorELA
+from .canonical import ELA as _CanonicalELA
 from .context import ELAContext, GeometryRebuilder, OrderContext
 from .data import BatchLayout
 from .unified import Prepared3DGraph
@@ -109,6 +110,37 @@ class ELA(_TensorELA):
             value,
             layout,
             name=name,
+        )
+
+    def forward_prepared(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        context: ELAContext | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Run the validated flat hot path without input packing or graph checks.
+
+        Build ``graph`` once with :meth:`prepare_graph`. The caller must preserve
+        the packed node order and graph membership. This method is intended for
+        repeated training, inference, profiling, and ``torch.compile``.
+        """
+
+        if not isinstance(node_irreps, torch.Tensor):
+            raise TypeError("node_irreps must be a tensor")
+        if not isinstance(pos, torch.Tensor):
+            raise TypeError("pos must be a tensor")
+        if not isinstance(graph, Prepared3DGraph):
+            raise TypeError("graph must be a Prepared3DGraph")
+        return dict(
+            _CanonicalELA.forward(
+                self,
+                node_irreps,
+                pos,
+                graph,
+                context=context,
+            )
         )
 
     def forward(
