@@ -1,6 +1,5 @@
 """Public API for the single canonical equivariant linear-attention model."""
 
-from .api import ELA
 from .canonical import ELAConfig, ELALayer, SparseGeometry
 from .context import (
     ELAContext,
@@ -11,6 +10,7 @@ from .context import (
 )
 from .data import collate_graphs, radius_graph
 from .heads import CoordinateUpdateHead, EquivariantVectorHead
+from .interface import ELA
 from .irreps import (
     Irrep,
     IrrepBlock,
