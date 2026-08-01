@@ -5,8 +5,7 @@ from contextlib import nullcontext
 import pytest
 import torch
 
-from equivariant_attention import ELA, ELAConfig, SparseGeometry
-from equivariant_attention.unified import prepare_3d_graph
+from equivariant_attention import ELA, ELABatch
 
 
 def _fixed_degree_edges(
@@ -35,13 +34,12 @@ def test_canonical_ela_cuda_forward_backward(
     torch.manual_seed(47)
     device = torch.device("cuda")
     model = ELA(
-        ELAConfig(
-            input_irreps="8x0e",
-            output_irreps="1x0e + 1x1o",
-            width=32,
-            depth=2,
-            geometry=SparseGeometry(cutoff=6.0, num_rbf=8),
-        )
+        input_irreps="8x0e",
+        output_irreps="1x0e + 1x1o",
+        width=32,
+        depth=2,
+        cutoff=6.0,
+        num_rbf=8,
     ).to(device=device, dtype=torch.float32)
     nodes = 64
     features = torch.randn(
@@ -58,10 +56,12 @@ def test_canonical_ela_cuda_forward_backward(
         dtype=torch.float32,
         requires_grad=True,
     )
-    batch = torch.zeros(nodes, device=device, dtype=torch.long)
-    graph = prepare_3d_graph(
-        batch,
-        _fixed_degree_edges(nodes, 8, device),
+    batch = model.prepare(
+        ELABatch(
+            node_irreps=features,
+            positions=positions,
+            edge_index=_fixed_degree_edges(nodes, 8, device),
+        )
     )
 
     precision_context = (
@@ -70,7 +70,7 @@ def test_canonical_ela_cuda_forward_backward(
         else nullcontext()
     )
     with precision_context:
-        output = model(features, positions, graph)["node_irreps"]
+        output = model.forward_prepared(batch)["node_irreps"]
         loss = output.float().square().mean()
     loss.backward()
 
@@ -81,7 +81,5 @@ def test_canonical_ela_cuda_forward_backward(
     assert router.weight.grad is not None
     assert torch.isfinite(router.weight.grad).all()
     assert torch.count_nonzero(router.weight.grad) > 0
-    expected_dtype = (
-        torch.float32 if precision == "float32" else torch.bfloat16
-    )
+    expected_dtype = torch.float32 if precision == "float32" else torch.bfloat16
     assert output.dtype == expected_dtype
