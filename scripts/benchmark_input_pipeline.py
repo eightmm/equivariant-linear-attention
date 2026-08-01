@@ -75,10 +75,7 @@ def _batch_edges(
         torch.arange(graphs, device=device, dtype=torch.long)
         * nodes_per_graph
     )
-    flat = torch.cat(
-        [local + offset for offset in offsets],
-        dim=1,
-    )
+    flat = torch.cat([local + offset for offset in offsets], dim=1)
     padded = local.unsqueeze(0).expand(graphs, -1, -1).clone()
     edge_mask = torch.ones(
         (graphs, local.shape[1]),
@@ -89,12 +86,11 @@ def _batch_edges(
 
 
 def _dtype(name: str) -> torch.dtype:
-    values = {
+    return {
         "float32": torch.float32,
         "float64": torch.float64,
         "bfloat16": torch.bfloat16,
-    }
-    return values[name]
+    }[name]
 
 
 def main() -> None:
@@ -223,7 +219,13 @@ def main() -> None:
             warmup=args.warmup,
             repeats=args.repeats,
         )
-        results["prepared_forward"] = _measure(
+        results["prepared_hot_forward"] = _measure(
+            lambda: model.forward_prepared(node_irreps, positions, prepared),
+            device=device,
+            warmup=args.warmup,
+            repeats=args.repeats,
+        )
+        results["prepared_validated_forward"] = _measure(
             lambda: model(node_irreps, positions, prepared),
             device=device,
             warmup=args.warmup,
@@ -267,18 +269,21 @@ def main() -> None:
 
     compiled_result: dict[str, float | int] | None = None
     if args.compile_prepared:
-        compiled = torch.compile(model, mode="reduce-overhead")
+        compiled_forward = torch.compile(
+            model.forward_prepared,
+            mode="reduce-overhead",
+        )
         with torch.inference_mode():
             compiled_result = _measure(
-                lambda: compiled(node_irreps, positions, prepared),
+                lambda: compiled_forward(node_irreps, positions, prepared),
                 device=device,
                 warmup=max(args.warmup, 3),
                 repeats=args.repeats,
             )
 
-    prepared_ms = float(results["prepared_forward"]["median_ms"])
+    prepared_ms = float(results["prepared_hot_forward"]["median_ms"])
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "device": str(device),
         "dtype": args.dtype,
         "graphs": args.graphs,
@@ -289,7 +294,8 @@ def main() -> None:
         "width": args.width,
         "depth": args.depth,
         "neighbor_discovery_in_model": {
-            "prepared_forward": False,
+            "prepared_hot_forward": False,
+            "prepared_validated_forward": False,
             "flat_supplied_edges_forward": False,
             "flat_auto_radius_forward": True,
             "padded_supplied_edges_forward": False,
@@ -297,7 +303,7 @@ def main() -> None:
         },
         "results": results,
         "compiled_prepared_forward": compiled_result,
-        "relative_to_prepared": {
+        "relative_to_prepared_hot": {
             name: float(result["median_ms"]) / prepared_ms
             for name, result in results.items()
             if name.endswith("forward")
