@@ -14,7 +14,13 @@ def _complete_edges(nodes: int) -> torch.Tensor:
 
 def test_single_graph_batch_is_the_only_model_input() -> None:
     torch.manual_seed(3)
-    model = ELA.scalar(4, width=16, depth=1, cutoff=10.0).double()
+    model = ELA(
+        input_irreps="4x0e",
+        output_irreps="1x0e",
+        width=16,
+        depth=1,
+        cutoff=10.0,
+    ).double()
     batch = ELABatch(
         node_irreps=torch.randn(5, 4, dtype=torch.float64),
         positions=torch.randn(5, 3, dtype=torch.float64),
@@ -114,13 +120,20 @@ def test_collate_offsets_edges_and_keeps_training_metadata() -> None:
     assert batch.num_edges == 13
     assert batch.sample_ids == ("a", "b")
     assert batch.target is not None and batch.target.shape == (2, 1)
+    assert batch.edge_index is not None
     receiver, sender = batch.edge_index
     assert torch.equal(batch.batch[receiver], batch.batch[sender])
 
 
 def test_prepare_caches_graph_and_hot_path_matches_forward() -> None:
     torch.manual_seed(7)
-    model = ELA.scalar(4, output_dim=2, width=16, depth=1, cutoff=10.0).double()
+    model = ELA(
+        input_irreps="4x0e",
+        output_irreps="2x0e",
+        width=16,
+        depth=1,
+        cutoff=10.0,
+    ).double()
     batch = ELABatch(
         node_irreps=torch.randn(6, 4, dtype=torch.float64),
         positions=torch.randn(6, 3, dtype=torch.float64),
@@ -133,12 +146,14 @@ def test_prepare_caches_graph_and_hot_path_matches_forward() -> None:
     hot = model.forward_prepared(prepared)
     torch.testing.assert_close(hot["node_irreps"], validated["node_irreps"])
     torch.testing.assert_close(hot["graph_irreps"], validated["graph_irreps"])
+    torch.testing.assert_close(hot["graph_sum"], validated["graph_sum"])
 
 
 def test_optional_context_is_carried_by_batch() -> None:
     torch.manual_seed(11)
-    model = ELA.scalar(
-        4,
+    model = ELA(
+        input_irreps="4x0e",
+        output_irreps="1x0e",
         width=16,
         depth=1,
         cutoff=10.0,
@@ -158,7 +173,6 @@ def test_optional_context_is_carried_by_batch() -> None:
     output = model(batch)
     assert output["positions"].shape == batch.positions.shape
     assert output["coordinate_delta"].shape == batch.positions.shape
-    # The refinement head is intentionally zero initialized.
     torch.testing.assert_close(output["positions"], batch.positions)
 
 
