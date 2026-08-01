@@ -5,316 +5,169 @@ from typing import Any
 
 import torch
 
-from .api import ELA as _TensorELA
-from .batch import ELABatch, collate_graphs
+from .batch import ELABatch
 from .canonical import ELA as _CanonicalELA
-from .context import ELAContext, GeometryRebuilder, OrderContext
-from .data import BatchLayout
-from .unified import Prepared3DGraph
+from .canonical import ELAConfig, ELAFeatures, ELALayer, SparseGeometry
+from .data import radius_graph
+from .triton_ops import install_triton_backend
+
+# Install once at import. Unsupported devices and dtypes continue through the
+# exact PyTorch reference without changing model configuration or checkpoints.
+install_triton_backend()
 
 
-class ELA(_TensorELA):
-    """User-facing ELA accepting tensors or a collated graph mapping.
+class ELA(_CanonicalELA):
+    """Single public ELA model consuming one canonical :class:`ELABatch`.
 
-    ``model(batch_dict)`` consumes the output of :func:`collate_graphs` directly;
-    training labels and sample IDs remain in the mapping but are ignored by the
-    model. Tensor callers retain the full typed keyword API of :class:`api.ELA`.
+    Graph parsing, padding removal, target collation, and optional radius
+    discovery happen when the batch is constructed or prepared. The numerical
+    core always receives packed nodes and one receiver-major sparse graph.
     """
 
-    _MODEL_KEYS = frozenset(
-        {
-            "node_irreps",
-            "x",
-            "node_features",
-            "pos",
-            "positions",
-            "graph",
-            "batch",
-            "mask",
-            "node_mask",
-            "edge_index",
-            "edge_mask",
-            "adjacency",
-            "edge_relation_id",
-            "edge_type",
-            "max_neighbors",
-            "context",
-            "condition",
-            "order",
-            "order_group",
-            "order_periods",
-            "order_mask",
-            "refine_steps",
-            "max_coordinate_step",
-            "refinement_centering",
-            "update_mask",
-            "graph_rebuilder",
-            "target",
-            "y",
-            "label",
-            "labels",
-            "sample_ids",
-            "sample_id",
-            "id",
-            "idx",
-        }
-    )
-    _MAPPING_ALIASES = {
-        "pos": ("pos", "positions"),
-        "mask": ("mask", "node_mask"),
-        "edge_relation_id": ("edge_relation_id", "edge_type"),
-    }
+    def __init__(
+        self,
+        config: ELAConfig | None = None,
+        *,
+        input_irreps: str | None = None,
+        output_irreps: str = "1x0e",
+        width: int = 128,
+        depth: int = 8,
+        cutoff: float = 5.0,
+        num_rbf: int = 16,
+        relation_cutoffs: tuple[float, ...] = (),
+        condition_dim: int = 0,
+        order_dim: int = 0,
+        coordinate_refinement: bool = False,
+    ) -> None:
+        if config is not None:
+            if not isinstance(config, ELAConfig):
+                raise TypeError("config must be an ELAConfig")
+            if input_irreps is not None:
+                raise ValueError(
+                    "config and direct constructor fields are mutually exclusive"
+                )
+            resolved = config
+        else:
+            if input_irreps is None:
+                raise ValueError("input_irreps is required when config is omitted")
+            resolved = ELAConfig(
+                input_irreps=input_irreps,
+                output_irreps=output_irreps,
+                width=width,
+                depth=depth,
+                geometry=SparseGeometry(
+                    cutoff=cutoff,
+                    num_rbf=num_rbf,
+                    relation_cutoffs=relation_cutoffs,
+                ),
+                features=ELAFeatures(
+                    condition_dim=condition_dim,
+                    order_dim=order_dim,
+                    coordinate_refinement=coordinate_refinement,
+                ),
+            )
+        super().__init__(resolved)
+
+    @classmethod
+    def scalar(
+        cls,
+        node_dim: int,
+        *,
+        output_dim: int = 1,
+        width: int = 128,
+        depth: int = 8,
+        cutoff: float = 5.0,
+        num_rbf: int = 16,
+        condition_dim: int = 0,
+        order_dim: int = 0,
+        coordinate_refinement: bool = False,
+    ) -> ELA:
+        if (
+            isinstance(node_dim, bool)
+            or not isinstance(node_dim, int)
+            or node_dim <= 0
+        ):
+            raise ValueError("node_dim must be a positive integer")
+        if (
+            isinstance(output_dim, bool)
+            or not isinstance(output_dim, int)
+            or output_dim <= 0
+        ):
+            raise ValueError("output_dim must be a positive integer")
+        return cls(
+            input_irreps=f"{node_dim}x0e",
+            output_irreps=f"{output_dim}x0e",
+            width=width,
+            depth=depth,
+            cutoff=cutoff,
+            num_rbf=num_rbf,
+            condition_dim=condition_dim,
+            order_dim=order_dim,
+            coordinate_refinement=coordinate_refinement,
+        )
 
     @staticmethod
     def collate(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
-        """Use as ``DataLoader(..., collate_fn=ELA.collate)``."""
+        return ELABatch.collate(samples)
 
-        return collate_graphs(samples)
-
-    @staticmethod
-    def _mapping_value(
-        payload: Mapping[str, Any],
-        name: str,
-        aliases: tuple[str, ...] = (),
-    ) -> Any:
-        present = [key for key in (name, *aliases) if key in payload]
-        if len(present) > 1:
-            raise ValueError(f"batch mapping contains multiple aliases for {name}")
-        return None if not present else payload[present[0]]
-
-    @classmethod
-    def _mapping_contains_argument(
-        cls,
-        payload: Mapping[str, Any],
-        name: str,
-    ) -> bool:
-        return any(key in payload for key in cls._MAPPING_ALIASES.get(name, (name,)))
-
-    def _flatten_optional_node_tensor(
+    def prepare(
         self,
-        value: torch.Tensor | None,
-        layout: BatchLayout,
+        batch: ELABatch,
         *,
-        name: str,
-    ) -> torch.Tensor | None:
-        # A graph condition is [B,C], whereas a padded node condition is
-        # [B,M,C]. Scalar node conditions may use [B,M] only when condition_dim
-        # is exactly one. This avoids mistaking graph [B,C] for node [B,M] when
-        # C happens to equal M.
-        if (
-            value is not None
-            and layout.kind == "padded"
-            and name in {"condition", "context.condition"}
-        ):
-            if layout.node_mask is None:
-                raise RuntimeError("padded layout is incomplete")
-            if value.ndim >= 3 and value.shape[:2] == layout.node_mask.shape:
-                return layout.flatten_node_tensor(value, name=name)
-            if (
-                value.ndim == 2
-                and value.shape == layout.node_mask.shape
-                and value.is_floating_point()
-                and self.config.features.condition_dim == 1
-            ):
-                return layout.flatten_node_tensor(
-                    value.unsqueeze(-1),
-                    name=name,
-                )
-            return value
-        return _TensorELA._flatten_optional_node_tensor(
-            value,
-            layout,
-            name=name,
+        max_neighbors: int | None = None,
+        prefer_int32: bool = True,
+        force: bool = False,
+    ) -> ELABatch:
+        """Return ``batch`` with a cached receiver-major execution graph."""
+
+        if not isinstance(batch, ELABatch):
+            raise TypeError("ELA.prepare expects an ELABatch")
+        if batch.is_prepared and not force:
+            return batch
+        edge_index = batch.edge_index
+        if edge_index is None:
+            if batch.edge_relation_id is not None:
+                raise ValueError("edge_relation_id cannot be used without edge_index")
+            edge_index = radius_graph(
+                batch.positions,
+                cutoff=self.config.geometry.cutoff,
+                batch=batch.batch,
+                max_neighbors=max_neighbors,
+                include_self=True,
+            )
+        graph = self.config.geometry.prepare(
+            batch.batch,
+            edge_index,
+            edge_relation_id=batch.edge_relation_id,
+            prefer_int32=prefer_int32,
         )
+        return batch.with_prepared_graph(graph)
 
-    def forward_prepared(
-        self,
-        node_irreps: torch.Tensor,
-        pos: torch.Tensor,
-        graph: Prepared3DGraph,
-        *,
-        context: ELAContext | None = None,
-    ) -> dict[str, torch.Tensor]:
-        """Run the validated flat hot path without input packing or graph checks.
+    def forward_prepared(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        """Compile-friendly hot path for an already prepared immutable batch."""
 
-        Build ``graph`` once with :meth:`prepare_graph`. The caller must preserve
-        the packed node order and graph membership. This method is intended for
-        repeated training, inference, profiling, and ``torch.compile``.
-        """
-
-        if not isinstance(node_irreps, torch.Tensor):
-            raise TypeError("node_irreps must be a tensor")
-        if not isinstance(pos, torch.Tensor):
-            raise TypeError("pos must be a tensor")
-        if not isinstance(graph, Prepared3DGraph):
-            raise TypeError("graph must be a Prepared3DGraph")
+        if not isinstance(batch, ELABatch):
+            raise TypeError("ELA.forward_prepared expects an ELABatch")
+        if batch._prepared_graph is None:
+            raise ValueError("batch is not prepared; call model.prepare(batch) first")
         return dict(
             _CanonicalELA.forward(
                 self,
-                node_irreps,
-                pos,
-                graph,
-                context=context,
+                batch.node_irreps,
+                batch.positions,
+                batch._prepared_graph,
+                context=batch.context,
             )
         )
 
-    def forward(
-        self,
-        node_irreps: torch.Tensor | Mapping[str, Any],
-        pos: torch.Tensor | None = None,
-        graph: Prepared3DGraph | None = None,
-        *,
-        batch: torch.Tensor | None = None,
-        mask: torch.Tensor | None = None,
-        edge_index: (
-            torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None
-        ) = None,
-        edge_mask: torch.Tensor | None = None,
-        adjacency: torch.Tensor | None = None,
-        edge_relation_id: (
-            torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None
-        ) = None,
-        max_neighbors: int | None = None,
-        context: ELAContext | None = None,
-        condition: torch.Tensor | None = None,
-        order: OrderContext | torch.Tensor | None = None,
-        order_group: torch.Tensor | None = None,
-        order_periods: torch.Tensor | float | None = None,
-        order_mask: torch.Tensor | None = None,
-        refine_steps: int | None = None,
-        max_coordinate_step: float | None = None,
-        refinement_centering: str | None = None,
-        update_mask: torch.Tensor | None = None,
-        graph_rebuilder: GeometryRebuilder | None = None,
-    ) -> dict[str, torch.Tensor]:
-        if isinstance(node_irreps, Mapping):
-            payload = node_irreps
-            unknown = set(payload) - self._MODEL_KEYS
-            if unknown:
-                raise ValueError(f"unsupported batch mapping keys: {sorted(unknown)}")
-            explicitly_supplied = {
-                "pos": pos,
-                "graph": graph,
-                "batch": batch,
-                "mask": mask,
-                "edge_index": edge_index,
-                "edge_mask": edge_mask,
-                "adjacency": adjacency,
-                "edge_relation_id": edge_relation_id,
-                "max_neighbors": max_neighbors,
-                "context": context,
-                "condition": condition,
-                "order": order,
-                "order_group": order_group,
-                "order_periods": order_periods,
-                "order_mask": order_mask,
-                "refine_steps": refine_steps,
-                "max_coordinate_step": max_coordinate_step,
-                "refinement_centering": refinement_centering,
-                "update_mask": update_mask,
-                "graph_rebuilder": graph_rebuilder,
-            }
-            conflicts = [
-                name
-                for name, value in explicitly_supplied.items()
-                if value is not None
-                and self._mapping_contains_argument(payload, name)
-            ]
-            if conflicts:
-                raise ValueError(
-                    "batch mapping and explicit keywords both supplied: "
-                    f"{conflicts}"
-                )
-            node_value = self._mapping_value(
-                payload,
-                "node_irreps",
-                ("x", "node_features"),
+    def forward(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        if not isinstance(batch, ELABatch):
+            raise TypeError(
+                "ELA accepts one ELABatch. Use ELABatch(...), "
+                "ELABatch.from_padded(...), or ELABatch.collate(...)."
             )
-            pos_value = self._mapping_value(payload, "pos", ("positions",))
-            if not isinstance(node_value, torch.Tensor):
-                raise TypeError("batch mapping node_irreps must be a tensor")
-            if not isinstance(pos_value, torch.Tensor):
-                raise TypeError("batch mapping pos must be a tensor")
-            # Fail closed on duplicate training-metadata aliases even though the
-            # model does not consume those values.
-            self._mapping_value(payload, "target", ("y", "label", "labels"))
-            self._mapping_value(payload, "sample_id", ("id", "idx"))
-            node_irreps = node_value
-            pos = pos_value
-            graph = payload.get("graph")
-            batch = payload.get("batch")
-            mask = self._mapping_value(payload, "mask", ("node_mask",))
-            edge_index = payload.get("edge_index")
-            edge_mask = payload.get("edge_mask")
-            adjacency = payload.get("adjacency")
-            edge_relation_id = self._mapping_value(
-                payload,
-                "edge_relation_id",
-                ("edge_type",),
-            )
-            max_neighbors = payload.get("max_neighbors")
-            context = payload.get("context")
-            condition = payload.get("condition")
-            order = payload.get("order")
-            order_group = payload.get("order_group")
-            order_periods = payload.get("order_periods")
-            order_mask = payload.get("order_mask")
-            refine_steps = payload.get("refine_steps")
-            max_coordinate_step = payload.get("max_coordinate_step")
-            refinement_centering = payload.get("refinement_centering")
-            update_mask = payload.get("update_mask")
-            graph_rebuilder = payload.get("graph_rebuilder")
-
-        if not isinstance(node_irreps, torch.Tensor):
-            raise TypeError("node_irreps must be a tensor or graph mapping")
-        if pos is None or not isinstance(pos, torch.Tensor):
-            raise TypeError("pos must be a tensor")
-        if graph is not None and batch is None and node_irreps.ndim == 2:
-            batch = graph.batch
-        if adjacency is not None:
-            if adjacency.device != node_irreps.device:
-                raise ValueError("adjacency and node tensors must share one device")
-            if edge_mask is not None:
-                raise ValueError("edge_mask is not used with adjacency")
-            if edge_relation_id is not None:
-                raise ValueError(
-                    "relation IDs with dense adjacency are ambiguous; use COO edges"
-                )
-        if edge_mask is not None and not isinstance(edge_index, torch.Tensor):
-            raise ValueError("edge_mask requires a padded tensor edge_index")
-        # Padded scalar node conditions are naturally written as [B,M].
-        if (
-            condition is not None
-            and isinstance(condition, torch.Tensor)
-            and node_irreps.ndim == 3
-            and condition.ndim == 2
-            and condition.shape == node_irreps.shape[:2]
-            and self.config.features.condition_dim == 1
-        ):
-            condition = condition.unsqueeze(-1)
-        return super().forward(
-            node_irreps,
-            pos,
-            graph,
-            batch=batch,
-            mask=mask,
-            edge_index=edge_index,
-            edge_mask=edge_mask,
-            adjacency=adjacency,
-            edge_relation_id=edge_relation_id,
-            max_neighbors=max_neighbors,
-            context=context,
-            condition=condition,
-            order=order,
-            order_group=order_group,
-            order_periods=order_periods,
-            order_mask=order_mask,
-            refine_steps=refine_steps,
-            max_coordinate_step=max_coordinate_step,
-            refinement_centering=refinement_centering,
-            update_mask=update_mask,
-            graph_rebuilder=graph_rebuilder,
-        )
+        prepared = batch if batch.is_prepared else self.prepare(batch)
+        return self.forward_prepared(prepared)
 
 
-__all__ = ["ELA"]
+__all__ = ["ELA", "ELAConfig", "ELAFeatures", "ELALayer", "SparseGeometry"]
