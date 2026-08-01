@@ -10,10 +10,12 @@ import torch
 _BACKEND_ENV: Final = "ELA_KERNEL_BACKEND"
 _ALLOWED_BACKENDS: Final = frozenset({"auto", "torch", "triton"})
 _MAX_DEGREE_ENV: Final = "ELA_TRITON_MAX_DEGREE"
+_MIN_EDGES_ENV: Final = "ELA_TRITON_MIN_EDGES"
 _MAX_DEGREE_CACHE: dict[
     int,
     tuple[weakref.ReferenceType[torch.Tensor], int, int],
 ] = {}
+_BACKEND_INSTALLED = False
 
 try:
     import triton
@@ -23,11 +25,14 @@ except Exception:  # pragma: no cover - optional runtime dependency
     tl = None
 
 
-def _backend_policy() -> str:
+def backend_policy() -> str:
+    """Return the requested execution backend policy."""
+
     value = os.environ.get(_BACKEND_ENV, "auto").strip().lower()
     if value not in _ALLOWED_BACKENDS:
         raise ValueError(
-            f"{_BACKEND_ENV} must be one of {sorted(_ALLOWED_BACKENDS)}, got {value!r}"
+            f"{_BACKEND_ENV} must be one of {sorted(_ALLOWED_BACKENDS)}, "
+            f"got {value!r}"
         )
     return value
 
@@ -36,11 +41,15 @@ def triton_available() -> bool:
     return triton is not None and tl is not None
 
 
-def active_backend(value: torch.Tensor, row_ptr: torch.Tensor) -> str:
-    """Return the backend that would execute this CSR reduction."""
-
-    degree = _row_ptr_max_degree(row_ptr)
-    return "triton" if _can_use_triton(value, row_ptr, degree) else "torch"
+def _minimum_triton_edges() -> int:
+    raw = os.environ.get(_MIN_EDGES_ENV, "256")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{_MIN_EDGES_ENV} must be an integer") from exc
+    if value < 0:
+        raise ValueError(f"{_MIN_EDGES_ENV} must be nonnegative")
+    return value
 
 
 def _max_supported_degree() -> int:
@@ -54,26 +63,42 @@ def _max_supported_degree() -> int:
     return value
 
 
-def _cache_max_degree(row_ptr: torch.Tensor, degree: int) -> None:
+def register_csr_metadata(row_ptr: torch.Tensor, max_degree: int) -> None:
+    """Register trusted immutable CSR metadata without a device-to-host read."""
+
+    if isinstance(max_degree, bool) or not isinstance(max_degree, int):
+        raise TypeError("max_degree must be an integer")
+    if max_degree < 0:
+        raise ValueError("max_degree must be nonnegative")
     key = id(row_ptr)
 
     def remove(_: weakref.ReferenceType[torch.Tensor]) -> None:
         _MAX_DEGREE_CACHE.pop(key, None)
 
     if len(_MAX_DEGREE_CACHE) >= 1024:
-        stale = [name for name, entry in _MAX_DEGREE_CACHE.items() if entry[0]() is None]
+        stale = [
+            name
+            for name, entry in _MAX_DEGREE_CACHE.items()
+            if entry[0]() is None
+        ]
         for name in stale:
             _MAX_DEGREE_CACHE.pop(name, None)
         if len(_MAX_DEGREE_CACHE) >= 1024:
             _MAX_DEGREE_CACHE.clear()
-    _MAX_DEGREE_CACHE[key] = (weakref.ref(row_ptr, remove), row_ptr._version, degree)
+    _MAX_DEGREE_CACHE[key] = (
+        weakref.ref(row_ptr, remove),
+        row_ptr._version,
+        max_degree,
+    )
 
 
 def _row_ptr_max_degree(row_ptr: torch.Tensor) -> int:
-    # Prepared graphs are immutable. This transfers CSR offsets to the CPU once
-    # for one tensor object and then reuses the scalar metadata at every layer.
     entry = _MAX_DEGREE_CACHE.get(id(row_ptr))
-    if entry is not None and entry[0]() is row_ptr and entry[1] == row_ptr._version:
+    if (
+        entry is not None
+        and entry[0]() is row_ptr
+        and entry[1] == row_ptr._version
+    ):
         return entry[2]
     offsets = tuple(int(value) for value in row_ptr.detach().to("cpu").tolist())
     degree = (
@@ -84,8 +109,83 @@ def _row_ptr_max_degree(row_ptr: torch.Tensor) -> int:
             for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
         )
     )
-    _cache_max_degree(row_ptr, degree)
+    register_csr_metadata(row_ptr, degree)
     return degree
+
+
+def _compile_degree(max_degree: int) -> int:
+    if max_degree <= 1:
+        return 1
+    if triton is None:
+        return 1 << (max_degree - 1).bit_length()
+    return triton.next_power_of_2(max_degree)
+
+
+def _basic_triton_support(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+) -> bool:
+    return (
+        triton_available()
+        and value.device.type == "cuda"
+        and row_ptr.device == value.device
+        and value.dtype in {torch.float16, torch.bfloat16, torch.float32}
+        and row_ptr.dtype in {torch.int32, torch.int64}
+    )
+
+
+def _can_use_triton(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+    max_degree: int,
+) -> bool:
+    policy = backend_policy()
+    if policy == "torch":
+        return False
+    minimum_size = policy == "triton" or (
+        value.shape[0] >= _minimum_triton_edges()
+    )
+    supported = (
+        _basic_triton_support(value, row_ptr)
+        and max_degree <= _max_supported_degree()
+        and minimum_size
+    )
+    if policy == "triton" and not supported:
+        raise RuntimeError(
+            "Triton CSR reduction was forced but the current device, dtype, or "
+            "maximum degree is unsupported"
+        )
+    return supported
+
+
+def active_backend(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    max_degree: int | None = None,
+) -> str:
+    """Return the backend that would execute this CSR reduction."""
+
+    policy = backend_policy()
+    if policy == "torch":
+        return "torch"
+    if not _basic_triton_support(value, row_ptr):
+        if policy == "triton":
+            raise RuntimeError(
+                "Triton CSR reduction was forced but the current device or "
+                "dtype is unsupported"
+            )
+        return "torch"
+    resolved_degree = (
+        _row_ptr_max_degree(row_ptr)
+        if max_degree is None
+        else int(max_degree)
+    )
+    return (
+        "triton"
+        if _can_use_triton(value, row_ptr, resolved_degree)
+        else "torch"
+    )
 
 
 if triton_available():
@@ -96,7 +196,7 @@ if triton_available():
         row_ptr,
         output_ptr,
         num_features: tl.constexpr,
-        max_degree: tl.constexpr,
+        compile_degree: tl.constexpr,
         block_edges: tl.constexpr,
         block_features: tl.constexpr,
     ):
@@ -107,10 +207,14 @@ if triton_available():
         start = tl.load(row_ptr + row).to(tl.int64)
         stop = tl.load(row_ptr + row + 1).to(tl.int64)
         accumulator = tl.zeros((block_features,), dtype=tl.float32)
-        for base in range(0, max_degree, block_edges):
+        for base in range(0, compile_degree, block_edges):
             edge = start + base + tl.arange(0, block_edges)
             edge_mask = edge < stop
-            pointer = value_ptr + edge[:, None] * num_features + feature[None, :]
+            pointer = (
+                value_ptr
+                + edge[:, None] * num_features
+                + feature[None, :]
+            )
             loaded = tl.load(
                 pointer,
                 mask=edge_mask[:, None] & feature_mask[None, :],
@@ -172,20 +276,17 @@ class _TritonCsrSum(torch.autograd.Function):
             dtype=value.dtype,
         )
         if rows and features:
+            degree_bucket = _compile_degree(max_degree)
             block_features = min(32, triton.next_power_of_2(features))
-            block_edges = (
-                64
-                if max_degree >= 64
-                else max(1, triton.next_power_of_2(max_degree))
-            )
+            block_edges = min(64, degree_bucket)
             grid = (rows, triton.cdiv(features, block_features))
             _csr_sum_kernel[grid](
                 flattened,
                 row_ptr,
                 output,
                 num_features=features,
-                max_degree=max(1, max_degree),
-                block_edges=block_edges,
+                compile_degree=degree_bucket,
+                block_edges=max(1, block_edges),
                 block_features=block_features,
                 num_warps=4 if block_edges <= 128 else 8,
             )
@@ -207,30 +308,6 @@ class _TritonCsrSum(torch.autograd.Function):
             output_size=ctx.input_size,
         )
         return grad_value, None, None
-
-
-def _can_use_triton(
-    value: torch.Tensor,
-    row_ptr: torch.Tensor,
-    max_degree: int,
-) -> bool:
-    policy = _backend_policy()
-    if policy == "torch":
-        return False
-    supported = (
-        triton_available()
-        and value.device.type == "cuda"
-        and row_ptr.device == value.device
-        and value.dtype in {torch.float16, torch.bfloat16, torch.float32}
-        and row_ptr.dtype in {torch.int32, torch.int64}
-        and max_degree <= _max_supported_degree()
-    )
-    if policy == "triton" and not supported:
-        raise RuntimeError(
-            "Triton CSR reduction was forced but the current device, dtype, or "
-            "maximum degree is unsupported"
-        )
-    return supported
 
 
 def csr_sum(
@@ -265,7 +342,7 @@ def csr_sum_many(
     *,
     max_degree: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Reduce several edge payloads in one backend launch."""
+    """Reduce one lifetime-compatible payload group in one backend launch."""
 
     if not values:
         return ()
@@ -277,7 +354,9 @@ def csr_sum_many(
     flattened: list[torch.Tensor] = []
     for index, value in enumerate(values):
         if value.ndim == 0 or value.shape[0] != edge_count:
-            raise ValueError(f"values[{index}] has an incompatible edge dimension")
+            raise ValueError(
+                f"values[{index}] has an incompatible edge dimension"
+            )
         if value.device != device or value.dtype != dtype:
             raise ValueError("all CSR payloads must share one device and dtype")
         shape = tuple(value.shape[1:])
@@ -296,8 +375,11 @@ def csr_sum_many(
 
 
 def install_triton_backend() -> None:
-    """Install optimized primitives into the canonical numerical core."""
+    """Install optimized primitives into the canonical numerical core once."""
 
+    global _BACKEND_INSTALLED
+    if _BACKEND_INSTALLED:
+        return
     from . import canonical_se3, multipole_ops, parity_se3
     from .optimized_local import triton_local_message
 
@@ -310,12 +392,15 @@ def install_triton_backend() -> None:
     if not hasattr(block, "_ela_torch_local_message"):
         block._ela_torch_local_message = block._local_message
     block._local_message = triton_local_message
+    _BACKEND_INSTALLED = True
 
 
 __all__ = [
     "active_backend",
+    "backend_policy",
     "csr_sum",
     "csr_sum_many",
     "install_triton_backend",
+    "register_csr_metadata",
     "triton_available",
 ]
