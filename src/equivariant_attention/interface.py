@@ -222,7 +222,7 @@ class ELA(_CanonicalELA):
                 cutoff=self.config.geometry.cutoff,
                 ptr=batch.ptr,
                 max_neighbors=max_neighbors,
-                include_self=False,
+                include_self=True,
             )
         if relation is None and relation_count == 1:
             relation = torch.zeros(
