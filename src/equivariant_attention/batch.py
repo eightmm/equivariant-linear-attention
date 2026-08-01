@@ -15,6 +15,9 @@ _FLOAT_VALUE_KEYS = frozenset(
         "x",
         "node_features",
         "target",
+        "y",
+        "label",
+        "labels",
         "condition",
     }
 )
