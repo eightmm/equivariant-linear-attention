@@ -26,6 +26,7 @@ from .layered_se3 import (
     UnifiedSE3Context,
     UnifiedSE3State,
     _BranchModulation,
+    _LayerModulation,
     _gate_delta,
     _state_add,
     _state_subtract,
@@ -99,11 +100,10 @@ class SparseGeometry:
 class ELAConfig:
     """Configuration of the single public equivariant linear-attention model.
 
-    Capacity and geometry remain compact public choices. Optional semantic order,
-    invariant conditioning, and coordinate refinement are grouped under
-    ``features`` and are activated per call through :class:`ELAContext`.
-    Attention heads, local rank, hidden irreps, normalization, tensor closure,
-    and chirality remain deterministic implementation choices.
+    Optional semantic order, invariant conditioning, and coordinate refinement
+    are allocated through ``features`` and switched per call with
+    :class:`ELAContext`. Heads, local rank, hidden irreps, normalization, tensor
+    closure, and chirality remain deterministic implementation choices.
     """
 
     input_irreps: str
@@ -182,7 +182,6 @@ class ELAConfig:
 
     @property
     def coordinate_updates(self) -> bool:
-        # Coordinate mutation is an outer runtime loop in ELA.forward.
         return False
 
     @property
@@ -270,6 +269,18 @@ class ELALayer(EquivariantLinearAttentionLayer):
             scalar_width=self.scalar_width,
             eps=max(self.eps, 1e-6),
         )
+
+    def _resolve_modulation(
+        self,
+        condition: torch.Tensor | None,
+        context: UnifiedSE3Context,
+        state: _ParityState,
+    ) -> _LayerModulation | None:
+        # A configured capability is genuinely optional per call. In particular,
+        # trained conditioner biases cannot leak into a context-free forward.
+        if condition is None:
+            return None
+        return super()._resolve_modulation(condition, context, state)
 
     def _attention_branch(
         self,
@@ -542,6 +553,8 @@ class ELA(UnifiedEquivariantAttention):
         mask = request.update_mask
         if mask is None:
             return torch.ones(num_nodes, device=device, dtype=torch.bool)
+        if not isinstance(mask, torch.Tensor):
+            raise TypeError("update_mask must be a tensor")
         if mask.dtype != torch.bool:
             raise TypeError("update_mask must use torch.bool")
         if mask.shape != (num_nodes,):
@@ -600,9 +613,10 @@ class ELA(UnifiedEquivariantAttention):
             reduce="amax",
             include_self=True,
         )
-        scale = (float(request.max_step) / graph_max.clamp_min(
+        scale = (
             float(request.max_step)
-        )).clamp(max=1.0)
+            / graph_max.clamp_min(float(request.max_step))
+        ).clamp(max=1.0)
         return centered * scale[batch_index, None]
 
     def _coordinate_delta(
@@ -702,6 +716,10 @@ class ELA(UnifiedEquivariantAttention):
                     raise TypeError("graph_rebuilder must return Prepared3DGraph")
                 if rebuilt.num_nodes != current_graph.num_nodes:
                     raise ValueError("rebuilt graph must preserve node count")
+                if rebuilt.device != current_graph.device:
+                    raise ValueError("rebuilt graph must preserve device")
+                if not torch.equal(rebuilt.batch, current_graph.batch):
+                    raise ValueError("rebuilt graph must preserve graph membership")
                 current_graph = rebuilt
 
         condition = self.encode_context(
