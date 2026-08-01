@@ -5,17 +5,18 @@
 Build one domain-agnostic, high-performance equivariant linear-attention layer
 for sparse 3D data.
 
-The same architecture must support molecules, proteins, protein--ligand
-complexes, particles, meshes, and point clouds without task-specific vocabulary
-inside the core.
+The same architecture supports molecules, proteins, protein--ligand complexes,
+particles, meshes, and point clouds without task-specific vocabulary inside the
+core.
 
 ## Canonical architecture
 
-The public model and layer are:
+The public model, layer, and graph container are:
 
 ```text
 ELA
 ELALayer
+ELABatch
 ```
 
 Every layer evaluates
@@ -36,24 +37,15 @@ The hidden carrier is parity-complete over
 0e, 0o, 1o, 1e, 2e, 2o
 ```
 
-with `l <= 2`. Input and output representations are declared with
+with `l <= 2`. Input and output representations are declared only with
 `input_irreps` and `output_irreps`; positions remain a separate affine geometry
 input.
 
 ## Public API
 
-The default path is deliberately small:
-
 ```python
-from equivariant_attention import ELA
+from equivariant_attention import ELA, ELABatch
 
-model = ELA.scalar(node_dim=32, cutoff=6.0)
-out = model(x, pos)
-```
-
-Generic irreps use:
-
-```python
 model = ELA(
     input_irreps="32x0e + 4x1o",
     output_irreps="1x0e + 1x1o",
@@ -61,14 +53,24 @@ model = ELA(
     depth=8,
     cutoff=6.0,
 )
+
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    edge_index=edge_index,
+)
+
+output = model(batch)
 ```
 
-The advanced config types remain available for reproducibility:
+Scalar-only features use ordinary scalar irreps such as `"32x0e"`. There is no
+parallel `node_dim`, `output_dim`, or scalar-model API.
+
+Advanced config types remain available for reproducibility:
 
 ```python
 from equivariant_attention import (
     ELAConfig,
-    ELAContext,
     ELAFeatures,
     OrderContext,
     RefinementRequest,
@@ -80,30 +82,28 @@ No second backbone or architecture layer is public.
 
 ## Dependency-free data policy
 
-Core execution and graph batching depend only on PyTorch. Public input forms are:
+Core execution and graph batching depend only on PyTorch. External layouts are
+normalized before model execution:
 
-```text
-flat single graph                 [N,D], [N,3]
-flat packed batch                 [N_total,D], batch[N_total]
-padded batch                      [B,M,D], [B,M,3], mask[B,M]
-plain mapping DataLoader batch    model(batch_dict)
+```python
+batch = ELA.batch(x, pos, batch=batch_index, edge_index=edge_index)
+batch = ELA.padded(x_padded, pos_padded, mask=node_mask)
+batch = ELA.collate(samples)
 ```
 
-`ELA.collate` concatenates variable-size graph dictionaries and offsets
-per-graph edges. `ELA.forward` accepts flat COO, padded COO, ragged COO lists, or
-boolean adjacency. When graph metadata is omitted, it constructs exact radius
-candidates as a convenience reference path.
+The model always receives one packed `ELABatch`. `ptr` is canonical graph
+membership, and optional edges use receiver/sender COO.
 
-Automatic radius discovery performs quadratic pair tests inside each graph.
-Repeated and performance-sensitive workloads must prepare and reuse a graph or
-use a cell-list/Verlet provider.
+When edges are omitted, ELA constructs exact radius candidates. Small graphs use
+a chunked dense reference; larger graphs use an exact 3D cell list followed by
+distance filtering. Repeated workloads should call `model.prepare(batch)` and
+reuse the prepared execution metadata.
 
 ## Optional functionality
 
-Condition, semantic order, and coordinate refinement use the same model class.
-They may be passed directly as forward keywords or packaged in `ELAContext`.
-Absent fields bypass their modules entirely. Semantic order is a node-attached
-label such as residue rank or time, never the tensor row index.
+Condition, semantic order, and coordinate refinement are fields of the same
+`ELABatch`. Absent fields bypass their modules entirely. Semantic order is a
+node-attached label such as residue rank or time, never tensor row index.
 
 ## Architecture policy
 
@@ -117,84 +117,77 @@ Canonical:
 - low-order tensor closure and aggregate chirality;
 - optional invariant context and semantic-order PE in the same layer;
 - optional coordinate refinement through the same model entry point;
-- flat, padded, and mapping input facades over one packed execution path.
+- one packed ELABatch execution path.
 
 Not canonical:
 
-- alternate `Unified`, `Advanced`, `LGL`, AttnRes, implicit-only, or hybrid
-  backbone selection;
+- alternate Unified, Advanced, LGL, AttnRes, implicit-only, or hybrid backbone
+  selection;
 - full-state implicit Gaussian--Taylor residual;
-- architecture schedules such as `implicit_every` or AttnRes block count;
-- a separate conditioned, padded, or coordinate-updating model class;
-- PyG/DGL as a core execution dependency;
+- schedules such as `implicit_every` or AttnRes block count;
+- separate scalar, conditioned, padded, or coordinate-updating model classes;
+- PyG/DGL as a core dependency;
 - kernel backend as a model hyperparameter.
 
-Historical numerical implementation modules and tracked artifacts may remain as
-internal provenance while canonical ELA or checkpoint migration depends on them.
-They are not public model choices.
+Historical numerical modules and tracked artifacts may remain private while the
+canonical implementation or checkpoint migration depends on them. They are not
+public model choices.
 
 ## Complexity contract
 
-For `N` nodes, `E` directed candidate edges, and `L` layers at fixed widths and
-ranks,
+For `N` nodes, `E` directed candidates, and `L` layers at fixed widths and ranks:
 
 \[
 T=O\left(L(N+E)\right).
 \]
 
-The model is node-linear only for graph families with
+Node-linear execution requires
 
 \[
 E=O(N).
 \]
 
-The built-in reference radius builder has
-
-\[
-O\left(\sum_g N_g^2\right)
-\]
-
-pair-test arithmetic. A refinement request with `S` outer steps evaluates the
-stack approximately `S+1` times. Neighbor discovery and graph reconstruction
-must be accounted for separately.
+The exact cell-list radius path has expected `O(N+E)` work under bounded density
+and fixed cutoff, but worst-case work can remain quadratic. A refinement request
+with `S` outer steps evaluates the stack approximately `S+1` times. Neighbor
+discovery and reconstruction must be accounted for separately.
 
 ## Kernel policy
 
-The PyTorch prepared-graph path is the numerical contract. `torch.compile`,
-Triton, C++/CUDA, or other kernels may optimize execution without creating a new
-model class or checkpoint schema.
+The PyTorch prepared path is the numerical contract. Triton currently accelerates
+receiver-major CSR reductions and groups local payloads to reduce peak temporary
+memory. It is an optional execution backend with automatic PyTorch fallback.
 
-Priority order:
+Further optimization priority:
 
-1. fuse receiver-major local geometry, score, and reductions;
+1. fuse local geometry, score, and receiver reductions;
 2. use recomputation for local backward;
-3. implement exact on-the-fly cell-list candidates;
-4. leave global GEMM/BMM to Inductor/vendor libraries unless profiling proves a
-   specific deficit.
+3. add periodic/minimum-image neighbor construction when required;
+4. leave global GEMM/BMM to Inductor and vendor libraries unless profiling proves
+   a specific deficit.
 
-Every custom kernel requires a PyTorch fallback, numerical/equivariant gradient
-checks, and measured end-to-end latency or memory benefit.
+Every custom kernel requires PyTorch equivalence, equivariance, feature,
+coordinate, and parameter-gradient checks, plus measured complete-stack latency
+or memory benefit.
 
 ## Current validation gates
 
-Required focused contracts include:
+Required contracts include:
 
-- one package-root architecture and one layer;
+- one package-root architecture, layer, and graph container;
+- irreps-only representation configuration;
 - exact zero-initialized global/local additive behavior;
 - proper and improper O(3), translation, node permutation, edge order, graph
   isolation, and batching;
 - all supported input/output parity sectors;
-- flat/padded/mapping batch equivalence;
-- padded mask and output restoration semantics;
-- dependency-free radius graph agreement with a dense reference;
+- packed, padded-ingestion, and mapping-collate behavior;
+- exact dense/cell-list radius agreement;
 - semantic-order permutation consistency and disabled-node isolation;
-- condition path neutrality at initialization and true context-free bypass after
-  training;
-- coordinate-refinement identity initialization, mask, centering, bound, and
-  equivariance;
+- condition neutrality and context-free bypass;
+- coordinate-refinement identity, mask, centering, bound, and equivariance;
 - feature and coordinate first gradients and required double backward;
-- CUDA BF16 finite forward/backward;
-- latency and memory measured without hiding graph-construction costs.
+- CUDA FP32/BF16 and PyTorch/Triton agreement;
+- latency and memory measured separately from graph construction.
 
 Run:
 
