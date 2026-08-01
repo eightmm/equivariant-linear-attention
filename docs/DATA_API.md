@@ -1,288 +1,254 @@
-# Dependency-free graph data API
+# Dependency-free graph and batch API
 
 ELA uses plain PyTorch tensors. PyG, DGL, and framework-specific graph objects
 are not required.
 
-The internal execution representation is a packed ragged node axis plus a
-receiver-major sparse graph. The public API accepts convenient input layouts and
-normalizes them to that representation.
+The one public graph container is `ELABatch`. Its canonical representation is a
+packed ragged node axis plus optional receiver/sender COO:
+
+```text
+node_irreps:      [N_total, D]
+positions:        [N_total, 3]
+ptr:              [B + 1]
+edge_index:       [2, E] or None
+edge_relation_id: [E] or None
+```
+
+The model itself accepts only this container:
+
+```python
+output = model(batch)
+```
 
 ## 1. Single graph
 
 ```python
-model = ELA.scalar(node_dim=32, cutoff=6.0)
-out = model(x, pos)
-```
+from equivariant_attention import ELA, ELABatch
 
-Shapes:
-
-```text
-x:   [N, D]
-pos: [N, 3]
-```
-
-When neither `graph` nor `edge_index` is supplied, ELA builds exact radius
-candidates from `pos` using the model cutoff.
-
-## 2. Flat packed mini-batch
-
-```python
-out = model(
-    x,
-    pos,
-    batch=batch,
+model = ELA(
+    input_irreps="16x0e",
+    output_irreps="1x0e",
+    cutoff=6.0,
 )
+
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+)
+
+output = model(batch)
 ```
 
-Shapes:
+If `ptr` is omitted, the batch contains one graph. If `edge_index` is omitted,
+ELA constructs exact geometric radius candidates.
 
-```text
-x:     [N_total, D]
-pos:   [N_total, 3]
-batch: [N_total]
-```
-
-`batch` values must be contiguous graph IDs `0 ... B-1`. Radius discovery and
-global reductions never cross graph boundaries.
-
-With supplied edges:
+## 2. Packed mini-batch
 
 ```python
-out = model(
-    x,
-    pos,
-    batch=batch,
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    ptr=torch.tensor([0, n0, n0 + n1, n0 + n1 + n2]),
     edge_index=edge_index,
 )
 ```
 
-`edge_index` has shape `[2,E]`. Row 0 is the receiver and row 1 is the sender.
-Edges must already use indices in the packed node axis.
+`ptr[g]:ptr[g+1]` is the packed node interval of graph `g`.
 
-## 3. Padded batch
-
-```python
-out = model(
-    x_padded,
-    pos_padded,
-    mask=node_mask,
-)
-```
-
-Shapes:
-
-```text
-x_padded:   [B, M, D]
-pos_padded: [B, M, 3]
-node_mask:  bool [B, M]
-```
-
-Every graph must contain at least one valid node. Valid nodes are packed in
-stable graph-major, row-major order. Output node tensors are restored to padded
-shape.
-
-```text
-out["node_irreps"]:     [B, M, D_out]
-out["positions"]:       [B, M, 3]
-out["coordinate_delta"]:[B, M, 3]
-out["node_mask"]:        [B, M]
-out["graph_irreps"]:     [B, D_out]
-```
-
-Invalid node outputs and coordinate deltas are zero. Invalid positions are
-copied from the input template.
-
-### Padded COO
+Existing graph-major batch IDs can be normalized through:
 
 ```python
-out = model(
-    x_padded,
-    pos_padded,
-    mask=node_mask,
+batch = ELA.batch(
+    x,
+    pos,
+    batch=batch_index,
     edge_index=edge_index,
-    edge_mask=edge_mask,
 )
 ```
 
-Accepted edge shapes:
+Batch IDs must be contiguous and graph-major. `ptr` is the stored canonical
+membership representation.
+
+## 3. Edge convention
 
 ```text
-[B, 2, E_max]
-[B, E_max, 2]
+edge_index[0] = receiver
+edge_index[1] = sender
 ```
 
-`edge_mask` is bool `[B,E_max]`. Without `edge_mask`, an edge is valid when both
-endpoints are nonnegative. Negative endpoints are padding.
-
-### Ragged edge list
+Edges may not cross `ptr` graph boundaries. Relation IDs have shape `[E]`.
 
 ```python
-out = model(
-    x_padded,
-    pos_padded,
-    mask=node_mask,
-    edge_index=[edge_0, edge_1, ...],
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    ptr=ptr,
+    edge_index=edge_index,
+    edge_relation_id=edge_type,
 )
 ```
 
-Each item has shape `[2,E_b]` and uses graph-local padded node indices.
+Typed relations require relation capacity in the model configuration.
 
-### Dense adjacency
+## 4. Padded source tensors
+
+Padded tensors are converted once at the data boundary:
 
 ```python
-out = model(
-    x_padded,
-    pos_padded,
-    mask=node_mask,
-    adjacency=adjacency,
+batch = ELA.padded(
+    x_padded,       # [B, M, D]
+    pos_padded,     # [B, M, 3]
+    mask=node_mask, # bool [B, M]
 )
 ```
 
-`adjacency` is bool `[B,M,M]`. This is convenient for small dense fixtures but
-not recommended for large graphs.
+The numerical core receives only valid packed nodes. Restore a packed node output
+when required:
 
-## 4. Plain dictionary datasets
+```python
+padded_output = batch.restore_nodes(output["node"])
+```
 
-A dataset item may be a mapping:
+The lower-level constructor `ELABatch.from_padded` additionally accepts padded
+COO, ragged per-graph COO, or boolean adjacency. These layouts are ingestion
+formats, not separate model modes.
+
+## 5. Plain dictionary datasets
+
+A sample may be a normal mapping:
 
 ```python
 {
-    "node_irreps": x,       # aliases: x, node_features
-    "pos": pos,             # alias: positions
-    "edge_index": edges,    # optional
-    "edge_relation_id": relation, # optional
-    "condition": condition, # optional
-    "order": order,         # optional
-    "order_group": group,   # optional
-    "order_mask": enabled,  # optional
-    "target": y,            # retained for the training loop
-    "sample_id": sample_id,
+    "x": x,
+    "pos": pos,
+    "edge_index": edge_index, # optional
+    "edge_type": relation,    # optional
+    "condition": condition,   # optional
+    "order": order,           # optional
+    "target": y,              # aliases: y, label, labels
+    "id": sample_id,
 }
 ```
 
-Collate with:
-
 ```python
+from torch.utils.data import DataLoader
+
 loader = DataLoader(
     dataset,
     batch_size=16,
+    shuffle=True,
+    pin_memory=True,
     collate_fn=ELA.collate,
 )
 
 for batch in loader:
+    batch = batch.to("cuda", dtype=torch.bfloat16, non_blocking=True)
     output = model(batch)
-    loss = criterion(output["graph_irreps"], batch["target"])
 ```
 
 The collator:
 
-- concatenates variable-size node tensors;
-- creates the packed `batch` vector;
-- offsets per-graph edges;
+- concatenates variable-size nodes;
+- builds `ptr`;
+- offsets graph-local edge indices;
 - concatenates relation IDs and node-level annotations;
-- stacks graph-level targets and conditions;
+- stacks graph-level targets or conditions;
 - preserves sample IDs.
 
-If every sample omits `edge_index`, the collated mapping also omits it and ELA
-builds radius candidates for the batch.
+All samples in one collate call must consistently provide or omit each optional
+field whose shape must be aligned across the batch.
 
-All samples in one collate call must either provide edges or omit them. The same
-all-or-none rule applies to relation IDs, targets, conditions, and order fields.
-
-## 5. Prepared graph hot path
-
-For a fixed candidate graph:
+## 6. Device and dtype transfer
 
 ```python
-graph = model.prepare_graph(
-    pos,
-    batch=batch,
-    edge_index=edge_index,
+batch = batch.to("cuda")
+```
+
+moves tensors without changing floating dtypes.
+
+```python
+batch = batch.to("cuda", dtype=torch.bfloat16)
+```
+
+moves node features, targets, and conditions to BF16 while retaining FP32
+geometry by default.
+
+```python
+batch = batch.to(
+    "cuda",
+    dtype=torch.float32,
+    geometry_dtype=torch.float64,
 )
+```
+
+controls representation and coordinate precision independently.
+
+Integer indices, relation IDs, groups, and masks retain their semantic dtypes.
+`batch.pin_memory()` is available for CPU DataLoader output.
+
+## 7. Prepared execution
+
+For fixed topology:
+
+```python
+batch = model.prepare(batch)
 
 for _ in range(training_steps):
-    output = model(x, pos, graph)
+    output = model.forward_prepared(batch)
 ```
 
-This avoids repeated radius discovery, COO sorting, CSR construction, and graph
-layout planning. It is the preferred path for training and benchmarking.
+Preparation includes radius discovery when needed, edge validation, receiver
+sorting, CSR construction, and graph-layout planning. The prepared graph is a
+private execution cache inside `ELABatch`.
 
-A prepared graph is immutable runtime metadata. It can be moved with:
+Device transfer preserves compatible explicit prepared metadata. If topology or
+membership changes, construct or prepare a new batch.
+
+## 8. Automatic radius candidates
+
+The built-in builder is exact:
+
+- small graphs use chunked all-pairs distance tests;
+- larger graphs use a 3D cell list and exact final distance filtering.
+
+It never connects different `ptr` segments. Under bounded spatial density and
+fixed cutoff, the cell-list path has expected `O(N+E)` work. Its worst case can
+still be quadratic.
+
+Automatic candidates do not infer:
+
+- bonds;
+- mesh connectivity;
+- temporal transitions;
+- periodic minimum-image relations;
+- semantic edge types.
+
+Supply explicit edges when those meanings matter.
+
+## 9. Conditions and semantic order
+
+Conditions may be shared, graph-level, or packed node-level according to the
+configured condition width.
+
+`OrderContext` carries node-attached semantic coordinates, optional group IDs,
+periods, and an enable mask. Order labels must follow node permutations. Tensor
+row order is never interpreted as semantic order automatically.
+
+## 10. Output and targets
+
+The model ignores training metadata stored in the batch. Targets remain
+available as:
 
 ```python
-graph = graph.to("cuda")
+batch.target
 ```
 
-## 6. Automatic radius graph
-
-The public convenience path uses a chunked PyTorch implementation:
-
-```python
-from equivariant_attention import radius_graph
-
-edge_index = radius_graph(
-    pos,
-    batch=batch,
-    cutoff=6.0,
-    max_neighbors=64,
-    include_self=True,
-)
-```
-
-It performs exact distance tests but has quadratic arithmetic inside each graph:
-
-\[
-O\left(\sum_g N_g^2\right).
-\]
-
-Chunking bounds temporary memory; it does not change that arithmetic order.
-Topology discovery is detached from coordinates, while the ELA geometry and
-messages remain differentiable for the selected candidate edges.
-
-Use this path for:
-
-- examples and small graphs;
-- one-off inference;
-- tests and reference checks;
-- coordinate batches where simplicity is more important than neighbor-search
-  throughput.
-
-For repeated or large workloads:
-
-- precompute `edge_index`;
-- cache `Prepared3DGraph`;
-- use a cell-list or Verlet provider;
-- rebuild candidates only when coordinate motion exceeds the chosen skin.
-
-## 7. Conditions and order in batches
-
-Conditions may be:
+Model output uses packed node tensors:
 
 ```text
-[C]       shared by the full batch
-[1,C]     shared by the full batch
-[B,C]     graph-level
-[N,C]     packed node-level
-[B,M,C]   padded node-level
+output["node"]       packed node output
+output["graph"]      graph-wise mean
+output["graph_sum"]  graph-wise sum
+output["pos"]        final positions
+output["delta"]      coordinate displacement
 ```
-
-For `condition_dim=1`, padded scalar node conditions may also use `[B,M]`.
-
-Semantic order may use packed `[N]`/`[N,K]` or padded `[B,M]`/`[B,M,K]` tensors.
-Order masks and groups follow the node layout. Order coordinates are node labels
-and must be permuted together with node tensors.
-
-## 8. What ELA cannot infer
-
-Automatic radius candidates express geometric proximity only. ELA cannot infer
-from coordinates alone whether an edge means:
-
-- a covalent bond;
-- a protein--ligand contact;
-- a mesh connection;
-- a temporal transition;
-- a typed relation with a special cutoff.
-
-Supply `edge_index` and `edge_relation_id` when those semantics matter. The
-automatic graph is a convenient geometric candidate graph, not a replacement
-for task-specific topology.
