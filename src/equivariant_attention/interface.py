@@ -269,6 +269,8 @@ class ELA(_TensorELA):
             raise TypeError("node_irreps must be a tensor or graph mapping")
         if pos is None or not isinstance(pos, torch.Tensor):
             raise TypeError("pos must be a tensor")
+        if graph is not None and batch is None and node_irreps.ndim == 2:
+            batch = graph.batch
         if adjacency is not None:
             if adjacency.device != node_irreps.device:
                 raise ValueError("adjacency and node tensors must share one device")
