@@ -5,29 +5,36 @@ import inspect
 import equivariant_attention as ela
 from equivariant_attention import (
     ELA,
+    ELABatch,
     ELAConfig,
-    ELAContext,
     ELAFeatures,
     ELALayer,
     SparseGeometry,
 )
 
 
-def test_package_root_exposes_one_architecture_and_one_layer() -> None:
+def test_package_root_exposes_one_architecture_layer_and_graph_container() -> None:
     exported = set(ela.__all__)
-    assert {"ELA", "ELALayer"}.issubset(exported)
+    assert {"ELA", "ELALayer", "ELABatch"}.issubset(exported)
 
     forbidden = {
         "CanonicalEquivariantLinearAttention",
         "ConditionedELA",
+        "ELAContext",
         "ELACoordinateRefiner",
         "EquivariantAttention",
         "EquivariantAttentionResiduals",
         "EquivariantLinearAttention",
         "ImplicitGaussianSpatialKernel",
+        "PackedGraphLayout",
+        "PackedNeighborGraph",
+        "Prepared3DGraph",
         "SpatialOperatorAblationModel",
         "UnifiedEquivariantAttention",
         "UnifiedEquivariantLayer",
+        "collate_graphs",
+        "prepare_3d_graph",
+        "radius_graph",
     }
     assert exported.isdisjoint(forbidden)
     for name in forbidden:
@@ -49,7 +56,7 @@ def test_package_root_exposes_one_architecture_and_one_layer() -> None:
     }
 
 
-def test_optional_capabilities_use_one_config_and_context() -> None:
+def test_optional_capabilities_stay_in_one_model_and_batch() -> None:
     config = ELAConfig(
         input_irreps="4x0e",
         geometry=SparseGeometry(cutoff=5.0),
@@ -64,8 +71,4 @@ def test_optional_capabilities_use_one_config_and_context() -> None:
     assert isinstance(model.layers[0], ELALayer)
     assert config.canonical_contract()["public_model"] == "ELA"
     assert config.canonical_contract()["public_layer"] == "ELALayer"
-    assert ELAContext() == ELAContext(
-        condition=None,
-        order=None,
-        refinement=None,
-    )
+    assert ELABatch.__name__ == "ELABatch"
