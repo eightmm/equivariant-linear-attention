@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from equivariant_attention import ELA, ELAConfig, SparseGeometry, collate_graphs
@@ -111,6 +112,45 @@ def test_collated_mapping_runs_without_pyg() -> None:
     assert output["graph_irreps"].shape == (2, 1)
     assert batch["target"].shape == (2, 1)
     assert batch["sample_ids"] == ("a", "b")
+
+
+def test_collated_mapping_without_edges_builds_one_batched_radius_graph() -> None:
+    torch.manual_seed(9)
+    samples = [
+        {
+            "x": torch.randn(3, 4, dtype=torch.float64),
+            "pos": 0.1 * torch.randn(3, 3, dtype=torch.float64),
+        },
+        {
+            "x": torch.randn(4, 4, dtype=torch.float64),
+            "pos": 0.1 * torch.randn(4, 3, dtype=torch.float64),
+        },
+    ]
+    batch = ELA.collate(samples)
+    assert "edge_index" not in batch
+    model = ELA.scalar(
+        4,
+        width=32,
+        depth=1,
+        cutoff=10.0,
+        num_rbf=8,
+    ).double().eval()
+
+    with torch.inference_mode():
+        output = model(batch)
+    assert output["node_irreps"].shape == (7, 1)
+    assert output["graph_irreps"].shape == (2, 1)
+
+
+def test_mapping_alias_conflicts_fail_closed() -> None:
+    model = ELA.scalar(4, width=32, depth=1, cutoff=10.0)
+    payload = {
+        "x": torch.randn(3, 4),
+        "pos": torch.randn(3, 3),
+        "positions": torch.randn(3, 3),
+    }
+    with pytest.raises(ValueError, match="multiple aliases"):
+        model(payload)
 
 
 def test_automatic_graph_keeps_coordinate_gradients() -> None:
