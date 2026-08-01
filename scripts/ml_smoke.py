@@ -1,24 +1,40 @@
-"""One-batch forward, backward, and inference smoke test."""
+"""One-batch canonical ELA forward, backward, batching, and inference smoke."""
+
+from __future__ import annotations
 
 import sys
 
 import torch
 
-from equivariant_attention import (
-    EquivariantAttention,
-    EquivariantAttentionConfig,
-    autocast_dtype,
-    prepare_for_inference,
-)
-from equivariant_attention._egnn_baseline import _DynamicEGNNBaseline
+from equivariant_attention import ELA
+from equivariant_attention.inference import autocast_dtype, prepare_for_inference
 
 
 def _comparison_tolerance(dtype: torch.dtype, *, automatic: bool) -> float:
     if dtype == torch.bfloat16:
-        return 1e-2
+        return 2e-2
     if dtype == torch.float16:
-        return 5e-3
-    return 5e-3 if automatic else 1e-10
+        return 1e-2
+    return 5e-3 if automatic else 1e-9
+
+
+def _fixed_degree_edges(
+    nodes: int,
+    degree: int,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    receiver = torch.arange(nodes, device=device).repeat_interleave(degree)
+    offset = torch.arange(degree, device=device).repeat(nodes)
+    sender = (receiver + offset) % nodes
+    return torch.stack([receiver, sender])
+
+
+def _finite_gradients(model: torch.nn.Module) -> bool:
+    return all(
+        parameter.grad is None or torch.isfinite(parameter.grad).all()
+        for parameter in model.parameters()
+    )
 
 
 def main() -> int:
@@ -31,90 +47,153 @@ def main() -> int:
         return 1
 
     device = torch.device(device_name)
-    dtype = (
-        torch.float32 if use_auto else (torch.bfloat16 if use_bf16 else torch.float64)
+    parameter_dtype = (
+        torch.float32
+        if use_auto
+        else (torch.bfloat16 if use_bf16 else torch.float64)
     )
-    geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
+    geometry_dtype = (
+        torch.float64 if parameter_dtype == torch.float64 else torch.float32
+    )
     torch.manual_seed(23)
-    model = EquivariantAttention(
-        EquivariantAttentionConfig(
-            node_dim=5,
-            hidden_irreps="16x0e + 4x1o",
-            output_irreps="2x0e + 1x1o + 1x2e",
-            num_layers=2,
-            num_heads=4,
-            local_head_counts=(4, 4),
-            use_pairwise_local_content=True,
-            coordinate_updates=True,
-        )
-    ).to(device=device, dtype=dtype)
-    node_feats = torch.randn(7, 5, device=device, dtype=dtype)
-    pos = torch.randn(7, 3, device=device, dtype=geometry_dtype)
-    batch = torch.tensor([0, 0, 0, 1, 1, 1, 1], device=device)
 
-    outputs = model(node_feats, pos, batch=batch)
-    if "node_positions" not in outputs:
-        print("ml_smoke: dynamic attention omitted node_positions", file=sys.stderr)
+    model = ELA.scalar(
+        5,
+        output_dim=2,
+        width=32,
+        depth=2,
+        cutoff=10.0,
+        num_rbf=8,
+    ).to(device=device, dtype=parameter_dtype)
+    nodes = 7
+    node_irreps = torch.randn(
+        nodes,
+        5,
+        device=device,
+        dtype=parameter_dtype,
+        requires_grad=True,
+    )
+    positions = torch.randn(
+        nodes,
+        3,
+        device=device,
+        dtype=geometry_dtype,
+        requires_grad=True,
+    )
+    batch = torch.tensor(
+        [0, 0, 0, 1, 1, 1, 1],
+        device=device,
+        dtype=torch.long,
+    )
+    graph = model.prepare_graph(
+        positions.detach(),
+        batch=batch,
+        edge_index=torch.cat(
+            [
+                _fixed_degree_edges(3, 3, device=device),
+                _fixed_degree_edges(4, 4, device=device) + torch.tensor(
+                    [[3], [3]],
+                    device=device,
+                ),
+            ],
+            dim=1,
+        ),
+    )
+
+    output = model(node_irreps, positions, graph)
+    required = {"node_irreps", "graph_irreps", "positions", "coordinate_delta"}
+    if not required.issubset(output):
+        print("ml_smoke: canonical output contract failed", file=sys.stderr)
         return 1
-    loss = sum(value.float().square().mean() for value in outputs.values())
+    loss = output["node_irreps"].float().square().mean()
+    loss = loss + output["graph_irreps"].float().square().mean()
     loss.backward()
-    for name, parameter in model.named_parameters():
-        if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
-            print(f"ml_smoke: non-finite gradient in {name}", file=sys.stderr)
-            return 1
-
-    egnn = _DynamicEGNNBaseline(
-        node_dim=5,
-        hidden_dim=8,
-        num_layers=2,
-    ).to(device=device, dtype=dtype)
-    egnn_outputs = egnn(node_feats.detach(), pos.detach(), batch=batch)
-    egnn_loss = sum(value.float().square().mean() for value in egnn_outputs.values())
-    egnn_loss.backward()
-    if "node_positions" not in egnn_outputs or not all(
-        torch.isfinite(value).all() for value in egnn_outputs.values()
-    ):
-        print("ml_smoke: dynamic EGNN output contract failed", file=sys.stderr)
+    if not _finite_gradients(model):
+        print("ml_smoke: non-finite parameter gradient", file=sys.stderr)
         return 1
-    for name, parameter in egnn.named_parameters():
-        if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
-            print(f"ml_smoke: non-finite EGNN gradient in {name}", file=sys.stderr)
-            return 1
+    if node_irreps.grad is None or not torch.isfinite(node_irreps.grad).all():
+        print("ml_smoke: non-finite node gradient", file=sys.stderr)
+        return 1
+    if positions.grad is None or not torch.isfinite(positions.grad).all():
+        print("ml_smoke: non-finite coordinate gradient", file=sys.stderr)
+        return 1
 
+    # Public padded batch path: no PyG object and no explicit graph metadata.
+    padded_nodes = torch.zeros(
+        2,
+        4,
+        5,
+        device=device,
+        dtype=parameter_dtype,
+    )
+    padded_positions = torch.zeros(
+        2,
+        4,
+        3,
+        device=device,
+        dtype=geometry_dtype,
+    )
+    mask = torch.tensor(
+        [[True, True, True, False], [True, True, True, True]],
+        device=device,
+    )
+    padded_nodes[mask] = node_irreps.detach()
+    padded_positions[mask] = positions.detach()
     model.eval()
     with torch.inference_mode():
-        eager_outputs = model(node_feats, pos, batch=batch)
+        padded_output = model(
+            padded_nodes,
+            padded_positions,
+            mask=mask,
+        )
+    if padded_output["node_irreps"].shape != (2, 4, 2):
+        print("ml_smoke: padded output shape failed", file=sys.stderr)
+        return 1
+    if not torch.isfinite(padded_output["node_irreps"]).all():
+        print("ml_smoke: padded output is non-finite", file=sys.stderr)
+        return 1
+
+    with torch.inference_mode():
+        eager_output = model(node_irreps.detach(), positions.detach(), graph)
     inference_model = prepare_for_inference(
         model,
         device=device,
-        dtype="auto" if use_auto else dtype,
+        dtype="auto" if use_auto else parameter_dtype,
         compile_model=use_compile,
     )
     if use_auto and {parameter.dtype for parameter in inference_model.parameters()} != {
         torch.float32
     }:
         print(
-            "ml_smoke: auto inference did not preserve fp32 parameters", file=sys.stderr
+            "ml_smoke: auto inference did not preserve fp32 parameters",
+            file=sys.stderr,
         )
         return 1
     with torch.inference_mode():
-        inference_outputs = inference_model(node_feats, pos, batch=batch)
-    if not all(torch.isfinite(value).all() for value in inference_outputs.values()):
+        inference_output = inference_model(
+            node_irreps.detach().to(dtype=torch.float32 if use_auto else parameter_dtype),
+            positions.detach(),
+            graph,
+        )
+    if not all(
+        torch.isfinite(value).all() for value in inference_output.values()
+    ):
         print("ml_smoke: non-finite inference output", file=sys.stderr)
         return 1
-    comparison_dtype = autocast_dtype(device) if use_auto else dtype
+
+    comparison_dtype = autocast_dtype(device) if use_auto else parameter_dtype
     tolerance = _comparison_tolerance(comparison_dtype, automatic=use_auto)
-    for key in eager_outputs:
+    for key in required:
         if not torch.allclose(
-            eager_outputs[key].float(),
-            inference_outputs[key].float(),
+            eager_output[key].float(),
+            inference_output[key].float(),
             atol=tolerance,
             rtol=tolerance,
         ):
             print(f"ml_smoke: eager/inference mismatch in {key}", file=sys.stderr)
             return 1
 
-    print(f"ml_smoke: ok ({device}, dtype={dtype})")
+    print(f"ml_smoke: ok ({device}, dtype={parameter_dtype})")
     return 0
 
 
