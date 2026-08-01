@@ -1,4 +1,4 @@
-# Architecture decision: one ELA model and one ELA layer
+# Architecture decision: one ELA model, layer, and graph container
 
 Date: 2026-07-31
 
@@ -18,16 +18,21 @@ The repository has one public architecture:
 }
 \]
 
-The public model and layer are:
+The public computational objects are:
 
 ```text
 ELA
 ELALayer
+ELABatch
 ```
 
 Semantic order, invariant conditioning, and coordinate refinement are optional
-capabilities of this same model. They do not create wrapper models or alternate
-layer classes.
+capabilities of this same model and batch. They do not create wrapper models or
+alternate layer classes.
+
+Input and output representations are declared only with irreps. Scalar-only data
+use scalar irreps such as `"32x0e"`; no separate `node_dim`, `output_dim`, or
+scalar-model API exists.
 
 ## Why one architecture
 
@@ -39,22 +44,21 @@ Earlier development exposed several overlapping surfaces:
 - coordinate-refinement wrappers;
 - implicit full-state spatial transport;
 - block Attention Residuals;
-- explicit/implicit/hybrid ablation models.
+- explicit/implicit/hybrid ablation models;
+- multiple raw, padded, and prepared graph call signatures.
 
 This made the repository look like a model menu rather than one reusable layer.
-It also encouraged configuration search over mechanisms whose mathematical
-roles were different.
-
 The final policy is:
 
 ```text
-public backbone: ELA
-public layer:    ELALayer
-optional input: ELAContext
+public backbone:        ELA
+public layer:           ELALayer
+public graph container: ELABatch
+representation API:     input_irreps / output_irreps
 ```
 
-Historical numerical reference modules may remain internal while canonical ELA
-or checkpoint migration depends on them. They are not package-root models.
+Historical numerical modules may remain private while canonical ELA or
+checkpoint migration depends on them. They are not package-root models.
 
 ## Spatial equation
 
@@ -71,19 +75,43 @@ The router is identity initialized:
 (w_G^\tau,w_L^\tau)=(1,1),
 \]
 
-so the initial function is the established additive model
+so the initial function is
 
 \[
 M^\tau=G^\tau+L^\tau.
 \]
 
 Implicit Gaussian--Taylor full-state transport is not part of the public
-architecture. It overlaps the global sufficient-statistic role, smooths full
+architecture. It overlaps the global sufficient-statistic role, smooths the full
 irrep state, adds scale/schedule options, and does not reproduce compact local
 semantics at fixed rank.
 
-Block AttnRes is also not part of the public architecture. It introduces a depth
-cache and block-count axis that is not required by the base stability contract.
+Block AttnRes is also not public. It adds a depth cache and block-count axis not
+required by the base stability contract.
+
+## Data and graph decision
+
+The numerical core uses packed nodes and a receiver-major sparse graph.
+`ELABatch` is the only public graph boundary:
+
+```python
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    ptr=ptr,
+    edge_index=edge_index,
+)
+
+output = model(batch)
+```
+
+Flat batch IDs, padded tensors, and mapping datasets are normalized by
+`ELA.batch`, `ELA.padded`, and `ELA.collate` before model execution.
+
+If edge topology is absent, preparation constructs exact geometric radius
+candidates. Small graphs use chunked dense distance tests; larger graphs use a
+3D cell list plus exact filtering. Semantic topology must still be supplied
+explicitly.
 
 ## Optional capabilities
 
@@ -97,10 +125,12 @@ ELAFeatures(
 )
 ```
 
-`ELAContext` activates them for one call:
+`ELABatch` activates them with optional fields:
 
 ```python
-ELAContext(
+ELABatch(
+    node_irreps=x,
+    positions=pos,
     condition=None,
     order=None,
     refinement=None,
@@ -117,17 +147,14 @@ scale, and residual gates. Vector and tensor conditions remain input irreps.
 
 ### Semantic order
 
-Order is a node-attached semantic coordinate, not the tensor row index. It is
-encoded as invariant Fourier PE and supplied through the same condition path.
-An enable mask supports mixed ordered/unordered node types.
+Order is a node-attached semantic coordinate, not tensor row index. It is encoded
+as invariant Fourier PE. An enable mask supports mixed ordered/unordered nodes.
 
 ### Coordinate refinement
 
-A zero-initialized `1o` head is allocated only when requested. A
-`RefinementRequest` runs the same ELA stack in an explicit outer loop and owns
-step size, masking, centering, and optional graph reconstruction.
-
-No second coordinate-updating backbone or layer class exists.
+A zero-initialized `1o` head is allocated only when configured. A
+`RefinementRequest` runs the same stack in an explicit outer loop and owns step
+size, masking, centering, and optional graph reconstruction.
 
 ## Public options
 
@@ -152,10 +179,16 @@ normalization
 residual scales
 tensor closure
 chirality construction
+kernel backend
 ```
 
-Runtime context contains task inputs and execution requests, not alternate
-architecture selection.
+## Kernel decision
+
+The PyTorch prepared path is the numerical reference. Triton is an optional
+execution backend for supported receiver-major reductions and must not alter the
+model, checkpoint, or equations.
+
+Backend selection remains execution policy, not architecture configuration.
 
 ## Complexity
 
@@ -167,7 +200,7 @@ T=O(L(N+E)).
 \]
 
 Node-linear arithmetic additionally requires `E = O(N)`. Neighbor discovery is
-outside this bound.
+reported separately.
 
 With `S` coordinate-refinement steps, ELA is evaluated approximately `S+1`
 times:
@@ -176,29 +209,28 @@ times:
 O((S+1)L(N+E)),
 \]
 
-excluding graph rebuild.
+excluding graph reconstruction.
 
 ## Required validation
 
-The canonical gate must cover:
+The canonical gate covers:
 
-- package root exposes only `ELA` and `ELALayer` as backbone/layer;
-- context-free forward bypasses trained conditioner weights;
+- one package-root architecture, layer, and graph container;
+- irreps-only representation configuration;
+- context-free bypass of trained optional modules;
 - semantic-order permutation equivariance;
-- disabled order labels have no effect;
-- condition and order projections receive gradients;
-- coordinate refinement is identity at initialization;
-- activated displacement is bounded, masked, and equivariant;
-- global/local fusion starts at exact `G + L`;
+- coordinate-refinement identity, bounds, masking, centering, and equivariance;
+- exact zero-initialized `G + L` fusion;
 - proper/improper O(3), translation, node permutation, graph isolation, and
   edge-order contracts;
-- input and coordinate gradients, including double backward where required;
-- CUDA BF16 forward/backward;
-- latency and memory measured without overstating neighbor costs.
+- input and coordinate gradients, including required double backward;
+- dense/cell-list radius equivalence;
+- CUDA FP32/BF16 and PyTorch/Triton agreement;
+- latency and memory measured separately from graph construction.
 
 ## Superseded public names
 
-The following are no longer package-root architecture choices:
+The following are not package-root architecture choices:
 
 ```text
 CanonicalEquivariantLinearAttention
@@ -212,4 +244,5 @@ UnifiedEquivariantAttention
 UnifiedEquivariantLayer
 ```
 
-The API test fails if these names return to the root namespace.
+The API test fails if these names, dimension-based representation arguments, or a
+scalar-only model factory return to the public surface.
