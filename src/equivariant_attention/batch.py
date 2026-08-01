@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from .data import collate_graphs as _collate_graphs
+from .unified import Prepared3DGraph
 
 
 _FLOAT_VALUE_KEYS = frozenset(
@@ -41,6 +42,8 @@ def _move_value(
             dtype=target_dtype,
             non_blocking=non_blocking,
         )
+    if isinstance(value, Prepared3DGraph):
+        return value.to(device)
     if isinstance(value, tuple):
         return tuple(
             _move_value(
@@ -70,7 +73,9 @@ def _move_value(
 
 def _pin_value(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
-        return value.pin_memory() if value.device.type == "cpu" else value
+        if value.device.type != "cpu" or not torch.cuda.is_available():
+            return value
+        return value.pin_memory()
     if isinstance(value, tuple):
         return tuple(_pin_value(item) for item in value)
     if isinstance(value, list):
