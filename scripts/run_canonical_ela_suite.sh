@@ -107,6 +107,8 @@ uv run --locked pytest -q \
   tests/test_ergonomic_api.py \
   tests/test_padded_batch_api.py \
   tests/test_dependency_free_radius_graph.py \
+  tests/test_ela_batch.py \
+  tests/test_prepared_hot_path.py \
   2>&1 | tee "$RUN_DIR/focused-tests.log"
 
 if [[ "$DEVICE" == cuda* ]]; then
