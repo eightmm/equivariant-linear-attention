@@ -1,8 +1,15 @@
 # Equivariant Linear Attention
 
-A general-purpose PyTorch layer for parity-aware 3D data. The canonical model is
-**equivariant linear attention**, not a task-specific molecular network and not
-a menu of interchangeable graph backends.
+A general-purpose PyTorch layer for parity-aware 3D data.
+
+The repository exposes **one architecture** and **one layer**:
+
+```text
+ELA
+ELALayer
+```
+
+Its spatial equation is fixed:
 
 \[
 \boxed{
@@ -12,12 +19,24 @@ a menu of interchangeable graph backends.
 }
 \]
 
-Global and local messages stay separate until an invariant,
-identity-initialized router combines them. Positions remain a separate affine
-geometry input; node inputs and outputs are declared with `input_irreps` and
-`output_irreps`.
+Global and local messages remain separate until an invariant,
+identity-initialized router combines them. There is no dense `N x N` attention
+tensor and no persistent edge hidden state.
 
-## Canonical model
+## Install
+
+```bash
+uv sync --locked
+```
+
+Automated GitHub Actions are disabled. Validation is explicit:
+
+```bash
+scripts/check.sh fast
+scripts/check.sh gpu
+```
+
+## Basic use
 
 ```python
 from equivariant_attention import ELA, ELAConfig, SparseGeometry
@@ -38,10 +57,13 @@ graph = config.geometry.prepare(
     batch,
     edge_index,  # edge_index[0] receives from edge_index[1]
 )
+
 output = model(node_irreps, positions, graph)
+node_output = output["node_irreps"]
+graph_output = output["graph_irreps"]
 ```
 
-The canonical public choices are deliberately limited to:
+The public architecture choices are deliberately limited to:
 
 ```text
 input_irreps
@@ -49,13 +71,15 @@ output_irreps
 width
 depth
 geometry
+features
 ```
 
-Attention heads, local rank, hidden parity sectors, normalization, residual
-scales, tensor closure, and chirality construction are derived implementation
-choices rather than public architecture-search knobs.
+Head count, local rank, hidden irreps, normalization, residual scales, tensor
+closure, and chirality construction are derived internally.
 
 ## One layer
+
+For hidden state \(h^\ell\),
 
 \[
 \bar h^\ell
@@ -80,7 +104,7 @@ For each sector
 \tau\in\{0e,0o,1o,1e,2e,2o\},
 \]
 
-the model computes invariant branch statistics and positive routing weights:
+an invariant router computes positive branch weights:
 
 \[
 (w_{G,i}^{\tau},w_{L,i}^{\tau})
@@ -96,8 +120,7 @@ R_\tau
 \right].
 \]
 
-The router output and branch-balance parameters are zero initialized, so
-initially
+The router is zero initialized, so initially
 
 \[
 w_G^\tau=w_L^\tau=1,
@@ -105,11 +128,7 @@ w_G^\tau=w_L^\tau=1,
 M_i^\tau=G_i^\tau+L_i^\tau.
 \]
 
-The model therefore starts from the admitted refined ELA equation. It learns a
-branch preference only when gradients support it.
-
-After fusion, one parity update, low-order tensor closure, residual, and
-pointwise equivariant FFN are applied:
+Then
 
 \[
 \begin{aligned}
@@ -132,11 +151,12 @@ h^{\ell+1}
 \end{aligned}
 \]
 
-No `N x N` attention tensor or persistent edge hidden state is materialized.
+`ELALayer` is the layer class used at every depth. `model.layers` exposes the
+stack for checkpointing, intermediate losses, or custom execution.
 
-## Representations
+## Input and output irreps
 
-The optimized path accepts arbitrary multiplicities of
+The optimized path supports arbitrary multiplicities of
 
 ```text
 0e  ordinary scalar
@@ -147,7 +167,9 @@ The optimized path accepts arbitrary multiplicities of
 2o  odd symmetric-traceless tensor
 ```
 
-with `l <= 2`. Cartesian bases are
+with `l <= 2`.
+
+Cartesian bases:
 
 ```text
 l=1: [x, y, z]
@@ -165,75 +187,134 @@ from equivariant_attention import (
 )
 ```
 
-Raw positions are not `1o` input features. They transform affinely,
+Positions remain a separate affine geometry input:
 
 \[
-x_i\mapsto Rx_i+t,
+x_i\mapsto Rx_i+t.
 \]
 
-whereas a polar feature transforms homogeneously as `v -> Rv`.
+They must not be packed as an ordinary `1o` feature, which transforms only as
+`v -> Rv`.
 
-## Invariant conditioning
+## Optional functionality in the same model
 
-Conditioning is an explicit wrapper, not a field in the minimal model config:
-
-```python
-from equivariant_attention.conditioning import (
-    ConditionedELA,
-    InvariantConditioningConfig,
-)
-
-conditioned = ConditionedELA(
-    config,
-    InvariantConditioningConfig(condition_dim=256),
-)
-output = conditioned(
-    node_irreps,
-    positions,
-    graph,
-    condition=time_embedding,
-)
-```
-
-The condition is `0e`. Even scalars receive bounded shift and scale;
-non-scalar sectors receive invariant copy-wise scale only. Conditioner output
-projections are zero initialized, so shared ELA weights initially reproduce the
-unconditioned function.
-
-Vector or tensor conditions belong in `input_irreps`.
-
-## Coordinate refinement
-
-Coordinate mutation is not part of the canonical layer. Refinement, denoising,
-registration, and learned relaxation use an outer-loop wrapper:
+Optional capabilities are allocated once with `ELAFeatures` and activated per
+call through `ELAContext`. They do not create another model class.
 
 ```python
 from equivariant_attention import (
-    CoordinateRefinementConfig,
-    ELACoordinateRefiner,
+    ELA,
+    ELAConfig,
+    ELAContext,
+    ELAFeatures,
+    OrderContext,
+    RefinementRequest,
+    SparseGeometry,
 )
 
-refiner = ELACoordinateRefiner(
-    model,
-    CoordinateRefinementConfig(
+config = ELAConfig(
+    input_irreps="32x0e + 4x1o",
+    output_irreps="1x0e + 1x1o",
+    width=128,
+    depth=8,
+    geometry=SparseGeometry(cutoff=6.0),
+    features=ELAFeatures(
+        condition_dim=256,
+        order_dim=1,
+        coordinate_refinement=True,
+    ),
+)
+model = ELA(config)
+
+context = ELAContext(
+    condition=time_or_class_embedding,
+    order=OrderContext.sequence(
+        residue_rank,
+        segment_id=chain_id,
+        enabled=is_ordered_node,
+    ),
+    refinement=RefinementRequest(
         steps=4,
         max_step=0.2,
         centering="selected",
+        update_mask=movable_nodes,
+        graph_rebuilder=optional_neighbor_rebuilder,
     ),
 )
 
-output = refiner(
+output = model(
     node_irreps,
     positions,
     graph,
-    update_mask=movable_nodes,
-    graph_rebuilder=optional_neighbor_rebuilder,
+    context=context,
 )
 ```
 
-The zero-initialized equivariant head predicts a bounded `1o` displacement. A
-caller-provided graph rebuilder makes neighbor-list policy explicit. For
-conservative force fields, derive forces from scalar energy:
+Each context field is independently optional:
+
+- no `condition`: invariant DiT modulation is bypassed;
+- no `order`: semantic-order PE is bypassed;
+- no `refinement`: positions are not mutated.
+
+A configured feature can therefore be switched on or off without changing the
+model class. Conditioner and coordinate-head outputs are zero initialized, so
+the initial function matches context-free ELA.
+
+### Invariant condition
+
+`condition` is an ordinary `0e` feature with shape:
+
+```text
+[D]
+[1, D]
+[G, D]
+[N, D]
+```
+
+Even scalars receive bounded shift and scale. Non-scalar sectors receive only
+invariant copy-wise scale. Vector or tensor conditions belong in
+`input_irreps`, not in this tensor.
+
+### Semantic order PE
+
+Order coordinates are semantic labels, not current tensor row indices.
+Permuting nodes requires permuting features, positions, graph references, and
+order labels together.
+
+```python
+order = OrderContext.sequence(
+    residue_rank,
+    segment_id=chain_id,
+    enabled=is_protein_atom,
+)
+```
+
+The `enabled` mask supports mixed ordered/unordered systems, for example a
+protein with residue order and a ligand whose atom serialization order has no
+meaning.
+
+For an ordering list of node IDs, first construct inverse ranks:
+
+```python
+rank = torch.empty_like(node_order)
+rank[node_order] = torch.arange(node_order.numel())
+order = OrderContext.permutation_rank(rank)
+```
+
+Grid, lattice, time, and cyclic coordinates are supported through
+`OrderContext.grid(..., periods=...)`.
+
+### Coordinate refinement
+
+Refinement predicts a bounded polar displacement in an outer loop:
+
+\[
+x_i^{t+1}=x_i^t+\Delta x_i^t.
+\]
+
+A caller-provided graph rebuilder makes topology policy explicit. Without one,
+the prepared candidate topology is reused while continuous geometry is
+recomputed. For conservative force fields, derive forces from scalar energy:
 
 \[
 F_i=-\nabla_{x_i}E.
@@ -248,104 +329,49 @@ and ranks,
 T=O\left(L(N+E)\right).
 \]
 
-The branch router adds `O(LN)` work and does not change the asymptotic order.
+The branch router and optional node-level conditioning add `O(LN)` work.
+Coordinate refinement with `S` outer steps costs approximately
+`O(SL(N+E))`, excluding neighbor-list reconstruction.
+
 The model is linear in node count only when `E = O(N)`. Neighbor discovery is
 outside the layer and must be measured separately.
 
-## Architecture policy
+## Public API policy
 
-Tracked evidence supports distinct operator roles:
+The package root exports only one architecture and one architecture layer:
 
 ```text
-canonical:    exact global ELA + exact sparse local + branch-aware fusion
-experimental: edge-free implicit smooth transport
-experimental: block Attention Residuals for deep stacks
-legacy:       historical configurable architectures
+ELA
+ELALayer
 ```
 
-The implicit Gaussian--Taylor operator is useful for smooth spatial research,
-but fixed-rank transport does not reproduce compact support, edge-axis routing,
-typed relations, or sharp local interactions. Always-on and periodic hybrid
-schedules are therefore not canonical options.
+Graph, irrep, physics-head, and context utilities remain public. Historical
+implementation modules are not model-selection APIs.
 
-Experimental components:
-
-```python
-from equivariant_attention.experimental import ...
-```
-
-Compatibility models:
-
-```python
-from equivariant_attention.legacy import ...
-```
-
-`EquivariantLinearAttentionConfig` and `EquivariantLinearAttention` remain
-available for existing experiments and historical state schemas. New work
-should start from `ELAConfig` and compose a wrapper only when the task requires
-one.
-
-## Migration
-
-```python
-from equivariant_attention.migration import (
-    canonical_config_from_advanced,
-    load_advanced_ela_state,
-)
-
-minimal = canonical_config_from_advanced(old_config)
-model = ELA(minimal)
-receipt = load_advanced_ela_state(model, old_state_dict)
-```
-
-The migration fails closed when shapes or wrapper-only features differ. Missing
-keys are allowed only for the new branch router.
-
-## Install and validate
+## Focused validation
 
 ```bash
-uv sync --locked
+uv run pytest -q \
+  tests/test_api_policy.py \
+  tests/test_ela_context.py \
+  tests/test_branch_fusion.py \
+  tests/test_canonical_api.py
+```
+
+Full local gates:
+
+```bash
 scripts/check.sh fast
 scripts/check.sh gpu
-```
-
-GitHub Actions do not run automatically on pushes or pull requests. Validation
-is explicit and local.
-
-Focused canonical checks:
-
-```bash
-uv run pytest \
-  tests/test_branch_fusion.py \
-  tests/test_canonical_api.py \
-  tests/test_canonical_migration.py \
-  tests/test_conditioning_wrapper.py \
-  tests/test_refinement_wrapper.py \
-  tests/test_api_policy.py
-```
-
-Resource comparison:
-
-```bash
-uv run python scripts/benchmark_canonical_ela.py \
-  --nodes 1024 \
-  --degree 32 \
-  --width 128 \
-  --depth 8 \
-  --device cuda \
-  --dtype bfloat16 \
-  --output artifacts/canonical-ela-overhead.json
 ```
 
 ## Design documents
 
 - `docs/CANONICAL_ELA.md`
 - `docs/API_POLICY.md`
-- `docs/MIGRATION_TO_ELA.md`
 - `docs/ARCHITECTURE_DECISION_20260731.md`
 - `docs/SCALING.md`
-- `docs/SPATIAL_OPERATOR_INDEX.md`
 
-Unit tests establish shape, symmetry, finite-gradient, initialization, and
-execution contracts. They do not by themselves establish downstream accuracy or
+Unit tests establish shape, symmetry, initialization, and finite-gradient
+contracts. They do not by themselves establish downstream accuracy or a
 hardware speedup.
