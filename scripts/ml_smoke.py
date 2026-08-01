@@ -6,7 +6,7 @@ import sys
 
 import torch
 
-from equivariant_attention import ELA
+from equivariant_attention import ELA, ELABatch
 from equivariant_attention.inference import autocast_dtype, prepare_for_inference
 
 
@@ -57,9 +57,9 @@ def main() -> int:
     )
     torch.manual_seed(23)
 
-    model = ELA.scalar(
-        5,
-        output_dim=2,
+    model = ELA(
+        input_irreps="5x0e",
+        output_irreps="2x0e",
         width=32,
         depth=2,
         cutoff=10.0,
@@ -68,7 +68,7 @@ def main() -> int:
     nodes = 7
     node_irreps = torch.randn(
         nodes,
-        5,
+        model.config.input_layout.dim,
         device=device,
         dtype=parameter_dtype,
         requires_grad=True,
@@ -80,28 +80,31 @@ def main() -> int:
         dtype=geometry_dtype,
         requires_grad=True,
     )
-    batch = torch.tensor(
-        [0, 0, 0, 1, 1, 1, 1],
-        device=device,
-        dtype=torch.long,
+    ptr = torch.tensor([0, 3, 7], device=device, dtype=torch.long)
+    edge_index = torch.cat(
+        [
+            _fixed_degree_edges(3, 3, device=device),
+            _fixed_degree_edges(4, 4, device=device) + 3,
+        ],
+        dim=1,
     )
-    graph = model.prepare_graph(
-        positions.detach(),
-        batch=batch,
-        edge_index=torch.cat(
-            [
-                _fixed_degree_edges(3, 3, device=device),
-                _fixed_degree_edges(4, 4, device=device) + torch.tensor(
-                    [[3], [3]],
-                    device=device,
-                ),
-            ],
-            dim=1,
-        ),
+    prepared = model.prepare(
+        ELABatch(
+            node_irreps=node_irreps,
+            positions=positions,
+            ptr=ptr,
+            edge_index=edge_index,
+        )
     )
 
-    output = model(node_irreps, positions, graph)
-    required = {"node_irreps", "graph_irreps", "positions", "coordinate_delta"}
+    output = model.forward_prepared(prepared)
+    required = {
+        "node_irreps",
+        "graph_irreps",
+        "graph_sum",
+        "positions",
+        "coordinate_delta",
+    }
     if not required.issubset(output):
         print("ml_smoke: canonical output contract failed", file=sys.stderr)
         return 1
@@ -118,11 +121,10 @@ def main() -> int:
         print("ml_smoke: non-finite coordinate gradient", file=sys.stderr)
         return 1
 
-    # Public padded batch path: no PyG object and no explicit graph metadata.
     padded_nodes = torch.zeros(
         2,
         4,
-        5,
+        model.config.input_layout.dim,
         device=device,
         dtype=parameter_dtype,
     )
@@ -139,22 +141,20 @@ def main() -> int:
     )
     padded_nodes[mask] = node_irreps.detach()
     padded_positions[mask] = positions.detach()
+    padded_batch = ELA.padded(padded_nodes, padded_positions, mask)
     model.eval()
     with torch.inference_mode():
-        padded_output = model(
-            padded_nodes,
-            padded_positions,
-            mask=mask,
-        )
-    if padded_output["node_irreps"].shape != (2, 4, 2):
+        padded_output = model(padded_batch)
+    restored = padded_batch.restore_nodes(padded_output["node_irreps"])
+    if restored.shape != (2, 4, 2):
         print("ml_smoke: padded output shape failed", file=sys.stderr)
         return 1
-    if not torch.isfinite(padded_output["node_irreps"]).all():
+    if not torch.isfinite(restored).all():
         print("ml_smoke: padded output is non-finite", file=sys.stderr)
         return 1
 
     with torch.inference_mode():
-        eager_output = model(node_irreps.detach(), positions.detach(), graph)
+        eager_output = model.forward_prepared(prepared)
     inference_model = prepare_for_inference(
         model,
         device=device,
@@ -169,15 +169,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    inference_dtype = torch.float32 if use_auto else parameter_dtype
+    inference_batch = prepared.to(
+        device,
+        dtype=inference_dtype,
+        geometry_dtype=geometry_dtype,
+    )
     with torch.inference_mode():
-        inference_output = inference_model(
-            node_irreps.detach().to(dtype=torch.float32 if use_auto else parameter_dtype),
-            positions.detach(),
-            graph,
-        )
-    if not all(
-        torch.isfinite(value).all() for value in inference_output.values()
-    ):
+        inference_output = inference_model(inference_batch)
+    if not all(torch.isfinite(value).all() for value in inference_output.values()):
         print("ml_smoke: non-finite inference output", file=sys.stderr)
         return 1
 
