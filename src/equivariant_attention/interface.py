@@ -20,27 +20,18 @@ from .triton_ops import (
 install_triton_backend()
 
 
-def _positive_integer(name: str, value: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
-
-
 class ELA(_CanonicalELA):
-    """Single public ELA model consuming one canonical :class:`ELABatch`.
+    """Single public equivariant linear-attention model.
 
-    ``ELA(node_dim=...)`` is the scalar-feature convenience constructor.
-    Irrep-aware users may instead provide ``input_irreps`` and
-    ``output_irreps``. The numerical core always receives packed nodes and one
-    receiver-major sparse graph.
+    Input and output representations are always declared with irreps. Scalar-only
+    models use ordinary scalar irreps such as ``"32x0e"`` and ``"1x0e"`` rather
+    than a separate node-dimension API.
     """
 
     def __init__(
         self,
         config: ELAConfig | None = None,
         *,
-        node_dim: int | None = None,
-        output_dim: int | None = None,
         input_irreps: str | None = None,
         output_irreps: str | None = None,
         width: int | None = None,
@@ -54,8 +45,6 @@ class ELA(_CanonicalELA):
         coordinate_refinement: bool | None = None,
     ) -> None:
         direct_values = {
-            "node_dim": node_dim,
-            "output_dim": output_dim,
             "input_irreps": input_irreps,
             "output_irreps": output_irreps,
             "width": width,
@@ -81,6 +70,11 @@ class ELA(_CanonicalELA):
                 )
             resolved = config
         else:
+            if input_irreps is None:
+                raise ValueError(
+                    "input_irreps is required when config is omitted; "
+                    "for scalar features use a declaration such as '32x0e'"
+                )
             resolved_width = 128 if width is None else width
             resolved_depth = 8 if depth is None else depth
             resolved_cutoff = 5.0 if cutoff is None else cutoff
@@ -93,22 +87,6 @@ class ELA(_CanonicalELA):
                 if coordinate_refinement is None
                 else coordinate_refinement
             )
-            if node_dim is not None and input_irreps is not None:
-                raise ValueError("supply node_dim or input_irreps, not both")
-            if output_dim is not None and output_irreps is not None:
-                raise ValueError("supply output_dim or output_irreps, not both")
-            if input_irreps is None:
-                if node_dim is None:
-                    raise ValueError(
-                        "node_dim or input_irreps is required when config is omitted"
-                    )
-                input_irreps = f"{_positive_integer('node_dim', node_dim)}x0e"
-            if output_irreps is None:
-                output_irreps = (
-                    "1x0e"
-                    if output_dim is None
-                    else f"{_positive_integer('output_dim', output_dim)}x0e"
-                )
             if (
                 isinstance(resolved_edge_types, bool)
                 or not isinstance(resolved_edge_types, int)
@@ -132,7 +110,9 @@ class ELA(_CanonicalELA):
                 ) * resolved_edge_types
             resolved = ELAConfig(
                 input_irreps=input_irreps,
-                output_irreps=output_irreps,
+                output_irreps=(
+                    "1x0e" if output_irreps is None else output_irreps
+                ),
                 width=resolved_width,
                 depth=resolved_depth,
                 geometry=SparseGeometry(
@@ -147,38 +127,6 @@ class ELA(_CanonicalELA):
                 ),
             )
         super().__init__(resolved)
-
-    @classmethod
-    def scalar(
-        cls,
-        node_dim: int,
-        *,
-        output_dim: int = 1,
-        width: int = 128,
-        depth: int = 8,
-        cutoff: float = 5.0,
-        num_rbf: int = 16,
-        num_edge_types: int = 0,
-        relation_cutoffs: tuple[float, ...] = (),
-        condition_dim: int = 0,
-        order_dim: int = 0,
-        coordinate_refinement: bool = False,
-    ) -> ELA:
-        """Compatibility alias for ``ELA(node_dim=..., output_dim=...)``."""
-
-        return cls(
-            node_dim=node_dim,
-            output_dim=output_dim,
-            width=width,
-            depth=depth,
-            cutoff=cutoff,
-            num_rbf=num_rbf,
-            num_edge_types=num_edge_types,
-            relation_cutoffs=relation_cutoffs,
-            condition_dim=condition_dim,
-            order_dim=order_dim,
-            coordinate_refinement=coordinate_refinement,
-        )
 
     @staticmethod
     def batch(
@@ -199,6 +147,10 @@ class ELA(_CanonicalELA):
     ) -> ELABatch:
         """Pack a padded ``[B,M,...]`` input into one :class:`ELABatch`."""
 
+        if x.ndim != 3 or pos.shape != (*x.shape[:2], 3):
+            raise ValueError("padded x and pos must have shapes [B,M,D] and [B,M,3]")
+        if mask is None:
+            mask = torch.ones(x.shape[:2], device=x.device, dtype=torch.bool)
         aliases = {"edge_type": "edge_relation_id", "y": "target"}
         normalized = dict(kwargs)
         for alias, canonical in aliases.items():
@@ -211,9 +163,9 @@ class ELA(_CanonicalELA):
         return ELABatch.from_padded(x, pos, mask, **normalized)
 
     @staticmethod
-    def collate(
-        samples: Sequence[Mapping[str, Any] | ELABatch],
-    ) -> ELABatch:
+    def collate(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
+        """Collate dependency-free mapping samples into one packed batch."""
+
         return ELABatch.collate(samples)
 
     def extra_repr(self) -> str:
@@ -258,12 +210,10 @@ class ELA(_CanonicalELA):
         if not isinstance(batch, ELABatch):
             raise TypeError("ELA.prepare expects an ELABatch")
         if batch.is_prepared and not force:
-            batch.assert_prepared_fresh()
             return batch
         edge_index = batch.edge_index
         relation = batch.edge_relation_id
         relation_count = self.config.geometry.num_edge_relations
-        from_radius = edge_index is None
         if edge_index is None:
             if relation is not None:
                 raise ValueError("edge_relation_id cannot be used without edge_index")
@@ -289,8 +239,7 @@ class ELA(_CanonicalELA):
             if relation_count == 0:
                 raise ValueError(
                     "edge types were supplied but the model has no relation "
-                    "capacity; construct ELA with num_edge_types or "
-                    "relation_cutoffs"
+                    "capacity; configure num_edge_types or relation_cutoffs"
                 )
             if relation.numel() and (
                 int(relation.min().item()) < 0
@@ -305,24 +254,15 @@ class ELA(_CanonicalELA):
             edge_relation_id=relation,
             prefer_int32=prefer_int32,
         )
-        return batch.with_prepared_graph(
-            graph,
-            from_radius=from_radius,
-            radius_signature=(
-                (float(self.config.geometry.cutoff), max_neighbors)
-                if from_radius
-                else None
-            ),
-        )
+        return batch.with_prepared_graph(graph)
 
     def forward_prepared(self, batch: ELABatch) -> dict[str, torch.Tensor]:
-        """Compile-friendly hot path for an already prepared immutable batch."""
+        """Hot path for an already prepared immutable batch."""
 
         if not isinstance(batch, ELABatch):
             raise TypeError("ELA.forward_prepared expects an ELABatch")
-        batch.assert_prepared_fresh()
         if batch._prepared_graph is None:
-            raise RuntimeError("prepared graph unexpectedly missing")
+            raise ValueError("batch is not prepared; call model.prepare(batch) first")
         output = dict(
             _CanonicalELA.forward(
                 self,
@@ -334,15 +274,10 @@ class ELA(_CanonicalELA):
         )
         node = output["node_irreps"]
         graph_mean = output["graph_irreps"]
-        graph_sum = output.get("graph_sum")
-        if graph_sum is None:
-            graph_sum = node.new_zeros((batch.num_graphs, node.shape[-1]))
-            graph_sum.index_add_(0, batch.batch, node)
+        graph_sum = node.new_zeros((batch.num_graphs, node.shape[-1]))
+        graph_sum.index_add_(0, batch.batch, node)
         positions = output.get("positions", batch.positions)
         delta = output.get("coordinate_delta", torch.zeros_like(batch.positions))
-
-        # Friendly aliases preserve precise scientific names while making
-        # ordinary downstream code concise.
         output.update(
             node=node,
             graph=graph_mean,
