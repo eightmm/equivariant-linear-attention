@@ -158,20 +158,17 @@ loader = DataLoader(
 )
 
 for batch in loader:
-    batch = batch.to(
-        "cuda",
-        dtype=torch.bfloat16,
-        non_blocking=True,
-    )
+    batch = batch.to("cuda", non_blocking=True)
     out = model(batch)
-    loss = loss_fn(out["graph_irreps"].float(), batch["target"].float())
+    loss = loss_fn(out["graph_irreps"], batch["target"])
 ```
 
 `ELA.collate` returns an `ELABatch`, offsets variable-size graph edges, creates
 the packed batch vector, and carries targets, sample IDs, conditions, and semantic
 order. Common aliases include `x`, `pos`, `y`, and `edge_type`.
 
-See [`examples/train_without_pyg.py`](examples/train_without_pyg.py).
+See [`examples/train_without_pyg.py`](examples/train_without_pyg.py) for a mixed
+precision training loop.
 
 ## Prepared graph hot path
 
