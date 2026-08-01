@@ -1,6 +1,7 @@
 """Public API for the single canonical equivariant linear-attention model."""
 
-from .canonical import ELA, ELAConfig, ELALayer, SparseGeometry
+from .api import ELA
+from .canonical import ELAConfig, ELALayer, SparseGeometry
 from .context import (
     ELAContext,
     ELAFeatures,
@@ -8,6 +9,7 @@ from .context import (
     OrderContext,
     RefinementRequest,
 )
+from .data import collate_graphs, radius_graph
 from .heads import CoordinateUpdateHead, EquivariantVectorHead
 from .irreps import (
     Irrep,
@@ -64,14 +66,16 @@ __all__ = [
     "ScalarEnergyHead",
     "SparseGeometry",
     "VerletRadiusNeighborProvider",
+    "collate_graphs",
     "conservative_forces",
     "matrix_to_st5",
     "pack_irreps",
     "prepare_3d_graph",
+    "radius_graph",
     "split_irreps",
     "st5_to_matrix",
 ]
 
 
 def main() -> None:
-    print("equivariant-attention: import ELA, ELAConfig, and ELALayer")
+    print("equivariant-attention: import ELA and call it with PyTorch tensors")
