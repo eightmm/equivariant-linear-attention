@@ -70,7 +70,7 @@ def _move_value(
 
 def _pin_value(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
-        return value.pin_memory()
+        return value.pin_memory() if value.device.type == "cpu" else value
     if isinstance(value, tuple):
         return tuple(_pin_value(item) for item in value)
     if isinstance(value, list):
@@ -112,9 +112,14 @@ class ELABatch(dict[str, Any]):
         non_blocking: bool = False,
     ) -> ELABatch:
         target = torch.device(device)
-        if geometry_dtype is None:
-            geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
-        if geometry_dtype not in {torch.float32, torch.float64}:
+        if geometry_dtype is None and dtype is not None:
+            geometry_dtype = (
+                torch.float64 if dtype == torch.float64 else torch.float32
+            )
+        if geometry_dtype is not None and geometry_dtype not in {
+            torch.float32,
+            torch.float64,
+        }:
             raise TypeError("geometry_dtype must be float32 or float64")
         return ELABatch(
             {
@@ -132,7 +137,6 @@ class ELABatch(dict[str, Any]):
 
     def pin_memory(self) -> ELABatch:
         return ELABatch({key: _pin_value(value) for key, value in self.items()})
-
 
 
 def collate_graphs(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
