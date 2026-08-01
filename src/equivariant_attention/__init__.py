@@ -1,5 +1,6 @@
 """Public API for the single canonical equivariant linear-attention model."""
 
+from .batch import ELABatch, collate_graphs
 from .canonical import ELAConfig, ELALayer, SparseGeometry
 from .context import (
     ELAContext,
@@ -8,7 +9,7 @@ from .context import (
     OrderContext,
     RefinementRequest,
 )
-from .data import collate_graphs, radius_graph
+from .data import radius_graph
 from .heads import CoordinateUpdateHead, EquivariantVectorHead
 from .interface import ELA
 from .irreps import (
@@ -44,6 +45,7 @@ __all__ = [
     "CoordinateUpdateHead",
     "DirectVectorForceHead",
     "ELA",
+    "ELABatch",
     "ELAConfig",
     "ELAContext",
     "ELAGeometryContext",
