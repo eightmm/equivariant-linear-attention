@@ -1,26 +1,27 @@
 # Equivariant Linear Attention
 
-A general-purpose, parity-aware 3D layer implemented in PyTorch.
+A general-purpose, parity-aware 3D neural layer implemented in PyTorch.
 
-The repository exposes one model and one layer:
+The public architecture is deliberately small:
 
 ```text
-ELA
-ELALayer
+ELA       one model
+ELALayer  one reusable layer
+ELABatch  one graph container
 ```
 
-Every layer combines:
+Every layer combines
 
 \[
 \boxed{
 \text{exact global equivariant linear attention}
 +
-\text{exact sparse short-range residual}
+\text{exact sparse short-range geometry}
 }
 \]
 
-The core package depends only on PyTorch. PyG and DGL are not required for graph
-construction, batching, or model execution.
+without constructing a dense `N x N` attention matrix. The core package does not
+require PyG or DGL.
 
 ## Install
 
@@ -28,33 +29,42 @@ construction, batching, or model execution.
 uv sync --locked
 ```
 
+Triton is optional. If a compatible Triton runtime is present, supported CUDA
+reductions are selected automatically; otherwise ELA uses the PyTorch reference.
+
 ## Quick start
 
-### Scalar node features
+Representations are always declared with irreps. A scalar-only input with 32
+channels is written as `"32x0e"`.
 
 ```python
-from equivariant_attention import ELA
+import torch
 
-model = ELA.scalar(
-    node_dim=32,
-    output_dim=1,
+from equivariant_attention import ELA, ELABatch
+
+model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
     width=128,
     depth=8,
     cutoff=6.0,
 )
 
-# x: [N, 32], pos: [N, 3]
-out = model(x, pos)
+batch = ELABatch(
+    node_irreps=torch.randn(24, 32),
+    positions=torch.randn(24, 3),
+)
 
-node_prediction = out["node_irreps"]
-graph_prediction = out["graph_irreps"]
+output = model(batch)
+
+node_prediction = output["node"]
+graph_prediction = output["graph"]
 ```
 
-If no graph is supplied, ELA builds exact radius candidates from `pos`. This is
-convenient for examples and small graphs. Repeated or large workloads should
-prepare and reuse the graph.
+When `edge_index` is omitted, ELA constructs exact geometric radius candidates
+from `positions` and the model cutoff.
 
-### Generic irreps
+## General equivariant inputs and outputs
 
 ```python
 model = ELA(
@@ -64,90 +74,119 @@ model = ELA(
     depth=8,
     cutoff=6.0,
 )
-
-out = model(node_irreps, pos)
 ```
 
-Supported sectors are `0e`, `0o`, `1o`, `1e`, `2e`, and `2o`, with arbitrary
-multiplicity and `l <= 2`.
+Supported sectors are:
 
-Positions are a separate affine geometry input:
+```text
+0e  ordinary scalar
+0o  pseudoscalar
+1o  polar vector
+1e  axial vector
+2e  even symmetric-traceless tensor
+2o  odd symmetric-traceless tensor
+```
+
+Arbitrary multiplicities are supported for `l <= 2`. Input tensors are flattened
+according to `input_irreps`; helpers such as `pack_irreps` and `split_irreps` are
+available for structured construction.
+
+Positions remain a separate affine input because
 
 \[
-x_i\mapsto Rx_i+t.
+x_i \mapsto R x_i + t,
 \]
 
-They are not an ordinary `1o` feature, which transforms only as `v -> Rv`.
+whereas an ordinary `1o` feature transforms only as `v -> Rv`.
+
+## Explicit graph topology
+
+Use receiver/sender COO when graph semantics matter:
+
+```python
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
+    ptr=ptr,
+    edge_index=edge_index,          # [2, E]
+    edge_relation_id=edge_type,     # [E], optional
+)
+
+output = model(batch)
+```
+
+The convention is:
+
+```text
+edge_index[0] = receiver
+edge_index[1] = sender
+```
+
+Automatic radius candidates express geometric proximity only. Supply explicit
+edges for bonds, mesh connectivity, temporal transitions, metal coordination,
+or other typed relations.
 
 ## Mini-batches without PyG
 
-### Flat packed batch
+ELA uses one packed ragged representation:
 
-```python
-# x: [N_total, D]
-# pos: [N_total, 3]
-# batch: [N_total], graph IDs 0 ... B-1
-out = model(x, pos, batch=batch)
+```text
+node_irreps:      [N_total, D]
+positions:        [N_total, 3]
+ptr:              [B + 1]
+edge_index:       [2, E] or None
+edge_relation_id: [E] or None
 ```
 
-With supplied candidates:
+### From flat tensors
 
 ```python
-out = model(
+batch = ELA.batch(
     x,
     pos,
-    batch=batch,
-    edge_index=edge_index,  # [2, E], receiver row first
+    batch=batch_index,       # graph-major IDs 0 ... B-1
+    edge_index=edge_index,
 )
+
+output = model(batch)
 ```
 
-### Padded batch plus mask
+`ptr` may be supplied instead of `batch`.
+
+### From padded tensors
 
 ```python
-# x: [B, M, D], pos: [B, M, 3], mask: bool [B, M]
-out = model(x, pos, mask=mask)
+batch = ELA.padded(
+    x_padded,       # [B, M, D]
+    pos_padded,     # [B, M, 3]
+    mask=node_mask, # bool [B, M]
+)
 
-out["node_irreps"]      # [B, M, D_out]
-out["graph_irreps"]     # [B, D_out]
-out["node_mask"]        # [B, M]
+output = model(batch)
+packed_node_output = output["node"]
+padded_node_output = batch.restore_nodes(packed_node_output)
 ```
 
-Masked node outputs and coordinate deltas are zero; masked positions are returned
-unchanged.
+Padded tensors are a convenience input only. Valid nodes are packed before the
+numerical core runs, so masked dummy nodes do not consume layer compute.
 
-Padded edges may be given as:
+### Plain dictionary datasets
 
-```python
-model(x, pos, mask=mask, edge_index=edges, edge_mask=edge_mask)
-# edges: [B, 2, E_max] or [B, E_max, 2]
-
-model(x, pos, mask=mask, edge_index=[edges_0, edges_1, ...])
-# each edge tensor: [2, E_b]
-
-model(x, pos, mask=mask, adjacency=adjacency)
-# bool adjacency: [B, M, M]
-```
-
-### Plain dictionary dataset
-
-A sample is an ordinary mapping:
+Dataset samples may be ordinary mappings:
 
 ```python
 sample = {
     "x": node_features,
     "pos": positions,
     "edge_index": edge_index,  # optional
-    "edge_type": relation_id,  # optional alias
+    "edge_type": relation_id,  # optional
     "y": target,
     "id": sample_id,
 }
 ```
 
-Use the built-in collator:
-
 ```python
 from torch.utils.data import DataLoader
-from equivariant_attention import ELA
 
 loader = DataLoader(
     dataset,
@@ -158,140 +197,125 @@ loader = DataLoader(
 )
 
 for batch in loader:
-    batch = batch.to("cuda", non_blocking=True)
-    out = model(batch)
-    loss = loss_fn(out["graph_irreps"], batch["target"])
+    batch = batch.to("cuda", dtype=torch.bfloat16, non_blocking=True)
+    output = model(batch)
+    loss = loss_fn(output["graph"].float(), batch.target.float())
 ```
 
-`ELA.collate` returns an `ELABatch`, offsets variable-size graph edges, creates
-the packed batch vector, and carries targets, sample IDs, conditions, and semantic
-order. Common aliases include `x`, `pos`, `y`, and `edge_type`.
+The collator packs variable-size graphs, offsets local edge indices, builds
+`ptr`, and carries targets, sample IDs, conditions, and semantic order.
 
-See [`examples/train_without_pyg.py`](examples/train_without_pyg.py) for a mixed
-precision training loop.
+See [`examples/train_without_pyg.py`](examples/train_without_pyg.py).
 
-## Prepared graph hot path
+## Output contract
 
-Automatic radius discovery and COO-to-CSR packing are not free. For a fixed
-candidate graph, prepare it once:
+The precise names and concise aliases are both returned:
+
+```text
+node_irreps       alias: node
+graph_irreps      aliases: graph, graph_mean
+graph_sum
+positions         alias: pos
+coordinate_delta  alias: delta
+```
+
+`graph_irreps` is the graph-wise mean. `graph_sum` is provided for extensive
+quantities such as additive total energies.
+
+## Prepared hot path
+
+Graph discovery and COO-to-CSR packing should not be repeated for fixed topology.
+Prepare an `ELABatch` once:
 
 ```python
-graph = model.prepare_graph(
-    pos,
-    batch=batch,
-    edge_index=edge_index,  # omit to build radius candidates once
-)
+batch = model.prepare(batch)
 
 for step in range(num_steps):
-    out = model.forward_prepared(x, pos, graph)
+    output = model.forward_prepared(batch)
 ```
 
-`forward_prepared` assumes the packed node order and graph membership have
-already been validated. It bypasses public input packing and is the preferred
-path for repeated training, inference, profiling, and compilation.
+The normal `model(batch)` call prepares an unprepared batch automatically.
+`forward_prepared` is the intended path for repeated training, inference,
+profiling, and backend comparison.
+
+For static shapes it can be compiled independently:
 
 ```python
 compiled_forward = torch.compile(
     model.forward_prepared,
     mode="reduce-overhead",
 )
-out = compiled_forward(x, pos, graph)
-```
 
-The normal `model(x, pos, graph)` path remains available when runtime validation
-is preferred.
+output = compiled_forward(batch)
+```
 
 ## Automatic radius candidates
 
-The built-in radius builder is an exact, chunked PyTorch reference:
+Small graphs use an exact chunked dense reference. Larger graphs use an exact
+3D cell list followed by distance filtering. Both return directed candidates and
+never connect different graphs.
 
-```python
-from equivariant_attention import radius_graph
-
-edge_index = radius_graph(
-    pos,
-    batch=batch,
-    cutoff=6.0,
-    max_neighbors=64,
-)
-```
-
-It avoids cross-graph pairs and bounds temporary memory, but still performs
-quadratic pair tests within each graph:
+Under fixed cutoff and bounded spatial density, the cell-list path has expected
 
 \[
-O\left(\sum_g N_g^2\right).
+O(N + E)
 \]
 
-For large or moving systems, provide precomputed candidates, a cell-list/Verlet
-provider, or a future fused on-the-fly backend. With a supplied graph, the ELA
-stack has
+work. Worst-case behavior remains quadratic when many points occupy one cell.
+Periodic cells and minimum-image geometry are not inferred; provide an explicit
+topology for those workloads.
 
-\[
-O\left(L(N+E)\right)
-\]
+## Conditions, semantic order, and coordinate refinement
 
-arithmetic at fixed widths and ranks.
-
-Geometric radius candidates cannot infer bonds, mesh connectivity, temporal
-transitions, or typed relations. Supply explicit edges and relation IDs when
-those semantics matter.
-
-## Condition, semantic order, and refinement
-
-The same `ELA` class supports optional runtime context:
+Optional capabilities remain fields of the same model and batch.
 
 ```python
+from equivariant_attention import OrderContext, RefinementRequest
+
 model = ELA(
     input_irreps="32x0e",
     output_irreps="1x0e + 1x1o",
-    width=128,
-    depth=8,
-    cutoff=6.0,
     condition_dim=256,
     order_dim=1,
     coordinate_refinement=True,
 )
 
-out = model(
-    x,
-    pos,
-    batch=batch,
+batch = ELABatch(
+    node_irreps=x,
+    positions=pos,
     edge_index=edge_index,
     condition=time_embedding,
-    order=residue_rank,
-    order_group=chain_id,
-    order_mask=is_ordered_node,
-    refine_steps=4,
-    max_coordinate_step=0.2,
-    update_mask=movable_nodes,
+    order=OrderContext.sequence(
+        residue_rank,
+        segment_id=chain_id,
+        enabled=is_ordered_node,
+    ),
+    refinement=RefinementRequest(
+        steps=4,
+        max_step=0.2,
+        update_mask=movable_nodes,
+    ),
 )
+
+output = model(batch)
 ```
 
-- `condition` is invariant `0e` data and may be shared, graph-level, or
-  node-level.
-- `order` is a semantic sequence/grid coordinate, never the current tensor row
-  index.
-- `order_mask` permits ordered and unordered node types in one graph.
-- refinement is a bounded outer loop and is not a conservative integrator.
+- `condition` is invariant `0e` information.
+- Semantic order is node-attached information such as residue rank or time, never
+  the current tensor row index.
+- Coordinate refinement is a bounded learned outer loop, not a conservative
+  integrator.
 
-For conservative forces, use a scalar energy:
+For conservative forces use a scalar energy:
 
 \[
-F_i=-\nabla_{x_i}E.
+F_i = -\nabla_{x_i} E.
 \]
-
-Reusable advanced context is available through `ELAContext`.
 
 ## Advanced configuration
 
 ```python
-from equivariant_attention import (
-    ELA,
-    ELAConfig,
-    ELAFeatures,
-    SparseGeometry,
-)
+from equivariant_attention import ELAConfig, ELAFeatures, SparseGeometry
 
 config = ELAConfig(
     input_irreps="32x0e + 4x1o",
@@ -309,69 +333,90 @@ config = ELAConfig(
         coordinate_refinement=True,
     ),
 )
+
 model = ELA(config)
 ```
 
-Head count, local rank, hidden irreps, normalization, residual scale, tensor
-closure, and chirality construction are derived internally rather than exposed
-as architecture choices.
+Head count, local rank, hidden irreps, normalization, tensor closure, chirality,
+and execution backend are internal deterministic choices rather than public
+architecture variants.
 
 ## Layer equation
 
-For hidden state \(h^\ell\):
+For hidden state `h^l`:
 
 \[
-\bar h^\ell
-=
-\operatorname{EqRMSNorm}_{\rm attn}(h^\ell),
+\bar h^l = \operatorname{EqRMSNorm}(h^l),
 \]
 
 \[
-G^\ell
-=
-\operatorname{ExactGlobalELA}_{l\le2}(\bar h^\ell),
+G^l = \operatorname{ExactGlobalELA}_{l\le2}(\bar h^l),
 \qquad
-L^\ell
-=
-\operatorname{ExactSparseLocal}_{l\le2}
-(\bar h^\ell,x,\mathcal E).
+L^l = \operatorname{ExactSparseLocal}_{l\le2}(\bar h^l, x, \mathcal E).
 \]
 
-An invariant zero-initialized router combines global and local messages. At
+An invariant, identity-initialized router combines the two branches. At
 initialization:
 
 \[
-w_G^\tau=w_L^\tau=1,
+w_G^\tau = w_L^\tau = 1,
 \qquad
-M_i^\tau=G_i^\tau+L_i^\tau.
+M_i^\tau = G_i^\tau + L_i^\tau.
 \]
 
-The fused message is followed by parity-valid update, low-order tensor closure,
-residual scaling, and an equivariant FFN. There is no dense `N x N` attention
-tensor and no persistent edge hidden state.
+The fused message enters parity-valid updates, low-order tensor closure, residual
+scaling, and an equivariant FFN. There is no persistent edge hidden state.
 
-## Kernel optimization
+## Complexity
 
-The PyTorch prepared path is the numerical contract. `torch.compile` should be
-measured first. The highest-value custom-kernel target is the receiver-major
-local branch: fuse geometry, radial basis, content score, positive weight, and
-all receiver reductions so `[E,R,...]` intermediates are not materialized.
+For a prepared graph with `N` nodes, `E` directed candidates, `L` layers, and
+fixed widths/ranks:
 
-Global ELA is already dominated by GEMM/BMM and is a lower-priority custom Triton
-target. A production edge-free user API should eventually use an internal exact
-cell-list/Verlet traversal rather than the quadratic reference radius builder.
+\[
+T = O\left(L(N+E)\right).
+\]
 
-Triton or CUDA kernels remain optional execution backends and must not change the
-model class, config, checkpoint, or mathematical output.
+Node-linear scaling additionally requires `E = O(N)`. Neighbor discovery must be
+reported separately when it is included.
+
+## Kernel backends
+
+The PyTorch implementation is the numerical reference. Backend selection does
+not alter the model, config, checkpoint, or equations.
+
+```bash
+ELA_KERNEL_BACKEND=auto    # default
+ELA_KERNEL_BACKEND=torch   # force reference
+ELA_KERNEL_BACKEND=triton  # fail if unsupported
+```
+
+The current Triton path accelerates receiver-major CSR reductions and uses
+memory-bounded payload groups in the local operator. Unsupported devices, dtypes,
+or graph regimes fall back to PyTorch in `auto` mode.
+
+Benchmark the same prepared batch and model state:
+
+```bash
+uv run python scripts/benchmark_ela.py \
+  --input-irreps "32x0e" \
+  --output-irreps "1x0e" \
+  --nodes 4096 \
+  --degree 32 \
+  --width 128 \
+  --depth 8 \
+  --device cuda \
+  --dtype bfloat16 \
+  --output artifacts/ela-kernels.json
+```
 
 ## Documentation
 
 - [`docs/DATA_API.md`](docs/DATA_API.md)
-- [`docs/ELABATCH.md`](docs/ELABATCH.md)
-- [`docs/KERNEL_OPTIMIZATION.md`](docs/KERNEL_OPTIMIZATION.md)
 - [`docs/CANONICAL_ELA.md`](docs/CANONICAL_ELA.md)
 - [`docs/API_POLICY.md`](docs/API_POLICY.md)
+- [`docs/KERNEL_OPTIMIZATION.md`](docs/KERNEL_OPTIMIZATION.md)
 - [`docs/SCALING.md`](docs/SCALING.md)
+- [`docs/CANONICAL_ELA_VALIDATION.md`](docs/CANONICAL_ELA_VALIDATION.md)
 
 ## Validation
 
@@ -380,7 +425,7 @@ scripts/check.sh fast
 scripts/check.sh gpu
 ```
 
-Focused canonical suite:
+Focused suite:
 
 ```bash
 ELA_SUITE_MODE=full \
