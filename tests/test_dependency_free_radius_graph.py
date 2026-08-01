@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.data import radius_graph
+from equivariant_attention.radius import radius_graph
 
 
 def _dense_reference(
@@ -25,7 +25,7 @@ def _pair_codes(edge_index: torch.Tensor, nodes: int) -> torch.Tensor:
     return torch.sort(edge_index[0] * nodes + edge_index[1]).values
 
 
-def test_chunked_radius_graph_matches_dense_reference() -> None:
+def test_dense_radius_path_matches_reference() -> None:
     torch.manual_seed(17)
     positions = torch.randn(11, 3, dtype=torch.float64)
     batch = torch.tensor([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1])
@@ -41,7 +41,33 @@ def test_chunked_radius_graph_matches_dense_reference() -> None:
         positions,
         batch=batch,
         cutoff=cutoff,
+        include_self=True,
+        dense_threshold=32,
         chunk_size=2,
+    )
+    torch.testing.assert_close(
+        _pair_codes(actual, positions.shape[0]),
+        _pair_codes(expected, positions.shape[0]),
+    )
+
+
+def test_cell_list_path_matches_dense_reference() -> None:
+    torch.manual_seed(18)
+    positions = torch.randn(37, 3, dtype=torch.float64)
+    batch = torch.tensor([0] * 17 + [1] * 20)
+    cutoff = 1.25
+    expected = _dense_reference(
+        positions,
+        batch,
+        cutoff,
+        include_self=False,
+    )
+    actual = radius_graph(
+        positions,
+        batch=batch,
+        cutoff=cutoff,
+        include_self=False,
+        dense_threshold=4,
     )
     torch.testing.assert_close(
         _pair_codes(actual, positions.shape[0]),
@@ -71,7 +97,7 @@ def test_radius_graph_max_neighbors_bounds_each_receiver() -> None:
         cutoff=10.0,
         max_neighbors=4,
         include_self=True,
-        chunk_size=3,
+        dense_threshold=4,
     )
     counts = torch.bincount(edge_index[0], minlength=12)
     assert int(counts.max().item()) <= 4
