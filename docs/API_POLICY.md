@@ -1,43 +1,54 @@
 # API policy
 
-The repository contains one canonical model and several retained research or
-compatibility surfaces. This document defines which APIs new code should use.
+The repository has one public architecture and one public architecture layer:
 
-## 1. Canonical public surface
+```text
+ELA
+ELALayer
+```
 
-New applications should import:
+There is no public model-selection namespace for legacy, implicit, AttnRes,
+conditioned, or coordinate-updating variants.
+
+## 1. Public surface
+
+New applications import:
 
 ```python
 from equivariant_attention import (
     ELA,
     ELAConfig,
+    ELAContext,
+    ELAFeatures,
     ELALayer,
+    OrderContext,
+    RefinementRequest,
     SparseGeometry,
     pack_irreps,
     split_irreps,
 )
 ```
 
-Optional task wrappers:
+The package root may also expose graph, irrep, neighbor-provider, and physics-head
+utilities. It must not expose a second backbone or architecture layer.
 
-```python
-from equivariant_attention import (
-    CoordinateRefinementConfig,
-    ELACoordinateRefiner,
-    ELARegressionModel,
-)
+`tests/test_api_policy.py` fails when any of the following names return to the
+package root:
+
+```text
+CanonicalEquivariantLinearAttention
+ConditionedELA
+ELACoordinateRefiner
+EquivariantAttention
+EquivariantAttentionResiduals
+EquivariantLinearAttention
+ImplicitGaussianSpatialKernel
+SpatialOperatorAblationModel
+UnifiedEquivariantAttention
+UnifiedEquivariantLayer
 ```
 
-Invariant conditioning is an explicit wrapper module:
-
-```python
-from equivariant_attention.conditioning import (
-    ConditionedELA,
-    InvariantConditioningConfig,
-)
-```
-
-`ELAConfig` exposes only representation, capacity, and geometry:
+## 2. Configuration policy
 
 ```python
 ELAConfig(
@@ -46,10 +57,22 @@ ELAConfig(
     width=128,
     depth=8,
     geometry=SparseGeometry(cutoff=6.0),
+    features=ELAFeatures(...),
 )
 ```
 
-The public model config does not expose:
+The core public choices are:
+
+```text
+input_irreps
+output_irreps
+width
+depth
+geometry
+features
+```
+
+The following stay derived or fixed:
 
 ```text
 num_heads
@@ -57,168 +80,148 @@ local_rank
 hidden_irreps
 residual_scale_init
 norm_eps
-implicit_every
-attention_residual_blocks
-condition_dim
-coordinate_updates
 residual_dropout
 drop_path_rate
+implicit schedule
+AttnRes block schedule
 ```
 
-Those values are either derived, fixed, assigned to a wrapper, or excluded from
-the canonical architecture.
+`ELAFeatures` allocates optional capability modules:
 
-## 2. Geometry policy
+```python
+ELAFeatures(
+    condition_dim=0,
+    order_dim=0,
+    coordinate_refinement=False,
+)
+```
 
-`SparseGeometry` owns cutoff, radial basis count, and relation-specific cutoff
-narrowing. It accepts a candidate graph and packs it into `Prepared3DGraph`.
+These values do not choose another architecture. The spatial equation and layer
+class remain unchanged.
 
-Neighbor discovery remains a provider concern. A model layer must not silently
-switch between complete graphs, kNN, radius graphs, or approximate implicit
-kernels.
+## 3. Runtime feature switching
 
-This separation makes the complexity claim auditable:
+`ELAContext` activates optional functionality for one call:
+
+```python
+output = model(
+    node_irreps,
+    positions,
+    graph,
+    context=ELAContext(
+        condition=condition,
+        order=order,
+        refinement=refinement,
+    ),
+)
+```
+
+Each field is optional. If a field is absent, the corresponding path is bypassed
+rather than evaluated with a learned zero-input bias.
+
+This permits one trained model to run with or without a configured context while
+keeping the architecture class fixed.
+
+## 4. Semantic order policy
+
+Order PE is based on node-attached semantic coordinates, never the current row
+index.
+
+The permutation contract is
 
 \[
-T_{\rm layer}=O(L(N+E))
+F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
 \]
 
-for a supplied graph, while provider construction is measured separately.
+Examples of valid order coordinates:
 
-## 3. Advanced compatibility surface
+- protein residue rank within a chain;
+- polymer backbone rank;
+- trajectory time;
+- grid or lattice coordinates;
+- stable topology coordinates.
 
-The following classes remain at package root to avoid breaking existing scripts
-and checkpoints:
+An arbitrary ligand atom serialization or dataloader row order is not a valid
+semantic order.
 
-```python
-EquivariantLinearAttention
-EquivariantLinearAttentionConfig
-UnifiedEquivariantAttention
-Unified3DConfig
-EquivariantAttention
-EquivariantAttentionConfig
-```
+`OrderContext.enabled` selects ordered node types inside mixed systems. Disabled
+nodes do not contribute to order statistics and receive no order PE.
 
-They are not the recommended starting point for new architecture work.
+## 5. Conditioning policy
 
-Use the compatibility namespace when intent should be explicit:
+The invariant condition is an ordinary `0e` tensor. It may be shared,
+graph-level, or node-level.
 
-```python
-from equivariant_attention.legacy import (
-    EquivariantAttention,
-    UnifiedEquivariantAttention,
-)
-```
+Even scalars receive bounded shift and scale. Non-scalar sectors receive only
+invariant copy-wise scale. Vector or tensor conditions belong in
+`input_irreps`.
 
-`EquivariantLinearAttentionConfig` remains the advanced route for existing
-experiments needing copy dropout, DropPath, historical state schemas, or direct
-access to the older conditioned configuration.
+Conditioner outputs are zero initialized. Omitting `ELAContext.condition`
+bypasses the conditioner entirely.
 
-## 4. Experimental surface
+## 6. Coordinate policy
 
-Import noncanonical mechanisms through:
+Coordinate refinement is an outer execution loop inside the same `ELA.forward`
+entry point, activated by `ELAContext.refinement`.
 
-```python
-from equivariant_attention.experimental import (
-    EquivariantAttentionResiduals,
-    ImplicitGaussianSpatialKernel,
-    ImplicitSpatialResidual,
-    SpatialOperatorAblationModel,
-)
-```
+`RefinementRequest` owns:
 
-Experimental means:
+- outer step count;
+- maximum displacement per step;
+- update mask;
+- centroid policy;
+- optional graph rebuild callback.
 
-- transformation and numerical contracts may be tested;
-- tracked experiments may exist;
-- the mechanism is not part of the canonical architecture;
-- no downstream or efficiency superiority is implied;
-- configuration is allowed to be more verbose because it is a research surface.
+The canonical `ELALayer` itself remains a state-propagation layer and does not
+contain a second coordinate-updating layer class.
 
-## 5. Coordinate policy
+For conservative force fields, compute
 
-The canonical ELA layer never mutates coordinates. Direct coordinate refinement
-is composed through `ELACoordinateRefiner`.
+\[
+F_i=-\nabla_{x_i}E
+\]
 
-This keeps separate:
+from a scalar energy rather than interpreting direct refinement as conservative
+dynamics.
 
-- state propagation;
-- displacement prediction;
-- update masking and centroid policy;
-- neighbor-list reuse or rebuild;
-- conservative force computation.
+## 7. Geometry and complexity policy
 
-A static property model therefore does not carry refinement-specific branches or
-booleans.
+`SparseGeometry` owns cutoff, radial basis count, and relation-specific cutoff
+narrowing. Neighbor discovery remains a provider concern.
 
-## 6. Conditioning policy
+For a supplied candidate graph,
 
-Invariant DiT-style conditioning is composed through `ConditionedELA`, not a
-field in `ELAConfig`.
+\[
+T=O(L(N+E))
+\]
 
-```python
-model = ConditionedELA(
-    base_config,
-    InvariantConditioningConfig(condition_dim=256),
-)
-output = model(node_irreps, positions, graph, condition=time_embedding)
-```
+at fixed widths and ranks. A node-linear claim additionally requires
+`E = O(N)`. Neighbor discovery or rebuild cost must be reported separately.
 
-The condition is an ordinary invariant `0e` feature and may be shared,
-graph-level, or node-level. Even scalars receive bounded shift and scale;
-non-scalar sectors receive invariant copy-wise scale only. Attention and FFN
-residual gates are separate. Conditioner projections are zero initialized, so
-shared ELA weights reproduce the unconditioned function at initialization.
+## 8. Internal implementation policy
 
-Vector or tensor conditions are ordinary `input_irreps` blocks, not invariant
-condition vectors.
+Historical numerical references may remain as private implementation modules
+when canonical ELA depends on them or tracked provenance requires them. They are
+not exported from the package root and must not be documented as selectable
+architectures.
 
-## 7. Compatibility and removal policy
+New mathematical mechanisms enter ELA only by improving the one layer equation
+without adding another public backbone class. A mechanism must satisfy:
 
-Historical code is retained when at least one of the following holds:
-
-- a tracked artifact or checkpoint depends on it;
-- it is a numerical reference implementation;
-- it is required for an explicit ablation;
-- removing it would invalidate provenance.
-
-Retention does not keep an option in canonical documentation.
-
-A historical implementation may be deleted when:
-
-1. no tracked receipt imports it;
-2. a migration path exists;
-3. its mathematical reference is covered elsewhere;
-4. repository-wide tests pass after removal.
-
-## 8. Naming policy
-
-Use:
-
-```text
-ELA                         canonical model
-ELALayer                    canonical reusable layer
-ELAConfig                   minimal config
-SparseGeometry              exact sparse geometry contract
-ConditionedELA              invariant-condition wrapper
-ELACoordinateRefiner        coordinate-refinement wrapper
-```
-
-Use descriptive full names for experimental mechanisms. Avoid adding new
-boolean `use_*` flags to canonical config. A genuinely different mathematical
-operator should be a separate experimental class until evidence justifies
-integration.
-
-## 9. Promotion policy
-
-A mechanism may enter canonical ELA only when it satisfies all relevant gates:
-
-- precise mathematical role not already covered by another branch;
+- clear role not already covered by global or local branches;
 - O(3), translation, permutation, batching, and gradient contracts;
-- same-schema and paired-initialization comparisons;
-- stable multi-seed downstream value;
-- acceptable latency and memory on intended hardware;
-- no task-family failure inconsistent with the claimed generality;
-- reduced or unchanged public option count.
+- stable downstream value across paired seeds;
+- acceptable latency and memory;
+- no increase in public architecture count.
 
-One-seed wins, training-set capacity, or isolated microbenchmarks are not enough.
+## 9. Removal policy
+
+A duplicate wrapper or namespace should be deleted when its behavior is
+available through `ELAFeatures` and `ELAContext`.
+
+A historical internal implementation may be deleted after:
+
+1. canonical ELA no longer imports it;
+2. tracked checkpoint migration is preserved or intentionally retired;
+3. numerical reference coverage exists elsewhere;
+4. repository-wide tests pass after removal.
