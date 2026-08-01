@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import weakref
+from math import prod
 from typing import Final, Sequence
 
 import torch
@@ -264,11 +265,7 @@ def csr_sum_many(
     *,
     max_degree: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Reduce several edge payloads in one backend launch.
-
-    Values must share edge count, dtype, and device. Trailing dimensions are
-    flattened, concatenated, reduced once, and restored exactly.
-    """
+    """Reduce several edge payloads in one backend launch."""
 
     if not values:
         return ()
@@ -284,7 +281,7 @@ def csr_sum_many(
         if value.device != device or value.dtype != dtype:
             raise ValueError("all CSR payloads must share one device and dtype")
         shape = tuple(value.shape[1:])
-        width = value[0].numel() if edge_count else int(torch.tensor(shape).prod().item())
+        width = prod(shape) if shape else 1
         shapes.append(shape)
         widths.append(width)
         flattened.append(value.reshape(edge_count, width))
@@ -299,14 +296,20 @@ def csr_sum_many(
 
 
 def install_triton_backend() -> None:
-    """Install optimized primitives into the loaded canonical numerical core."""
+    """Install optimized primitives into the canonical numerical core."""
 
     from . import canonical_se3, multipole_ops, parity_se3
+    from .optimized_local import triton_local_message
 
     parity_se3._csr_sum = csr_sum
     canonical_se3._csr_sum = csr_sum
     if hasattr(multipole_ops, "_csr_sum"):
         multipole_ops._csr_sum = csr_sum
+
+    block = canonical_se3._CanonicalMultipoleBlock
+    if not hasattr(block, "_ela_torch_local_message"):
+        block._ela_torch_local_message = block._local_message
+    block._local_message = triton_local_message
 
 
 __all__ = [
