@@ -1,16 +1,40 @@
 # Migrating to the single ELA API
 
-The package now exposes one model and one architecture layer:
+The package exposes one model, one architecture layer, and one graph container:
 
 ```text
 ELA
 ELALayer
+ELABatch
 ```
 
 Historical checkpoint helpers remain internal utilities; they do not reintroduce
-historical models as public package-root choices.
+historical models as package-root choices.
 
-## 1. Configuration mapping
+## 1. Representation migration
+
+Current ELA uses irreps for every input and output representation.
+
+```python
+model = ELA(
+    input_irreps="32x0e + 4x1o",
+    output_irreps="1x0e",
+    width=128,
+    depth=8,
+    cutoff=6.0,
+)
+```
+
+Scalar-only historical dimensions map directly:
+
+```text
+node_dim=32   -> input_irreps="32x0e"
+output_dim=1  -> output_irreps="1x0e"
+```
+
+There is no separate scalar model or dimension-based constructor.
+
+## 2. Configuration mapping
 
 Historical refined configuration:
 
@@ -31,11 +55,7 @@ EquivariantLinearAttentionConfig(
 Current configuration:
 
 ```python
-from equivariant_attention import (
-    ELAConfig,
-    ELAFeatures,
-    SparseGeometry,
-)
+from equivariant_attention import ELAConfig, ELAFeatures, SparseGeometry
 
 config = ELAConfig(
     input_irreps="32x0e + 4x1o",
@@ -46,9 +66,7 @@ config = ELAConfig(
         cutoff=6.0,
         num_rbf=16,
     ),
-    features=ELAFeatures(
-        condition_dim=256,
-    ),
+    features=ELAFeatures(condition_dim=256),
 )
 ```
 
@@ -66,11 +84,11 @@ Mapping:
 | `condition_dim` | `features.condition_dim` |
 | `num_heads` | derived from `width` |
 | `local_rank` | derived from `width` |
-| `coordinate_updates` | manual migration to `features.coordinate_refinement` plus `ELAContext.refinement` |
+| `coordinate_updates` | manual migration to outer refinement |
 | `residual_dropout` | training policy, not canonical config |
 | `drop_path_rate` | training policy, not canonical config |
 
-## 2. Config migration helper
+## 3. Config migration helper
 
 ```python
 from equivariant_attention.migration import canonical_config_from_advanced
@@ -82,13 +100,13 @@ The helper converts invariant conditioning automatically. It fails when:
 
 - historical head/local rank differs from width-derived canonical values;
 - node-role embedding cannot be represented by input irreps;
-- dropout or DropPath changes the architecture/training contract;
+- dropout or DropPath changes the contract;
 - historical per-layer coordinate mutation is requested.
 
 Per-layer coordinate mutation is not silently mapped because current refinement
 uses a different outer-loop execution and head schema.
 
-## 3. Checkpoint migration
+## 4. Checkpoint migration
 
 ```python
 from equivariant_attention import ELA
@@ -118,26 +136,52 @@ w_G=w_L=1,
 
 so shared historical weights begin at the historical `G + L` function.
 
-Conditioner parameters are schema-compatible when the historical and current
-condition dimensions match.
+## 5. Data-call migration
 
-## 4. Runtime conditioning
+Historical tensor calls:
 
 ```python
-from equivariant_attention import ELAContext
-
-output = model(
-    node_irreps,
-    positions,
-    graph,
-    context=ELAContext(condition=condition),
-)
+output = model(node_irreps, positions, graph)
 ```
 
-Omitting `context` or `condition` bypasses trained conditioner weights entirely.
-No separate conditioned model exists.
+become:
 
-## 5. Semantic order
+```python
+from equivariant_attention import ELABatch
+
+batch = ELABatch(
+    node_irreps=node_irreps,
+    positions=positions,
+    edge_index=edge_index,
+)
+
+output = model(batch)
+```
+
+For repeated fixed topology:
+
+```python
+batch = model.prepare(batch)
+output = model.forward_prepared(batch)
+```
+
+## 6. Runtime conditioning
+
+```python
+batch = ELABatch(
+    node_irreps=node_irreps,
+    positions=positions,
+    edge_index=edge_index,
+    condition=condition,
+)
+
+output = model(batch)
+```
+
+Omitting `condition` bypasses trained conditioner weights entirely. No separate
+conditioned model exists.
+
+## 7. Semantic order
 
 Historical checkpoints have no semantic-order encoder. Allocate it explicitly:
 
@@ -151,20 +195,16 @@ config = ELAConfig(
 )
 ```
 
-Then provide `OrderContext` at runtime. Loading a checkpoint into a model with a
-new order encoder requires an explicit initialization receipt; the generic
-historical migration helper intentionally rejects missing non-router keys.
+Then attach `OrderContext` to `ELABatch.order`. Loading a historical checkpoint
+into a model with a new order encoder requires an explicit initialization
+receipt; the generic migration helper rejects missing non-router keys.
 
-## 6. Coordinate refinement
+## 8. Coordinate refinement
 
-Current refinement is requested through the same model:
+Current refinement is requested through the same model and batch:
 
 ```python
-from equivariant_attention import (
-    ELAContext,
-    ELAFeatures,
-    RefinementRequest,
-)
+from equivariant_attention import ELAFeatures, RefinementRequest
 
 config = ELAConfig(
     ...,
@@ -172,26 +212,26 @@ config = ELAConfig(
 )
 model = ELA(config)
 
-output = model(
-    node_irreps,
-    positions,
-    graph,
-    context=ELAContext(
-        refinement=RefinementRequest(
-            steps=4,
-            max_step=0.2,
-            centering="selected",
-            update_mask=movable_nodes,
-            graph_rebuilder=optional_rebuilder,
-        )
+batch = ELABatch(
+    node_irreps=node_irreps,
+    positions=positions,
+    edge_index=edge_index,
+    refinement=RefinementRequest(
+        steps=4,
+        max_step=0.2,
+        centering="selected",
+        update_mask=movable_nodes,
+        graph_rebuilder=optional_rebuilder,
     ),
 )
+
+output = model(batch)
 ```
 
 Historical per-layer coordinate-head weights are not automatically compatible
 with this outer-loop head.
 
-## 7. Removed public mechanisms
+## 9. Removed public mechanisms
 
 Do not migrate the following into `ELAConfig`:
 
@@ -200,11 +240,12 @@ implicit_every
 implicit full-state transport
 attention_residual_blocks
 alternative unified/legacy backbone selection
+node_dim/output_dim representation aliases
 ```
 
 They are not public architecture options.
 
-## 8. Checkpoint receipt
+## 10. Checkpoint receipt
 
 Store:
 
@@ -214,4 +255,4 @@ Store:
 - git SHA;
 - data and split revision;
 - exact geometry-provider contract;
-- runtime context contract required by the task.
+- runtime context required by the task.
