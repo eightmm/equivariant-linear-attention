@@ -7,6 +7,7 @@ import torch
 
 from .api import ELA as _TensorELA
 from .context import ELAContext, GeometryRebuilder, OrderContext
+from .data import BatchLayout
 from .unified import Prepared3DGraph
 
 
@@ -49,6 +50,10 @@ class ELA(_TensorELA):
             "sample_ids",
         }
     )
+    _MAPPING_ALIASES = {
+        "pos": ("pos", "positions"),
+        "mask": ("mask", "node_mask"),
+    }
 
     @staticmethod
     def _mapping_value(
@@ -61,6 +66,48 @@ class ELA(_TensorELA):
             raise ValueError(f"batch mapping contains multiple aliases for {name}")
         return None if not present else payload[present[0]]
 
+    @classmethod
+    def _mapping_contains_argument(
+        cls,
+        payload: Mapping[str, Any],
+        name: str,
+    ) -> bool:
+        return any(key in payload for key in cls._MAPPING_ALIASES.get(name, (name,)))
+
+    @staticmethod
+    def _flatten_optional_node_tensor(
+        value: torch.Tensor | None,
+        layout: BatchLayout,
+        *,
+        name: str,
+    ) -> torch.Tensor | None:
+        # A graph condition is [B,C], whereas a padded node condition is
+        # [B,M,C]. Keep [B,C] intact even when C happens to equal M.
+        if (
+            value is not None
+            and layout.kind == "padded"
+            and name in {"condition", "context.condition"}
+        ):
+            if layout.node_mask is None:
+                raise RuntimeError("padded layout is incomplete")
+            if value.ndim >= 3 and value.shape[:2] == layout.node_mask.shape:
+                return layout.flatten_node_tensor(value, name=name)
+            if (
+                value.ndim == 2
+                and value.shape == layout.node_mask.shape
+                and value.is_floating_point()
+            ):
+                return layout.flatten_node_tensor(
+                    value.unsqueeze(-1),
+                    name=name,
+                )
+            return value
+        return _TensorELA._flatten_optional_node_tensor(
+            value,
+            layout,
+            name=name,
+        )
+
     def forward(
         self,
         node_irreps: torch.Tensor | Mapping[str, Any],
@@ -69,10 +116,14 @@ class ELA(_TensorELA):
         *,
         batch: torch.Tensor | None = None,
         mask: torch.Tensor | None = None,
-        edge_index: torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None = None,
+        edge_index: (
+            torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None
+        ) = None,
         edge_mask: torch.Tensor | None = None,
         adjacency: torch.Tensor | None = None,
-        edge_relation_id: torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None = None,
+        edge_relation_id: (
+            torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None
+        ) = None,
         max_neighbors: int | None = None,
         context: ELAContext | None = None,
         condition: torch.Tensor | None = None,
@@ -114,9 +165,10 @@ class ELA(_TensorELA):
                 "graph_rebuilder": graph_rebuilder,
             }
             conflicts = [
-                key
-                for key, value in explicitly_supplied.items()
-                if value is not None and key in payload
+                name
+                for name, value in explicitly_supplied.items()
+                if value is not None
+                and self._mapping_contains_argument(payload, name)
             ]
             if conflicts:
                 raise ValueError(
@@ -135,70 +187,31 @@ class ELA(_TensorELA):
                 raise TypeError("batch mapping pos must be a tensor")
             node_irreps = node_value
             pos = pos_value
-            graph = graph if graph is not None else payload.get("graph")
-            batch = batch if batch is not None else payload.get("batch")
-            mask = (
-                mask
-                if mask is not None
-                else self._mapping_value(payload, "mask", ("node_mask",))
-            )
-            edge_index = (
-                edge_index if edge_index is not None else payload.get("edge_index")
-            )
-            edge_mask = edge_mask if edge_mask is not None else payload.get("edge_mask")
-            adjacency = adjacency if adjacency is not None else payload.get("adjacency")
-            edge_relation_id = (
-                edge_relation_id
-                if edge_relation_id is not None
-                else payload.get("edge_relation_id")
-            )
-            max_neighbors = (
-                max_neighbors
-                if max_neighbors is not None
-                else payload.get("max_neighbors")
-            )
-            context = context if context is not None else payload.get("context")
-            condition = condition if condition is not None else payload.get("condition")
-            order = order if order is not None else payload.get("order")
-            order_group = (
-                order_group if order_group is not None else payload.get("order_group")
-            )
-            order_periods = (
-                order_periods
-                if order_periods is not None
-                else payload.get("order_periods")
-            )
-            order_mask = (
-                order_mask if order_mask is not None else payload.get("order_mask")
-            )
-            refine_steps = (
-                refine_steps if refine_steps is not None else payload.get("refine_steps")
-            )
-            max_coordinate_step = (
-                max_coordinate_step
-                if max_coordinate_step is not None
-                else payload.get("max_coordinate_step")
-            )
-            refinement_centering = (
-                refinement_centering
-                if refinement_centering is not None
-                else payload.get("refinement_centering")
-            )
-            update_mask = (
-                update_mask if update_mask is not None else payload.get("update_mask")
-            )
-            graph_rebuilder = (
-                graph_rebuilder
-                if graph_rebuilder is not None
-                else payload.get("graph_rebuilder")
-            )
+            graph = payload.get("graph")
+            batch = payload.get("batch")
+            mask = self._mapping_value(payload, "mask", ("node_mask",))
+            edge_index = payload.get("edge_index")
+            edge_mask = payload.get("edge_mask")
+            adjacency = payload.get("adjacency")
+            edge_relation_id = payload.get("edge_relation_id")
+            max_neighbors = payload.get("max_neighbors")
+            context = payload.get("context")
+            condition = payload.get("condition")
+            order = payload.get("order")
+            order_group = payload.get("order_group")
+            order_periods = payload.get("order_periods")
+            order_mask = payload.get("order_mask")
+            refine_steps = payload.get("refine_steps")
+            max_coordinate_step = payload.get("max_coordinate_step")
+            refinement_centering = payload.get("refinement_centering")
+            update_mask = payload.get("update_mask")
+            graph_rebuilder = payload.get("graph_rebuilder")
 
         if not isinstance(node_irreps, torch.Tensor):
             raise TypeError("node_irreps must be a tensor or graph mapping")
         if pos is None or not isinstance(pos, torch.Tensor):
             raise TypeError("pos must be a tensor")
-        # A padded scalar node condition is naturally written as [B,M]. Convert
-        # it to the model's node-level [B,M,1] convention when unambiguous.
+        # Padded scalar node conditions are naturally written as [B,M].
         if (
             condition is not None
             and isinstance(condition, torch.Tensor)
