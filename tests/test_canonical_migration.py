@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention.canonical import ELA
+from equivariant_attention import ELA
 from equivariant_attention.equivariant_linear_attention import (
     EquivariantLinearAttention,
     EquivariantLinearAttentionConfig,
@@ -14,26 +14,35 @@ from equivariant_attention.migration import (
 )
 
 
-def _advanced() -> EquivariantLinearAttentionConfig:
-    return EquivariantLinearAttentionConfig(
-        input_irreps="4x0e",
-        output_irreps="1x0e",
-        hidden_dim=32,
-        num_layers=2,
-        num_heads=2,
-        local_rank=2,
-        local_cutoff=6.0,
-        num_rbf=8,
-    )
+def _advanced(**overrides: object) -> EquivariantLinearAttentionConfig:
+    values: dict[str, object] = {
+        "input_irreps": "4x0e",
+        "output_irreps": "1x0e",
+        "hidden_dim": 32,
+        "num_layers": 2,
+        "num_heads": 2,
+        "local_rank": 2,
+        "local_cutoff": 6.0,
+        "num_rbf": 8,
+    }
+    values.update(overrides)
+    return EquivariantLinearAttentionConfig(**values)
 
 
-def test_compatible_advanced_config_converts_to_minimal_config() -> None:
+def test_compatible_advanced_config_converts_to_single_ela_config() -> None:
     candidate = canonical_config_from_advanced(_advanced())
     assert candidate.width == 32
     assert candidate.depth == 2
     assert candidate.num_heads == 2
     assert candidate.local_rank == 2
     assert candidate.geometry.cutoff == 6.0
+    assert candidate.features.condition_dim == 0
+
+
+def test_conditioned_advanced_config_maps_to_ela_features() -> None:
+    candidate = canonical_config_from_advanced(_advanced(condition_dim=8))
+    assert candidate.features.condition_dim == 8
+    assert candidate.to_advanced_config().condition_dim == 8
 
 
 def test_state_migration_allows_only_new_branch_router_keys() -> None:
@@ -48,17 +57,21 @@ def test_state_migration_allows_only_new_branch_router_keys() -> None:
     assert all(".branch_fusion." in key for key in receipt.missing_keys)
 
 
-def test_migration_rejects_condition_as_core_option() -> None:
-    conditioned = EquivariantLinearAttentionConfig(
-        input_irreps="4x0e",
-        hidden_dim=32,
-        num_layers=2,
-        num_heads=2,
-        local_rank=2,
-        condition_dim=8,
-    )
-    with pytest.raises(ValueError, match="ConditionedELA"):
-        canonical_config_from_advanced(conditioned)
+def test_conditioned_state_migration_preserves_conditioner_schema() -> None:
+    advanced = _advanced(condition_dim=8)
+    control = EquivariantLinearAttention(advanced)
+    model = ELA(canonical_config_from_advanced(advanced))
+    receipt = load_advanced_ela_state(model, control.state_dict())
+
+    assert receipt.router_initialized is True
+    assert all(".branch_fusion." in key for key in receipt.missing_keys)
+    assert any(layer.conditioner is not None for layer in model.layers)
+
+
+def test_migration_rejects_historical_per_layer_coordinate_update() -> None:
+    advanced = _advanced(coordinate_updates=True)
+    with pytest.raises(ValueError, match="ELAContext.refinement"):
+        canonical_config_from_advanced(advanced)
 
 
 def test_migration_rejects_silent_unexpected_checkpoint_keys() -> None:
@@ -91,18 +104,7 @@ def test_migration_rejects_noncanonical_runtime_options(
     field: str,
     value: float,
 ) -> None:
-    values = {
-        "input_irreps": "4x0e",
-        "output_irreps": "1x0e",
-        "hidden_dim": 32,
-        "num_layers": 2,
-        "num_heads": 2,
-        "local_rank": 2,
-        "local_cutoff": 6.0,
-        "num_rbf": 8,
-        field: value,
-    }
-    advanced = EquivariantLinearAttentionConfig(**values)
+    advanced = _advanced(**{field: value})
     with pytest.raises(ValueError, match=field):
         canonical_config_from_advanced(advanced)
 
