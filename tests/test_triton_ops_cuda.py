@@ -85,17 +85,17 @@ def test_full_ela_triton_matches_torch_output_and_gradients(
 ) -> None:
     torch.manual_seed(29)
     device = torch.device("cuda")
-    reference_model = ELA.scalar(
-        4,
-        output_dim=2,
+    reference_model = ELA(
+        input_irreps="4x0e",
+        output_irreps="2x0e",
         width=32,
         depth=2,
         cutoff=10.0,
     ).to(device=device, dtype=torch.float32)
     _activate_local_outputs(reference_model)
-    triton_model = ELA.scalar(
-        4,
-        output_dim=2,
+    triton_model = ELA(
+        input_irreps="4x0e",
+        output_irreps="2x0e",
         width=32,
         depth=2,
         cutoff=10.0,
