@@ -36,6 +36,7 @@ class ELA(_TensorELA):
             "edge_mask",
             "adjacency",
             "edge_relation_id",
+            "edge_type",
             "max_neighbors",
             "context",
             "condition",
@@ -49,12 +50,19 @@ class ELA(_TensorELA):
             "update_mask",
             "graph_rebuilder",
             "target",
+            "y",
+            "label",
+            "labels",
             "sample_ids",
+            "sample_id",
+            "id",
+            "idx",
         }
     )
     _MAPPING_ALIASES = {
         "pos": ("pos", "positions"),
         "mask": ("mask", "node_mask"),
+        "edge_relation_id": ("edge_relation_id", "edge_type"),
     }
 
     @staticmethod
@@ -227,6 +235,10 @@ class ELA(_TensorELA):
                 raise TypeError("batch mapping node_irreps must be a tensor")
             if not isinstance(pos_value, torch.Tensor):
                 raise TypeError("batch mapping pos must be a tensor")
+            # Fail closed on duplicate training-metadata aliases even though the
+            # model does not consume those values.
+            self._mapping_value(payload, "target", ("y", "label", "labels"))
+            self._mapping_value(payload, "sample_id", ("id", "idx"))
             node_irreps = node_value
             pos = pos_value
             graph = payload.get("graph")
@@ -235,7 +247,11 @@ class ELA(_TensorELA):
             edge_index = payload.get("edge_index")
             edge_mask = payload.get("edge_mask")
             adjacency = payload.get("adjacency")
-            edge_relation_id = payload.get("edge_relation_id")
+            edge_relation_id = self._mapping_value(
+                payload,
+                "edge_relation_id",
+                ("edge_type",),
+            )
             max_neighbors = payload.get("max_neighbors")
             context = payload.get("context")
             condition = payload.get("condition")
@@ -253,6 +269,17 @@ class ELA(_TensorELA):
             raise TypeError("node_irreps must be a tensor or graph mapping")
         if pos is None or not isinstance(pos, torch.Tensor):
             raise TypeError("pos must be a tensor")
+        if adjacency is not None:
+            if adjacency.device != node_irreps.device:
+                raise ValueError("adjacency and node tensors must share one device")
+            if edge_mask is not None:
+                raise ValueError("edge_mask is not used with adjacency")
+            if edge_relation_id is not None:
+                raise ValueError(
+                    "relation IDs with dense adjacency are ambiguous; use COO edges"
+                )
+        if edge_mask is not None and not isinstance(edge_index, torch.Tensor):
+            raise ValueError("edge_mask requires a padded tensor edge_index")
         # Padded scalar node conditions are naturally written as [B,M].
         if (
             condition is not None
