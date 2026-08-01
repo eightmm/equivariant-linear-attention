@@ -33,6 +33,34 @@ def test_collator_returns_ela_batch_with_counts() -> None:
     assert batch["target"].shape == (2, 1)
 
 
+def test_collator_normalizes_y_edge_type_and_id_aliases() -> None:
+    samples = [
+        {
+            "x": torch.randn(2, 3),
+            "pos": torch.randn(2, 3),
+            "edge_index": torch.tensor([[0, 1], [1, 0]]),
+            "edge_type": torch.tensor([2, 3]),
+            "y": torch.tensor([1.0]),
+            "id": "first",
+        },
+        {
+            "x": torch.randn(2, 3),
+            "pos": torch.randn(2, 3),
+            "edge_index": torch.tensor([[0, 1], [1, 0]]),
+            "edge_type": torch.tensor([4, 5]),
+            "y": torch.tensor([2.0]),
+            "id": "second",
+        },
+    ]
+    batch = collate_graphs(samples)
+    torch.testing.assert_close(batch["target"], torch.tensor([[1.0], [2.0]]))
+    torch.testing.assert_close(
+        batch["edge_relation_id"],
+        torch.tensor([2, 3, 4, 5]),
+    )
+    assert batch["sample_ids"] == ("first", "second")
+
+
 def test_ela_collate_returns_ela_batch() -> None:
     samples = [
         {"x": torch.randn(2, 3), "pos": torch.randn(2, 3)},
