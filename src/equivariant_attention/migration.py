@@ -7,6 +7,7 @@ import torch
 
 from .branch_fusion import RMSAwareBranchFusion
 from .canonical import ELA, ELAConfig, SparseGeometry
+from .context import ELAFeatures
 from .equivariant_linear_attention import EquivariantLinearAttentionConfig
 
 
@@ -23,27 +24,24 @@ class ELAMigrationReceipt:
 def canonical_config_from_advanced(
     config: EquivariantLinearAttentionConfig,
 ) -> ELAConfig:
-    """Convert an advanced config when no wrapper-only feature is enabled.
+    """Convert an advanced config into the one public ELA configuration.
 
-    Derived canonical heads and local rank must match the advanced values. This
-    function fails closed instead of silently changing parameter shapes.
+    Invariant conditioning maps to ``ELAFeatures.condition_dim``. Historical
+    per-layer coordinate mutation cannot be converted automatically because the
+    canonical model uses an explicit outer refinement loop and a different head
+    schema. Derived canonical heads and local rank must match exactly.
     """
 
     if not isinstance(config, EquivariantLinearAttentionConfig):
-        raise TypeError(
-            "config must be an EquivariantLinearAttentionConfig"
-        )
+        raise TypeError("config must be an EquivariantLinearAttentionConfig")
     if config.num_node_roles:
         raise ValueError(
             "num_node_roles belongs in an input adapter and cannot be migrated"
         )
-    if config.condition_dim:
-        raise ValueError(
-            "conditioned models require ConditionedELA rather than plain ELA"
-        )
     if config.coordinate_updates:
         raise ValueError(
-            "coordinate-updating models require ELACoordinateRefiner"
+            "historical per-layer coordinate updates cannot be migrated "
+            "automatically to ELAContext.refinement"
         )
     if config.residual_dropout or config.drop_path_rate:
         raise ValueError(
@@ -60,6 +58,7 @@ def canonical_config_from_advanced(
             num_rbf=config.num_rbf,
             relation_cutoffs=config.relation_cutoffs,
         ),
+        features=ELAFeatures(condition_dim=config.condition_dim),
     )
     canonical_advanced = candidate.to_advanced_config()
     incompatible = tuple(
@@ -79,10 +78,10 @@ def load_advanced_ela_state(
     model: ELA,
     state_dict: Mapping[str, torch.Tensor],
 ) -> ELAMigrationReceipt:
-    """Load shared refined-ELA weights and initialize only the new router.
+    """Load shared advanced-ELA weights and initialize only the new router.
 
-    Unexpected keys and missing non-router keys are rejected. This makes the
-    checkpoint schema transition explicit and prevents partial silent loads.
+    Unexpected keys and missing non-router keys are rejected. This prevents
+    partial loads from silently creating a different function.
     """
 
     if not isinstance(model, ELA):
@@ -98,15 +97,11 @@ def load_advanced_ela_state(
     target = model.state_dict()
     target_keys = set(target)
     provided_keys = set(provided)
-    branch_keys = {
-        key for key in target_keys if ".branch_fusion." in key
-    }
+    branch_keys = {key for key in target_keys if ".branch_fusion." in key}
     provided_branch_keys = provided_keys & branch_keys
     unexpected = tuple(sorted(provided_keys - target_keys))
     missing = tuple(sorted(target_keys - provided_keys))
-    invalid_missing = tuple(
-        key for key in missing if key not in branch_keys
-    )
+    invalid_missing = tuple(key for key in missing if key not in branch_keys)
     partial_branch = bool(provided_branch_keys) and (
         provided_branch_keys != branch_keys
     )
@@ -126,13 +121,8 @@ def load_advanced_ela_state(
             f"missing={invalid_missing}, unexpected={unexpected}, "
             f"shape_mismatches={shape_mismatches}"
         )
-    # Stage every conversion into detached clones before touching the module.
-    # This also catches invalid layouts/devices atomically: PyTorch may copy
-    # earlier keys before a later load_state_dict conversion raises.
-    staged = {
-        key: value.detach().clone()
-        for key, value in target.items()
-    }
+
+    staged = {key: value.detach().clone() for key, value in target.items()}
     try:
         with torch.no_grad():
             for key, value in provided.items():
