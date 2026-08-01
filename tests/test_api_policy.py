@@ -56,6 +56,15 @@ def test_package_root_exposes_one_architecture_layer_and_graph_container() -> No
     }
 
 
+def test_representation_is_declared_only_with_irreps() -> None:
+    parameters = inspect.signature(ELA.__init__).parameters
+    assert "input_irreps" in parameters
+    assert "output_irreps" in parameters
+    assert "node_dim" not in parameters
+    assert "output_dim" not in parameters
+    assert not hasattr(ELA, "scalar")
+
+
 def test_optional_capabilities_stay_in_one_model_and_batch() -> None:
     config = ELAConfig(
         input_irreps="4x0e",
