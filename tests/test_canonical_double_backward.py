@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import ELA, ELAConfig, SparseGeometry
-from equivariant_attention.unified import prepare_3d_graph
+from equivariant_attention import ELA, ELABatch
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:
@@ -15,13 +14,12 @@ def _complete_edges(nodes: int) -> torch.Tensor:
 def test_learned_router_supports_input_and_coordinate_double_backward() -> None:
     torch.manual_seed(53)
     model = ELA(
-        ELAConfig(
-            input_irreps="4x0e",
-            output_irreps="1x0e",
-            width=16,
-            depth=1,
-            geometry=SparseGeometry(cutoff=10.0, num_rbf=8),
-        )
+        input_irreps="4x0e",
+        output_irreps="1x0e",
+        width=16,
+        depth=1,
+        cutoff=10.0,
+        num_rbf=8,
     ).double()
     with torch.no_grad():
         layer = model.layers[0]
@@ -42,11 +40,12 @@ def test_learned_router_supports_input_and_coordinate_double_backward() -> None:
         dtype=torch.float64,
         requires_grad=True,
     )
-    graph = prepare_3d_graph(
-        torch.zeros(nodes, dtype=torch.long),
-        _complete_edges(nodes),
+    batch = ELABatch(
+        node_irreps=features,
+        positions=positions,
+        edge_index=_complete_edges(nodes),
     )
-    output = model(features, positions, graph)["node_irreps"]
+    output = model(batch)["node_irreps"]
     first_features, first_positions = torch.autograd.grad(
         output.square().sum(),
         (features, positions),
