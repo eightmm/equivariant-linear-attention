@@ -1,15 +1,12 @@
-# Architecture decision: canonical ELA v1
+# Architecture decision: one ELA model and one ELA layer
 
 Date: 2026-07-31
 
-Status: implemented as the canonical API. Mathematical and migration safeguards
-passed. The 2026-07-31 resource/LBA gates rejected empirical promotion of
-learned branch routing; it remains identity-initialized and experimental, with
-no accuracy or hardware-efficiency advantage claimed.
+Status: implemented on `main`.
 
 ## Decision
 
-The repository has one canonical architecture:
+The repository has one public architecture:
 
 \[
 \boxed{
@@ -21,145 +18,120 @@ The repository has one canonical architecture:
 }
 \]
 
-The canonical public model is `ELA(ELAConfig(...))`.
-
-Edge-free implicit spatial transport, periodic implicit schedules, always-on
-hybrid transport, block Attention Residuals, and in-layer coordinate mutation
-are not canonical options.
-
-## Evidence boundary
-
-The tracked real-data spatial comparison showed different task roles rather
-than one universally dominant spatial operator.
-
-### QM9 one-seed screen
-
-At seed 42 and 500 updates, validation MAE was:
+The public model and layer are:
 
 ```text
-explicit  0.671843 eV
-implicit  0.627661 eV
-hybrid    0.638748 eV
+ELA
+ELALayer
 ```
 
-Implicit smooth transport was useful on this small smooth-property screen, but
-this was one seed and did not establish a general replacement.
+Semantic order, invariant conditioning, and coordinate refinement are optional
+capabilities of this same model. They do not create wrapper models or alternate
+layer classes.
 
-### LBA train-only capacity
+## Why one architecture
 
-On the frozen 16-complex training subset:
+Earlier development exposed several overlapping surfaces:
+
+- configurable historical ELA variants;
+- unified wrappers;
+- conditioned wrappers;
+- coordinate-refinement wrappers;
+- implicit full-state spatial transport;
+- block Attention Residuals;
+- explicit/implicit/hybrid ablation models.
+
+This made the repository look like a model menu rather than one reusable layer.
+It also encouraged configuration search over mechanisms whose mathematical
+roles were different.
+
+The final policy is:
 
 ```text
-explicit  0.051845 pK
-implicit  0.286117 pK
-hybrid    0.198044 pK
+public backbone: ELA
+public layer:    ELALayer
+optional input: ELAContext
 ```
 
-Only explicit local geometry passed the registered `0.10 pK` capacity gate.
-This was memorization capacity, not validation performance, but it directly
-showed that fixed-rank smooth implicit transport did not replace sharp local
-interaction capacity.
+Historical numerical reference modules may remain internal while canonical ELA
+or checkpoint migration depends on them. They are not package-root models.
 
-### Scheduled implicit follow-up
+## Spatial equation
 
-Running implicit transport only at zero-based layer `[0]` reduced workspace in
-some settings but did not recover LBA local capacity. The schedule introduced a
-new architecture option without resolving the operator-role mismatch.
+The global branch provides graph-wide exact finite-feature linear attention. The
+local branch provides compact-support, edge-axis-sensitive, relation-aware
+short-range interaction.
 
-These receipts motivate a structural decision, not a claim that every recorded
-metric is noise-free:
+The branches are not interchangeable. They remain separate until an invariant
+router combines them sector by sector.
 
-- in this fixed-rank comparison, only exact local geometry passed the
-  16-complex capacity gate;
-- the negative results are consistent with partial overlap between implicit
-  smooth transport and the existing global sufficient-statistic path, but do
-  not directly measure that overlap;
-- treating the two full-state global-like paths as redundant is therefore a
-  design hypothesis, not an empirical identity;
-- a periodic schedule controls frequency, not mathematical role.
-
-## Why branch-aware fusion
-
-The admitted refined layer computed global and local messages separately but
-added them before the parity update:
-
-\[
-M^\tau=G^\tau+L^\tau.
-\]
-
-This erased branch identity and made relative scale depend on graph degree,
-projection width, and optimization history.
-
-Canonical ELA replaces only that fusion step. It computes invariant message RMS
-statistics and routes each irrep sector with positive node-wise weights.
-
-The router is zero initialized:
+The router is identity initialized:
 
 \[
 (w_G^\tau,w_L^\tau)=(1,1),
 \]
 
-so the initial function remains the admitted `G + L` model. This is a safer
-architectural extension than adding a third full-state transport branch.
+so the initial function is the established additive model
 
-## Why implicit is not integrated
+\[
+M^\tau=G^\tau+L^\tau.
+\]
 
-The current implicit Gaussian--Taylor operator is valuable as:
+Implicit Gaussian--Taylor full-state transport is not part of the public
+architecture. It overlaps the global sufficient-statistic role, smooths full
+irrep state, adds scale/schedule options, and does not reproduce compact local
+semantics at fixed rank.
 
-- a smooth spatial reference;
-- an edge-memory research lane;
-- a possible low-dimensional conditioner;
-- a future global query/key feature augmentation;
-- a long-range component for tasks that permit nonlocal coupling.
+Block AttnRes is also not part of the public architecture. It introduces a depth
+cache and block-count axis that is not required by the base stability contract.
 
-It is not integrated into canonical v1 because:
+## Optional capabilities
 
-1. it does not reproduce compact support or edge-axis routing at fixed rank;
-2. it duplicates graph sufficient-statistic work already performed by global
-   ELA;
-3. always-on and scheduled hybrid receipts did not satisfy the combined task and
-   resource gates;
-4. graph-centering plus finite truncation raises fragment/size-locality concerns;
-5. integrating it now would retain `implicit_every`, scale, order, normalization,
-   and workspace options in the canonical API.
+`ELAFeatures` allocates optional modules:
 
-If future multi-seed downstream evidence supports it, the preferred integration
-is a small spatial condition or concatenated global feature map, not another
-full-state residual pass.
+```python
+ELAFeatures(
+    condition_dim=0,
+    order_dim=0,
+    coordinate_refinement=False,
+)
+```
 
-## Why AttnRes is not canonical
+`ELAContext` activates them for one call:
 
-Block Attention Residuals may help deep stacks, but the current canonical use
-case does not require a depth-cache mechanism at every model size.
+```python
+ELAContext(
+    condition=None,
+    order=None,
+    refinement=None,
+)
+```
 
-It remains experimental because:
+Omitting a field bypasses the corresponding path entirely, including after the
+optional module has trained.
 
-- its strongest external motivation is deep language-model optimization;
-- it adds a block-count axis and `O(LBN)` depth-routing work;
-- EqRMSNorm, bounded residuals, per-copy LayerScale, and branch fusion already
-  define the base stability contract;
-- it should be evaluated only on a fixed deep-stack preset, not exposed as a
-  routine architecture option.
+### Invariant condition
 
-## Why coordinate updates moved out
+A `0e` condition modulates the same `ELALayer` through bounded DiT-style shift,
+scale, and residual gates. Vector and tensor conditions remain input irreps.
 
-Coordinate mutation combines four separate policies:
+### Semantic order
 
-- displacement head;
-- update mask and centroid constraint;
-- step-size control;
-- neighbor topology reuse or rebuild.
+Order is a node-attached semantic coordinate, not the tensor row index. It is
+encoded as invariant Fourier PE and supplied through the same condition path.
+An enable mask supports mixed ordered/unordered node types.
 
-Those policies do not belong in every static property layer. Canonical ELA keeps
-coordinates read-only and uses `ELACoordinateRefiner` for explicit outer-loop
-refinement.
+### Coordinate refinement
 
-## Public option reduction
+A zero-initialized `1o` head is allocated only when requested. A
+`RefinementRequest` runs the same ELA stack in an explicit outer loop and owns
+step size, masking, centering, and optional graph reconstruction.
 
-Previous advanced configuration exposed architecture, training, geometry,
-conditioning, and refinement controls together.
+No second coordinate-updating backbone or layer class exists.
 
-Canonical v1 exposes only:
+## Public options
+
+The public architecture config contains:
 
 ```text
 input_irreps
@@ -167,6 +139,7 @@ output_irreps
 width
 depth
 geometry
+features
 ```
 
 Derived or fixed:
@@ -176,82 +149,67 @@ num_heads
 local_rank
 hidden irreps
 normalization
-residual scale
+residual scales
 tensor closure
 chirality construction
 ```
 
-Moved outside core:
+Runtime context contains task inputs and execution requests, not alternate
+architecture selection.
+
+## Complexity
+
+For `N` nodes, `E` directed candidates, and `L` layers, fixed widths and ranks
+give
+
+\[
+T=O(L(N+E)).
+\]
+
+Node-linear arithmetic additionally requires `E = O(N)`. Neighbor discovery is
+outside this bound.
+
+With `S` coordinate-refinement steps, ELA is evaluated approximately `S+1`
+times:
+
+\[
+O((S+1)L(N+E)),
+\]
+
+excluding graph rebuild.
+
+## Required validation
+
+The canonical gate must cover:
+
+- package root exposes only `ELA` and `ELALayer` as backbone/layer;
+- context-free forward bypasses trained conditioner weights;
+- semantic-order permutation equivariance;
+- disabled order labels have no effect;
+- condition and order projections receive gradients;
+- coordinate refinement is identity at initialization;
+- activated displacement is bounded, masked, and equivariant;
+- global/local fusion starts at exact `G + L`;
+- proper/improper O(3), translation, node permutation, graph isolation, and
+  edge-order contracts;
+- input and coordinate gradients, including double backward where required;
+- CUDA BF16 forward/backward;
+- latency and memory measured without overstating neighbor costs.
+
+## Superseded public names
+
+The following are no longer package-root architecture choices:
 
 ```text
-coordinate refinement
-neighbor discovery/rebuild
-task readout and masks
-training dropout/DropPath
-experimental implicit transport
-experimental AttnRes
+CanonicalEquivariantLinearAttention
+ConditionedELA
+ELACoordinateRefiner
+EquivariantAttention
+EquivariantAttentionResiduals
+EquivariantLinearAttention
+SpatialOperatorAblationModel
+UnifiedEquivariantAttention
+UnifiedEquivariantLayer
 ```
 
-## Validation required for performance claims
-
-### Mechanics
-
-- branch fusion is exactly `G + L` at initialization;
-- learned routing remains O(3)-equivariant;
-- all sectors and router parameters receive finite gradients;
-- full model passes translation, proper/improper rotation, permutation, graph
-  isolation, and edge-order tests;
-- input and coordinate double backward remain finite;
-- CUDA BF16 forward/backward passes;
-- external refiner is identity at initialization and bounded/equivariant when
-  activated.
-
-### Compatibility
-
-- existing advanced and legacy imports remain valid;
-- historical models retain their state schemas;
-- canonical ELA receives a new schema rather than silently loading incompatible
-  checkpoints;
-- regression and task adapters use the canonical API explicitly.
-
-### Resource
-
-- parameter count and forward/backward latency are recorded versus the refined
-  `EquivariantLinearAttention` control;
-- branch router overhead is reported separately;
-- peak memory does not include neighbor discovery unless stated;
-- models are profiled one at a time;
-- no speedup is claimed without a measured result.
-
-### Downstream
-
-At minimum:
-
-- one smooth/general 3D task;
-- one sharp interaction or molecular/protein task;
-- paired seeds and frozen splits;
-- no test-set use for model selection;
-- task metric, latency, peak memory, clipping, and instability counts.
-
-The gates were run in
-`CANONICAL_BRANCH_FUSION_STUDY_20260731.md`. QM9 showed a one-seed
-`0.023484 eV` validation-MAE improvement, but the resource packet failed and
-trainable routing failed the LBA train-only capacity gate (`0.331238 pK` versus
-the `0.10 pK` ceiling). Canonical ELA remains the supported design and API;
-learned routing is not an admitted empirical advantage and no multi-seed
-confirmation is authorized.
-
-## Superseded selection policy
-
-The following are no longer competing canonical arms:
-
-```text
-explicit
-implicit
-hybrid
-implicit_every=N
-AttnRes blocks=B
-in-layer coordinate_updates=True/False
-```
-
-They remain experiment or compatibility labels only.
+The API test fails if these names return to the root namespace.
