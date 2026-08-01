@@ -6,8 +6,9 @@ import json
 import os
 import statistics
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import torch
 
@@ -185,7 +186,8 @@ def main() -> None:
     )
     parser.add_argument("--nodes", type=int, default=4096)
     parser.add_argument("--degree", type=int, default=32)
-    parser.add_argument("--node-dim", type=int, default=32)
+    parser.add_argument("--input-irreps", default="32x0e")
+    parser.add_argument("--output-irreps", default="1x0e")
     parser.add_argument("--width", type=int, default=128)
     parser.add_argument("--depth", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=10)
@@ -204,22 +206,24 @@ def main() -> None:
 
     device = torch.device(args.device)
     dtype = _dtype(args.dtype)
-    if dtype == torch.bfloat16 and device.type == "cpu":
-        model_dtype = torch.float32
-    else:
-        model_dtype = dtype
+    model_dtype = (
+        torch.float32
+        if dtype == torch.bfloat16 and device.type == "cpu"
+        else dtype
+    )
     torch.manual_seed(0)
-    model = ELA.scalar(
-        args.node_dim,
-        output_dim=1,
+    model = ELA(
+        input_irreps=args.input_irreps,
+        output_irreps=args.output_irreps,
         width=args.width,
         depth=args.depth,
         cutoff=10.0,
     ).to(device=device, dtype=model_dtype)
     _activate_local_outputs(model)
+    input_dim = model.config.input_layout.dim
     features = torch.randn(
         args.nodes,
-        args.node_dim,
+        input_dim,
         device=device,
         dtype=model_dtype,
     )
@@ -247,7 +251,11 @@ def main() -> None:
             )
         }
         equivalence = None
-        triton_enabled = device.type == "cuda" and triton_available() and dtype != torch.float64
+        triton_enabled = (
+            device.type == "cuda"
+            and triton_available()
+            and dtype != torch.float64
+        )
         if triton_enabled:
             triton_probe = _functional_probe(model, prepared, backend="triton")
             profiles["triton"] = _profile_backend(
@@ -269,10 +277,13 @@ def main() -> None:
             os.environ["ELA_KERNEL_BACKEND"] = original_policy
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": "ela_kernel_backend",
         "device": str(device),
         "dtype": args.dtype,
+        "input_irreps": str(model.config.input_layout),
+        "output_irreps": str(model.config.output_layout),
+        "input_dim": input_dim,
         "nodes": args.nodes,
         "edges": int(edges.shape[1]),
         "degree": args.degree,
