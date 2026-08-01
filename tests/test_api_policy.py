@@ -1,29 +1,71 @@
 from __future__ import annotations
 
-from equivariant_attention import ELA, ELAConfig, SparseGeometry
-from equivariant_attention.experimental import (
-    EquivariantAttentionResiduals,
-    ImplicitGaussianSpatialKernel,
-)
-from equivariant_attention.legacy import (
-    EquivariantAttention,
-    UnifiedEquivariantAttention,
+import inspect
+
+import equivariant_attention as ela
+from equivariant_attention import (
+    ELA,
+    ELAConfig,
+    ELAContext,
+    ELAFeatures,
+    ELALayer,
+    SparseGeometry,
 )
 
 
-def test_canonical_api_is_available_from_package_root() -> None:
+def test_package_root_exposes_one_architecture_and_one_layer() -> None:
+    exported = set(ela.__all__)
+    assert {"ELA", "ELALayer"}.issubset(exported)
+
+    forbidden = {
+        "CanonicalEquivariantLinearAttention",
+        "ConditionedELA",
+        "ELACoordinateRefiner",
+        "EquivariantAttention",
+        "EquivariantAttentionResiduals",
+        "EquivariantLinearAttention",
+        "ImplicitGaussianSpatialKernel",
+        "SpatialOperatorAblationModel",
+        "UnifiedEquivariantAttention",
+        "UnifiedEquivariantLayer",
+    }
+    assert exported.isdisjoint(forbidden)
+    for name in forbidden:
+        assert not hasattr(ela, name)
+
+    public_module_classes = {
+        name
+        for name in exported
+        if inspect.isclass(getattr(ela, name))
+        and issubclass(getattr(ela, name), __import__("torch").nn.Module)
+    }
+    assert public_module_classes == {
+        "CoordinateUpdateHead",
+        "DirectVectorForceHead",
+        "ELA",
+        "ELALayer",
+        "EquivariantVectorHead",
+        "ScalarEnergyHead",
+    }
+
+
+def test_optional_capabilities_use_one_config_and_context() -> None:
     config = ELAConfig(
         input_irreps="4x0e",
         geometry=SparseGeometry(cutoff=5.0),
+        features=ELAFeatures(
+            condition_dim=8,
+            order_dim=1,
+            coordinate_refinement=True,
+        ),
     )
     model = ELA(config)
-    assert model.attention_kind == "canonical_equivariant_linear_attention"
-
-
-def test_noncanonical_mechanisms_have_explicit_namespaces() -> None:
-    assert EquivariantAttentionResiduals.__module__.endswith(
-        "attention_residuals"
+    assert model.attention_kind == "equivariant_linear_attention"
+    assert isinstance(model.layers[0], ELALayer)
+    assert config.canonical_contract()["public_model"] == "ELA"
+    assert config.canonical_contract()["public_layer"] == "ELALayer"
+    assert ELAContext() == ELAContext(
+        condition=None,
+        order=None,
+        refinement=None,
     )
-    assert ImplicitGaussianSpatialKernel.__module__.endswith("implicit_spatial")
-    assert EquivariantAttention.__module__.endswith("moment")
-    assert UnifiedEquivariantAttention.__module__.endswith("unified")
