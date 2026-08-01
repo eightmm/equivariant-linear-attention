@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import ELA, ELAContext, ELAFeatures, ELAConfig, SparseGeometry
+from equivariant_attention import (
+    ELA,
+    ELAConfig,
+    ELAContext,
+    ELAFeatures,
+    SparseGeometry,
+)
 
 
 def _padded_fixture() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -19,7 +25,9 @@ def _padded_fixture() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     return features, positions, mask
 
 
-def _batched_complete_edges(mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _batched_complete_edges(
+    mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     parts = []
     max_edges = 0
     for count in mask.sum(dim=1).tolist():
@@ -185,3 +193,31 @@ def test_explicit_context_is_normalized_for_padded_nodes() -> None:
     with torch.inference_mode():
         output = model(features, positions, mask=mask, context=context)
     assert output["node_irreps"].shape[:2] == (2, 5)
+
+
+def test_graph_condition_is_not_confused_with_padded_node_axis() -> None:
+    features, positions, mask = _padded_fixture()
+    config = ELAConfig(
+        input_irreps="4x0e",
+        width=32,
+        depth=1,
+        geometry=SparseGeometry(cutoff=10.0, num_rbf=8),
+        features=ELAFeatures(condition_dim=5),
+    )
+    model = ELA(config).double().eval()
+    graph_condition = torch.randn(2, 5, dtype=torch.float64)
+
+    with torch.inference_mode():
+        shortcut = model(
+            features,
+            positions,
+            mask=mask,
+            condition=graph_condition,
+        )["graph_irreps"]
+        explicit = model(
+            features,
+            positions,
+            mask=mask,
+            context=ELAContext(condition=graph_condition),
+        )["graph_irreps"]
+    torch.testing.assert_close(shortcut, explicit, atol=0.0, rtol=0.0)
