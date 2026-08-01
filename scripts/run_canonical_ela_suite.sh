@@ -104,6 +104,9 @@ uv run --locked pytest -q \
   tests/test_canonical_branch_fusion_downstream.py \
   tests/test_ela_context.py \
   tests/test_api_policy.py \
+  tests/test_ergonomic_api.py \
+  tests/test_padded_batch_api.py \
+  tests/test_dependency_free_radius_graph.py \
   2>&1 | tee "$RUN_DIR/focused-tests.log"
 
 if [[ "$DEVICE" == cuda* ]]; then
@@ -145,8 +148,10 @@ import sys
 run_dir = Path(sys.argv[1])
 mode, device, dtype, git_sha = sys.argv[2:]
 
+
 def reject_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant: {value}")
+
 
 overhead = json.loads(
     (run_dir / "overhead.json").read_text(encoding="utf-8"),
@@ -168,7 +173,7 @@ required = [
     "benchmark.log",
 ]
 commands = [
-    "focused canonical pytest set",
+    "focused canonical and data-interface pytest set",
     "benchmark_canonical_ela.py",
 ]
 if device.startswith("cuda"):
@@ -193,7 +198,7 @@ for name in required:
     }
 
 manifest = {
-    "schema_version": 3,
+    "schema_version": 4,
     "suite": "canonical_ela",
     "status": "completed",
     "mode": mode,
@@ -204,6 +209,7 @@ manifest = {
     "source_file": overhead["source_file"],
     "public_architecture": "ELA",
     "public_layer": "ELALayer",
+    "data_api": "flat_padded_mapping_dependency_free",
     "benchmark_role": "functional_and_dtype_safety_not_resource_decision",
     "commands": commands,
     "files": files,
