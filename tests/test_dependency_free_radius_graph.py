@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import radius_graph
+from equivariant_attention.data import radius_graph
 
 
 def _dense_reference(
