@@ -1,8 +1,8 @@
 # Equivariant Linear Attention
 
-A general-purpose PyTorch layer for parity-aware 3D data.
+A general-purpose, parity-aware 3D layer implemented in PyTorch.
 
-The repository exposes **one architecture** and **one layer**:
+The repository exposes one model and one layer:
 
 ```text
 ELA
@@ -19,9 +19,8 @@ Its spatial equation is fixed:
 }
 \]
 
-Global and local messages remain separate until an invariant,
-identity-initialized router combines them. There is no dense `N x N` attention
-tensor and no persistent edge hidden state.
+The core package depends only on PyTorch. PyG is not required for graph data,
+batching, edge packing, or radius-neighbor construction.
 
 ## Install
 
@@ -29,57 +28,283 @@ tensor and no persistent edge hidden state.
 uv sync --locked
 ```
 
-Automated GitHub Actions are disabled. Validation is explicit:
+## 20-second example
 
-```bash
-scripts/check.sh fast
-scripts/check.sh gpu
-```
-
-## Basic use
+For ordinary scalar node features:
 
 ```python
-from equivariant_attention import ELA, ELAConfig, SparseGeometry
+from equivariant_attention import ELA
+
+model = ELA.scalar(
+    node_dim=32,
+    output_dim=1,
+    width=128,
+    depth=8,
+    cutoff=6.0,
+)
+
+# x:   [N, 32]
+# pos: [N, 3]
+out = model(x, pos)
+
+node_prediction = out["node_irreps"]   # [N, 1]
+graph_prediction = out["graph_irreps"] # [1, 1]
+```
+
+When no graph is supplied, ELA builds radius candidates from `pos`. This is a
+convenient exact PyTorch reference path. For repeated training or large graphs,
+prepare and reuse the graph as shown below.
+
+## Generic irreps
+
+```python
+model = ELA(
+    input_irreps="32x0e + 4x1o + 1x1e",
+    output_irreps="1x0e + 2x1o",
+    width=128,
+    depth=8,
+    cutoff=6.0,
+)
+
+out = model(node_irreps, pos)
+```
+
+The optimized path supports arbitrary multiplicities of:
+
+```text
+0e  ordinary scalar
+0o  pseudoscalar
+1o  polar vector
+1e  axial vector
+2e  even symmetric-traceless tensor
+2o  odd symmetric-traceless tensor
+```
+
+with `l <= 2`.
+
+Positions remain a separate affine geometry input:
+
+\[
+x_i\mapsto Rx_i+t.
+\]
+
+They must not be packed as an ordinary `1o` feature, which transforms only as
+`v -> Rv`.
+
+## Batching without PyG
+
+ELA accepts three public batch layouts. They are converted internally to one
+packed ragged node axis.
+
+### 1. Flat packed graphs
+
+```python
+# x:     [N_total, D]
+# pos:   [N_total, 3]
+# batch: [N_total], values 0 ... B-1
+out = model(x, pos, batch=batch)
+```
+
+Radius candidates are built independently inside each graph.
+
+You can provide an existing candidate graph:
+
+```python
+out = model(
+    x,
+    pos,
+    batch=batch,
+    edge_index=edge_index,  # [2, E], receiver row first
+)
+```
+
+### 2. Padded dense batch plus mask
+
+```python
+# x:    [B, M, D]
+# pos:  [B, M, 3]
+# mask: [B, M], bool
+out = model(x, pos, mask=mask)
+
+node_prediction = out["node_irreps"] # [B, M, D_out]
+graph_prediction = out["graph_irreps"] # [B, D_out]
+```
+
+Masked node outputs and coordinate deltas are zero. Masked positions are
+returned unchanged.
+
+Padded edges may be supplied in any of these forms:
+
+```python
+model(x, pos, mask=mask, edge_index=edges, edge_mask=edge_mask)
+# edges: [B, 2, E_max] or [B, E_max, 2]
+
+model(x, pos, mask=mask, edge_index=[edges_0, edges_1, ...])
+# each item: [2, E_b]
+
+model(x, pos, mask=mask, adjacency=adjacency)
+# adjacency: bool [B, M, M]
+```
+
+Negative endpoints in a padded edge tensor are treated as edge padding.
+
+### 3. Plain dictionaries and `DataLoader`
+
+A dataset item can be an ordinary Python dictionary:
+
+```python
+sample = {
+    "x": node_features,       # aliases: node_irreps, node_features
+    "positions": positions,  # alias: pos
+    "edge_index": edge_index, # optional
+    "target": target,         # ignored by the model
+    "sample_id": sample_id,
+}
+```
+
+Use the built-in collator:
+
+```python
+from torch.utils.data import DataLoader
+from equivariant_attention import ELA
+
+loader = DataLoader(
+    dataset,
+    batch_size=16,
+    shuffle=True,
+    collate_fn=ELA.collate,
+)
+
+for batch in loader:
+    out = model(batch)
+    loss = loss_fn(out["graph_irreps"], batch["target"])
+```
+
+`ELA.collate` concatenates node tensors, creates the batch vector, offsets
+per-graph edges, and carries optional targets, sample IDs, conditions, and order
+coordinates. No framework-specific graph object is required.
+
+## Reuse a prepared graph
+
+Automatic graph construction and CSR packing are intentionally convenient, not
+free. For a fixed topology, cache it once:
+
+```python
+graph = model.prepare_graph(
+    pos,
+    batch=batch,
+    edge_index=edge_index, # omit to build radius candidates once
+)
+
+for step in range(num_steps):
+    out = model(x, pos, graph)
+```
+
+This is the preferred hot path for training, inference, `torch.compile`, and
+profiling.
+
+The built-in radius builder is chunked to bound temporary memory but performs
+quadratic pair tests within each graph:
+
+\[
+O\left(\sum_g N_g^2\right).
+\]
+
+For large or dynamically moving systems, provide a cell-list/Verlet neighbor
+provider or a future fused on-the-fly backend. The ELA layer itself remains
+
+\[
+O\left(L(N+E)\right)
+\]
+
+for a supplied candidate graph at fixed widths and ranks.
+
+## Optional condition, order, and refinement
+
+Optional features use the same model class. They can be passed directly as
+keywords; the lower-level `ELAContext` API remains available for reusable
+contexts.
+
+```python
+model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x0e + 1x1o",
+    width=128,
+    depth=8,
+    cutoff=6.0,
+    condition_dim=256,
+    order_dim=1,
+    coordinate_refinement=True,
+)
+
+out = model(
+    x,
+    pos,
+    batch=batch,
+    edge_index=edge_index,
+    condition=time_embedding,
+    order=residue_rank,
+    order_group=chain_id,
+    order_mask=is_ordered_node,
+    refine_steps=4,
+    max_coordinate_step=0.2,
+    update_mask=movable_nodes,
+)
+```
+
+- `condition` is an invariant `0e` tensor and may be shared, graph-level, or
+  node-level.
+- `order` is a semantic sequence/grid coordinate, never the current tensor row
+  index.
+- `order_mask` permits ordered and unordered node types in one graph.
+- coordinate refinement is a bounded outer loop and does not imply conservative
+  dynamics.
+
+For conservative forces, use a scalar energy:
+
+\[
+F_i=-\nabla_{x_i}E.
+\]
+
+## Advanced configuration
+
+The explicit config objects remain useful for checkpoint provenance and complex
+relation cutoffs:
+
+```python
+from equivariant_attention import (
+    ELA,
+    ELAConfig,
+    ELAFeatures,
+    SparseGeometry,
+)
 
 config = ELAConfig(
-    input_irreps="32x0e + 4x1o + 1x1e",
-    output_irreps="1x0e + 1x1o",
+    input_irreps="32x0e + 4x1o",
+    output_irreps="1x0e",
     width=128,
     depth=8,
     geometry=SparseGeometry(
         cutoff=6.0,
         num_rbf=16,
+        relation_cutoffs=(4.0, 6.0),
+    ),
+    features=ELAFeatures(
+        condition_dim=256,
+        order_dim=1,
+        coordinate_refinement=True,
     ),
 )
 model = ELA(config)
-
-graph = config.geometry.prepare(
-    batch,
-    edge_index,  # edge_index[0] receives from edge_index[1]
-)
-
-output = model(node_irreps, positions, graph)
-node_output = output["node_irreps"]
-graph_output = output["graph_irreps"]
 ```
 
-The public architecture choices are deliberately limited to:
+Head count, local rank, hidden irreps, normalization, residual scale, tensor
+closure, and chirality construction are derived internally rather than exposed
+as architecture choices.
 
-```text
-input_irreps
-output_irreps
-width
-depth
-geometry
-features
-```
+## Layer equation
 
-Head count, local rank, hidden irreps, normalization, residual scales, tensor
-closure, and chirality construction are derived internally.
-
-## One layer
-
-For hidden state \(h^\ell\),
+For hidden state \(h^\ell\):
 
 \[
 \bar h^\ell
@@ -98,29 +323,8 @@ L^\ell
 (\bar h^\ell,x,\mathcal E).
 \]
 
-For each sector
-
-\[
-\tau\in\{0e,0o,1o,1e,2e,2o\},
-\]
-
-an invariant router computes positive branch weights:
-
-\[
-(w_{G,i}^{\tau},w_{L,i}^{\tau})
-=
-2\operatorname{softmax}
-\left[
-R_\tau
-\left(
-\bar h_i^{0e},
-\log\operatorname{RMS}(G_i^\tau),
-\log\operatorname{RMS}(L_i^\tau)
-\right)
-\right].
-\]
-
-The router is zero initialized, so initially
+For each irrep sector, an invariant zero-initialized router combines global and
+local messages. Initially it is exactly the ordinary sum:
 
 \[
 w_G^\tau=w_L^\tau=1,
@@ -128,7 +332,7 @@ w_G^\tau=w_L^\tau=1,
 M_i^\tau=G_i^\tau+L_i^\tau.
 \]
 
-Then
+Then:
 
 \[
 \begin{aligned}
@@ -151,227 +355,50 @@ h^{\ell+1}
 \end{aligned}
 \]
 
-`ELALayer` is the layer class used at every depth. `model.layers` exposes the
-stack for checkpointing, intermediate losses, or custom execution.
+There is no dense `N x N` attention tensor and no persistent edge hidden state.
 
-## Input and output irreps
+## Performance path
 
-The optimized path supports arbitrary multiplicities of
-
-```text
-0e  ordinary scalar
-0o  pseudoscalar
-1o  polar vector
-1e  axial vector
-2e  even symmetric-traceless tensor
-2o  odd symmetric-traceless tensor
-```
-
-with `l <= 2`.
-
-Cartesian bases:
-
-```text
-l=1: [x, y, z]
-l=2: [xx, yy, xy, xz, yz], where zz = -xx - yy
-```
-
-Helpers:
+Start with the standard PyTorch implementation and a prepared graph:
 
 ```python
-from equivariant_attention import (
-    matrix_to_st5,
-    pack_irreps,
-    split_irreps,
-    st5_to_matrix,
-)
+graph = model.prepare_graph(pos, batch=batch, edge_index=edge_index)
+compiled_model = torch.compile(model, mode="reduce-overhead")
+out = compiled_model(x, pos, graph)
 ```
 
-Positions remain a separate affine geometry input:
+The highest-value custom-kernel target is the receiver-major local branch:
+geometry, radial basis, content score, positive weight, and all receiver
+reductions should eventually be fused so `[E, R, ...]` intermediates are not
+materialized. The global ELA branch is already dominated by GEMM/BMM operations
+and is a lower-priority Triton target.
 
-\[
-x_i\mapsto Rx_i+t.
-\]
+Triton remains optional. The PyTorch reference is the numerical contract and the
+fallback for unsupported devices or higher-order gradient checks.
 
-They must not be packed as an ordinary `1o` feature, which transforms only as
-`v -> Rv`.
+See:
 
-## Optional functionality in the same model
+- `docs/DATA_API.md`
+- `docs/KERNEL_OPTIMIZATION.md`
+- `docs/CANONICAL_ELA.md`
+- `docs/API_POLICY.md`
+- `docs/SCALING.md`
 
-Optional capabilities are allocated once with `ELAFeatures` and activated per
-call through `ELAContext`. They do not create another model class.
-
-```python
-from equivariant_attention import (
-    ELA,
-    ELAConfig,
-    ELAContext,
-    ELAFeatures,
-    OrderContext,
-    RefinementRequest,
-    SparseGeometry,
-)
-
-config = ELAConfig(
-    input_irreps="32x0e + 4x1o",
-    output_irreps="1x0e + 1x1o",
-    width=128,
-    depth=8,
-    geometry=SparseGeometry(cutoff=6.0),
-    features=ELAFeatures(
-        condition_dim=256,
-        order_dim=1,
-        coordinate_refinement=True,
-    ),
-)
-model = ELA(config)
-
-context = ELAContext(
-    condition=time_or_class_embedding,
-    order=OrderContext.sequence(
-        residue_rank,
-        segment_id=chain_id,
-        enabled=is_ordered_node,
-    ),
-    refinement=RefinementRequest(
-        steps=4,
-        max_step=0.2,
-        centering="selected",
-        update_mask=movable_nodes,
-        graph_rebuilder=optional_neighbor_rebuilder,
-    ),
-)
-
-output = model(
-    node_irreps,
-    positions,
-    graph,
-    context=context,
-)
-```
-
-Each context field is independently optional:
-
-- no `condition`: invariant DiT modulation is bypassed;
-- no `order`: semantic-order PE is bypassed;
-- no `refinement`: positions are not mutated.
-
-A configured feature can therefore be switched on or off without changing the
-model class. Conditioner and coordinate-head outputs are zero initialized, so
-the initial function matches context-free ELA.
-
-### Invariant condition
-
-`condition` is an ordinary `0e` feature with shape:
-
-```text
-[D]
-[1, D]
-[G, D]
-[N, D]
-```
-
-Even scalars receive bounded shift and scale. Non-scalar sectors receive only
-invariant copy-wise scale. Vector or tensor conditions belong in
-`input_irreps`, not in this tensor.
-
-### Semantic order PE
-
-Order coordinates are semantic labels, not current tensor row indices.
-Permuting nodes requires permuting features, positions, graph references, and
-order labels together.
-
-```python
-order = OrderContext.sequence(
-    residue_rank,
-    segment_id=chain_id,
-    enabled=is_protein_atom,
-)
-```
-
-The `enabled` mask supports mixed ordered/unordered systems, for example a
-protein with residue order and a ligand whose atom serialization order has no
-meaning.
-
-For an ordering list of node IDs, first construct inverse ranks:
-
-```python
-rank = torch.empty_like(node_order)
-rank[node_order] = torch.arange(node_order.numel())
-order = OrderContext.permutation_rank(rank)
-```
-
-Grid, lattice, time, and cyclic coordinates are supported through
-`OrderContext.grid(..., periods=...)`.
-
-### Coordinate refinement
-
-Refinement predicts a bounded polar displacement in an outer loop:
-
-\[
-x_i^{t+1}=x_i^t+\Delta x_i^t.
-\]
-
-A caller-provided graph rebuilder makes topology policy explicit. Without one,
-the prepared candidate topology is reused while continuous geometry is
-recomputed. For conservative force fields, derive forces from scalar energy:
-
-\[
-F_i=-\nabla_{x_i}E.
-\]
-
-## Complexity
-
-For `N` nodes, `E` directed candidate edges, and `L` layers, with fixed widths
-and ranks,
-
-\[
-T=O\left(L(N+E)\right).
-\]
-
-The branch router and optional node-level conditioning add `O(LN)` work.
-Coordinate refinement with `S` outer steps costs approximately
-`O(SL(N+E))`, excluding neighbor-list reconstruction.
-
-The model is linear in node count only when `E = O(N)`. Neighbor discovery is
-outside the layer and must be measured separately.
-
-## Public API policy
-
-The package root exports only one architecture and one architecture layer:
-
-```text
-ELA
-ELALayer
-```
-
-Graph, irrep, physics-head, and context utilities remain public. Historical
-implementation modules are not model-selection APIs.
-
-## Focused validation
-
-```bash
-uv run pytest -q \
-  tests/test_api_policy.py \
-  tests/test_ela_context.py \
-  tests/test_branch_fusion.py \
-  tests/test_canonical_api.py
-```
-
-Full local gates:
+## Validation
 
 ```bash
 scripts/check.sh fast
 scripts/check.sh gpu
 ```
 
-## Design documents
+Focused canonical suite:
 
-- `docs/CANONICAL_ELA.md`
-- `docs/API_POLICY.md`
-- `docs/ARCHITECTURE_DECISION_20260731.md`
-- `docs/SCALING.md`
+```bash
+ELA_SUITE_MODE=full \
+ELA_SUITE_DEVICE=cuda \
+ELA_SUITE_DTYPE=bfloat16 \
+  bash scripts/run_canonical_ela_suite.sh \
+  artifacts/canonical-ela/final
+```
 
-Unit tests establish shape, symmetry, initialization, and finite-gradient
-contracts. They do not by themselves establish downstream accuracy or a
-hardware speedup.
+Automated GitHub Actions are disabled; validation is explicit.
