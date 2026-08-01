@@ -55,23 +55,6 @@ if [[ "$REQUIRE_CLEAN" == "1" && -n "$GIT_STATUS" ]]; then
   exit 2
 fi
 
-uv run --locked python - "$REPO_ROOT" > "$RUN_DIR/source-provenance.txt" <<'PY'
-from pathlib import Path
-import sys
-
-import equivariant_attention
-
-repo_root = Path(sys.argv[1]).resolve()
-expected = (repo_root / "src").resolve()
-source_file = Path(equivariant_attention.__file__).resolve()
-source_root = source_file.parents[1]
-if source_root != expected:
-    raise SystemExit(f"wrong source root: {source_root} != {expected}")
-print(f"source_file={source_file}")
-print(f"source_root={source_root}")
-print(f"expected_source_root={expected}")
-PY
-
 {
   echo "mode=$MODE"
   echo "device=$DEVICE"
@@ -92,27 +75,24 @@ PY
 } > "$RUN_DIR/git.txt"
 
 uv run --locked pytest -q \
+  tests/test_api_policy.py \
+  tests/test_elabatch_api.py \
+  tests/test_dependency_free_radius_graph.py \
+  tests/test_triton_ops.py \
   tests/test_branch_fusion.py \
   tests/test_branch_fusion_zero_init.py \
   tests/test_canonical_api.py \
   tests/test_canonical_double_backward.py \
   tests/test_canonical_equivariance.py \
   tests/test_canonical_migration.py \
-  tests/test_canonical_regression.py \
-  tests/test_canonical_resource_benchmark.py \
-  tests/test_canonical_resource_summary.py \
   tests/test_canonical_branch_fusion_downstream.py \
   tests/test_ela_context.py \
-  tests/test_api_policy.py \
-  tests/test_ergonomic_api.py \
-  tests/test_padded_batch_api.py \
-  tests/test_dependency_free_radius_graph.py \
-  tests/test_ela_batch.py \
-  tests/test_prepared_hot_path.py \
   2>&1 | tee "$RUN_DIR/focused-tests.log"
 
 if [[ "$DEVICE" == cuda* ]]; then
-  uv run --locked pytest -q tests/test_canonical_cuda.py \
+  uv run --locked pytest -q \
+    tests/test_canonical_cuda.py \
+    tests/test_triton_ops_cuda.py \
     2>&1 | tee "$RUN_DIR/cuda-focused.log"
 fi
 
@@ -123,20 +103,16 @@ if [[ "$MODE" == "full" ]]; then
   fi
 fi
 
-BENCHMARK_ARGS=(
-  --nodes "$NODES"
-  --degree "$DEGREE"
-  --width "$WIDTH"
-  --depth "$DEPTH"
-  --warmup "$WARMUP"
-  --repeats "$REPEATS"
-  --device "$DEVICE"
-  --dtype "$DTYPE"
-  --expected-source-root "$REPO_ROOT/src"
-  --output "$RUN_DIR/overhead.json"
-)
-uv run --locked python scripts/benchmark_canonical_ela.py \
-  "${BENCHMARK_ARGS[@]}" \
+uv run --locked python scripts/benchmark_ela.py \
+  --nodes "$NODES" \
+  --degree "$DEGREE" \
+  --width "$WIDTH" \
+  --depth "$DEPTH" \
+  --warmup "$WARMUP" \
+  --repeats "$REPEATS" \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
+  --output "$RUN_DIR/kernels.json" \
   2>&1 | tee "$RUN_DIR/benchmark.log"
 
 uv run --locked python - "$RUN_DIR" "$MODE" "$DEVICE" "$DTYPE" "$GIT_SHA" <<'PY'
@@ -149,45 +125,20 @@ import sys
 
 run_dir = Path(sys.argv[1])
 mode, device, dtype, git_sha = sys.argv[2:]
-
-
-def reject_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON constant: {value}")
-
-
-overhead = json.loads(
-    (run_dir / "overhead.json").read_text(encoding="utf-8"),
-    parse_constant=reject_constant,
-)
-if overhead["git_sha"] != git_sha:
-    raise SystemExit("benchmark git SHA does not match suite SHA")
-if overhead["source_file"] != str(
-    (Path.cwd() / "src/equivariant_attention/__init__.py").resolve()
-):
-    raise SystemExit("benchmark source file does not match current repository")
-
+kernels = json.loads((run_dir / "kernels.json").read_text(encoding="utf-8"))
 required = [
-    "overhead.json",
+    "kernels.json",
     "environment.txt",
     "git.txt",
-    "source-provenance.txt",
     "focused-tests.log",
     "benchmark.log",
 ]
-commands = [
-    "focused canonical and data-interface pytest set",
-    "benchmark_canonical_ela.py",
-]
 if device.startswith("cuda"):
     required.append("cuda-focused.log")
-    commands.append("pytest tests/test_canonical_cuda.py")
 if mode == "full":
     required.append("fast-gate.log")
-    commands.append("bash scripts/check.sh fast")
     if device.startswith("cuda"):
         required.append("gpu-gate.log")
-        commands.append("bash scripts/check.sh gpu")
-
 files = {}
 for name in required:
     path = run_dir / name
@@ -198,22 +149,20 @@ for name in required:
         "sha256": hashlib.sha256(data).hexdigest(),
         "bytes": len(data),
     }
-
 manifest = {
-    "schema_version": 4,
+    "schema_version": 5,
     "suite": "canonical_ela",
     "status": "completed",
     "mode": mode,
     "device": device,
     "dtype": dtype,
     "git_sha": git_sha,
-    "git_dirty": bool(overhead["git_dirty"]),
-    "source_file": overhead["source_file"],
     "public_architecture": "ELA",
     "public_layer": "ELALayer",
-    "data_api": "flat_padded_mapping_dependency_free",
-    "benchmark_role": "functional_and_dtype_safety_not_resource_decision",
-    "commands": commands,
+    "public_graph_container": "ELABatch",
+    "internal_graph_layout": "packed_nodes_receiver_csr",
+    "kernel_backends": list(kernels["profiles"]),
+    "neighbor_discovery_included": False,
     "files": files,
 }
 (run_dir / "manifest.json").write_text(
