@@ -1,10 +1,15 @@
 # Canonical equivariant linear attention
 
-This document is normative for `ELA`, `ELAConfig`, `ELALayer`, and `ELACore`.
+This document is normative for the only public architecture and layer:
 
-## 1. Scope
+```text
+ELA
+ELALayer
+```
 
-The canonical layer is one homogeneous 3D operator:
+## 1. Architecture
+
+Every layer evaluates one homogeneous operator:
 
 \[
 \boxed{
@@ -16,11 +21,11 @@ The canonical layer is one homogeneous 3D operator:
 }
 \]
 
-It is not selected by dataset type. Molecules, proteins, particles, point
-clouds, and meshes use the same equations and differ only in input features,
-geometry construction, and task heads.
+Molecules, proteins, particles, point clouds, and meshes use the same equations.
+They differ only in input irreps, sparse geometry, optional context, and task
+heads.
 
-The persistent hidden carrier is
+The persistent hidden carrier is derived internally:
 
 \[
 C_0\times0e
@@ -31,12 +36,11 @@ C_0\times0e
 \oplus C_{2o}\times2o.
 \]
 
-The optimized implementation currently derives all non-scalar multiplicities
-from model width. Users do not choose hidden irreps.
+Users do not select hidden irreps, head count, or local rank.
 
 ## 2. Inputs
 
-The model receives
+The base call receives
 
 \[
 (X,x,\mathcal G),
@@ -44,9 +48,9 @@ The model receives
 
 where
 
-- `X` is one flattened `input_irreps` tensor;
-- `x` is an affine position tensor of shape `[N,3]`;
-- `G` is one prepacked sparse candidate graph.
+- `X` is a flattened `input_irreps` tensor;
+- `x` is an affine position tensor `[N,3]`;
+- `G` is a validated sparse candidate graph.
 
 Positions remain separate because
 
@@ -56,9 +60,18 @@ x_i\mapsto Rx_i+t,
 
 while an irrep feature transforms linearly.
 
-## 3. Pre-normalized branches
+Optional information is supplied by one `ELAContext`:
 
-For layer `ell`,
+\[
+c=(c_{0e},o,r),
+\]
+
+where `condition`, `order`, and `refinement` may each be absent. Their absence
+bypasses the corresponding path rather than selecting another model.
+
+## 3. Global and local branches
+
+For layer \(\ell\),
 
 \[
 \bar h_i^\ell
@@ -66,9 +79,7 @@ For layer `ell`,
 \operatorname{EqRMSNorm}_{\rm attn}(h_i^\ell).
 \]
 
-The same normalized state enters two branches.
-
-### Exact global branch
+The exact global branch is
 
 \[
 G_i^\ell
@@ -76,11 +87,11 @@ G_i^\ell
 \operatorname{ExactGlobalELA}_{l\le2}(\bar h^\ell)_i.
 \]
 
-The global operator uses a finite positive feature map, graph sufficient
-statistics, and an augmented numerator/denominator contraction. It does not form
-a dense pair-attention matrix.
+It uses a finite positive feature map, graph sufficient statistics, and an
+augmented numerator/denominator contraction. It does not form an `N x N`
+attention matrix.
 
-### Exact sparse local branch
+The exact sparse local branch is
 
 \[
 L_i^\ell
@@ -89,15 +100,11 @@ L_i^\ell
 (\bar h^\ell,x,\mathcal E)_i.
 \]
 
-The local branch retains compact cutoff, radial basis, edge direction, relation
-metadata, tensor contractions, receiver normalization, and aggregate chirality.
-It has no persistent edge hidden state.
+It retains compact cutoff, radial basis, edge direction, relation metadata,
+tensor contractions, receiver normalization, and aggregate chirality. It has no
+persistent edge hidden state.
 
 ## 4. Branch-aware fusion
-
-Raw addition hides branch identity and makes its relative scale an accidental
-property of projection widths, degree, and graph size. Canonical ELA keeps the
-branches separate until an invariant router.
 
 For sector
 
@@ -105,43 +112,20 @@ For sector
 \tau\in\{0e,0o,1o,1e,2e,2o\},
 \]
 
-define the scalar/vector RMS with the ordinary Euclidean component metric:
+define invariant branch magnitudes
 
 \[
 r_{G,i}^{\tau}
 =
-\sqrt{
-\operatorname{mean}_{c,m}
-\left[(G_{i,c,m}^{\tau})^2\right]
-+\epsilon
-},
-\]
-
-\[
+\sqrt{\operatorname{RMS}(G_i^\tau)^2+\epsilon},
+\qquad
 r_{L,i}^{\tau}
 =
-\sqrt{
-\operatorname{mean}_{c,m}
-\left[(L_{i,c,m}^{\tau})^2\right]
-+\epsilon
-}.
+\sqrt{\operatorname{RMS}(L_i^\tau)^2+\epsilon}.
 \]
 
-For the compact Cartesian \(l=2\) storage
-\(T=[xx,yy,xy,xz,yz]\), the five stored coordinates are not an
-orthonormal basis. The router therefore uses the O(3)-invariant Frobenius
-metric
-
-\[
-\lVert T\rVert_F^2
-=
-xx^2+yy^2+(xx+yy)^2
-+2(xy^2+xz^2+yz^2),
-\]
-
-followed by the same channel mean and division by five. This distinction is
-required: a plain mean of the five stored coordinates changes under a generic
-rotation even though the represented traceless tensor does not.
+For compact ST5 tensors, the RMS uses the represented Frobenius norm rather than
+a plain mean of the five stored coordinates.
 
 The router input is invariant:
 
@@ -155,56 +139,18 @@ z_i
 \right].
 \]
 
-One positive two-way weight is produced per node and sector:
+Positive two-way weights are
 
 \[
 (w_{G,i}^{\tau},w_{L,i}^{\tau})
 =
-2\operatorname{softmax}
-\left[R_\tau(z_i)\right].
+2\operatorname{softmax}[R_\tau(z_i)].
 \]
 
-The same scalar weight is broadcast over every component of the corresponding
-irrep copy. The operation therefore commutes with the tracked O(3) action.
+The same invariant scalar weight is broadcast across every component of one
+irrep sector.
 
-The raw routed message is
-
-\[
-M_{i,\rm raw}^{\tau}
-=
-w_{G,i}^{\tau}G_i^{\tau}
-+w_{L,i}^{\tau}L_i^{\tau}.
-\]
-
-A variance-balanced candidate is
-
-\[
-M_{i,\rm bal}^{\tau}
-=
-\frac{
-\sqrt{\frac12[(r_G^\tau)^2+(r_L^\tau)^2]}
-}{
-\sqrt{\frac12[(w_G^\tau)^2+(w_L^\tau)^2]+\epsilon}
-}
-\left[
- w_G^\tau\frac{G_i^\tau}{r_G^\tau}
-+w_L^\tau\frac{L_i^\tau}{r_L^\tau}
-\right].
-\]
-
-The actual fusion is
-
-\[
-M_i^\tau
-=
-M_{i,\rm raw}^{\tau}
-+	anh(\beta_\tau)
-\left(
-M_{i,\rm bal}^{\tau}-M_{i,\rm raw}^{\tau}
-\right).
-\]
-
-Initialization is
+The router and branch-balance parameters are zero initialized:
 
 \[
 R_\tau=0,
@@ -217,29 +163,22 @@ Therefore
 \[
 w_G^\tau=w_L^\tau=1,
 \qquad
-M_i^\tau=G_i^\tau+L_i^\tau.
+M_i^\tau=G_i^\tau+L_i^\tau
 \]
 
-The canonical model begins at the admitted incumbent equation and can learn a
-branch preference. The registered 2026-07-31 packet found active, finite routing
-and a one-seed QM9 gain, but rejected empirical promotion because resource and
-LBA capacity gates failed. Trainable routing is therefore an experimental
-mechanism, not a claimed universal improvement.
+at initialization. The model starts from the established additive equation and
+learns branch preference only when supported by gradients.
 
-The extra local pseudoscalar used by the parity update follows the local `0o`
-weight. It is not treated as an independent seventh architecture branch.
+## 5. Update and FFN
 
-## 5. Update and tensor closure
-
-The fused message enters one parity-complete Cartesian update:
+The fused message enters one parity-complete update and one low-order tensor
+closure:
 
 \[
 \Delta h_{i,\rm msg}^{\ell}
 =
-\operatorname{ParityUpdate}(M_i^\ell).
+\operatorname{ParityUpdate}(M_i^\ell),
 \]
-
-Low-order tensor products are closed once per layer:
 
 \[
 \Delta h_{i,\rm tp}^{\ell}
@@ -267,17 +206,12 @@ h_i^\ell
 \right).
 \]
 
-Each residual may use irrep-copy dropout and graph-wise stochastic depth in the
-advanced compatibility class. Canonical `ELAConfig` fixes both to zero so they
-belong to training policy rather than architecture selection.
-
-## 6. Equivariant FFN
+Then
 
 \[
 \widehat h_i^\ell
 =
-\operatorname{EqRMSNorm}_{\rm ffn}
-(\widetilde h_i^\ell),
+\operatorname{EqRMSNorm}_{\rm ffn}(\widetilde h_i^\ell),
 \]
 
 \[
@@ -286,71 +220,111 @@ h_i^{\ell+1}
 \widetilde h_i^\ell
 +
 \operatorname{LayerScale}_{\rm ffn}
-\operatorname{EqFFN}
-(\widehat h_i^\ell).
+\operatorname{EqFFN}(\widehat h_i^\ell).
 \]
 
 Even-scalar nonlinearities operate directly. Pseudoscalar, vector, and tensor
-updates use invariant scalar gates, preserving parity and orientation laws.
+updates use invariant scalar gates.
 
-## 7. Geometry and chirality
+## 6. Optional invariant condition
 
-One coordinate context supplies:
+`ELAFeatures.condition_dim > 0` allocates zero-initialized DiT-style modulation.
+For a node condition \(c_i\in0e\), even scalar states receive bounded affine
+modulation and non-scalar sectors receive copy-wise invariant scale only.
 
-- graph-centered normalized positions;
-- C2 cutoff and radial basis;
-- receiver-centered `l<=2` multipoles;
-- three radial direction moments;
-- aggregate axial, pseudoscalar, and odd-tensor chirality carriers.
+If `ELAContext.condition` is absent, `ELALayer` bypasses its conditioner
+entirely. This remains true after conditioner weights and biases have trained.
+A configured condition is therefore genuinely switchable per call.
 
-Chirality is created without explicit edge triplets. It remains a local
-high-frequency construction and is not replaced by the smooth implicit kernel.
+Vector or tensor conditions are regular `input_irreps`, not invariant condition
+vectors.
 
-## 8. Complexity
+## 7. Optional semantic order
 
-For `N` nodes, `E` directed candidates, `L` layers, and fixed architecture
-widths/ranks,
+`ELAFeatures.order_dim > 0` allocates an invariant Fourier encoder. `OrderContext`
+contains node-attached semantic coordinates, optional segment IDs, periodicity,
+and an enable mask.
+
+The contract is
+
+\[
+F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
+\]
+
+Semantic coordinates may represent residue rank, polymer rank, time, or stable
+grid coordinates. The current tensor row index is never inferred as order.
+
+Disabled nodes contribute no order statistics and receive zero order PE. This
+supports mixed systems such as an ordered protein and an unordered ligand.
+
+Order PE is an ordinary `0e` condition and uses the same layer modulation path as
+other invariant context.
+
+## 8. Optional coordinate refinement
+
+`ELAFeatures.coordinate_refinement=True` allocates one zero-initialized
+`1o` displacement head. A `RefinementRequest` activates an outer loop:
+
+\[
+h^t=\operatorname{ELA}(X,x^t,\mathcal G^t;c),
+\]
+
+\[
+\Delta x^t
+=
+\operatorname{BoundedVectorHead}(h^t),
+\]
+
+\[
+x^{t+1}=x^t+\Delta x^t.
+\]
+
+The request controls step count, maximum displacement, update mask, centering,
+and optional graph reconstruction. Without a rebuilder, candidate topology is
+reused while continuous geometry is recomputed.
+
+This is still the same `ELA` architecture; refinement is an execution mode, not
+a second backbone or layer class.
+
+For conservative forces use
+
+\[
+F_i=-\nabla_{x_i}E.
+\]
+
+## 9. Complexity
+
+For `N` nodes, `E` directed candidates, `L` layers, and fixed widths/ranks,
 
 \[
 T=O\left(L(N+E)\right).
 \]
 
-The router adds `O(LN)` arithmetic and six scalar branch statistics per node. It
-does not alter the asymptotic order or add edge activations.
+Branch routing and optional node-level conditioning add `O(LN)`. With `S`
+refinement steps, the stack is evaluated approximately `S+1` times, so the order
+is
 
-No unconditional node-linear wall-clock claim is made. Node-linear arithmetic
-requires
+\[
+O\left((S+1)L(N+E)\right)
+\]
+
+before neighbor reconstruction cost.
+
+Node-linear arithmetic additionally requires
 
 \[
 E=O(N).
 \]
 
-Neighbor construction is outside this contract.
+Neighbor discovery is outside the layer contract.
 
-## 9. Excluded canonical options
+## 10. Public architecture policy
 
-The following mechanisms remain implemented for experiments and reproducibility
-but are not canonical choices:
+The package root exposes `ELA` and `ELALayer` as the only backbone and
+architecture layer. Optional capability does not create names such as
+`ConditionedELA`, `OrderConditionedELA`, `ELACoordinateRefiner`, implicit ELA, or
+AttnRes ELA.
 
-- edge-free Gaussian--Taylor full-state transport;
-- periodic implicit schedules;
-- always-on explicit/implicit hybrid residuals;
-- block Attention Residuals;
-- in-layer coordinate mutation;
-- historical LGL and broad flag-driven model builders.
-
-Their retained implementations do not imply endorsement. See
-`API_POLICY.md` and `ARCHITECTURE_DECISION_20260731.md`.
-
-## 10. Task-specific extensions
-
-Task behavior belongs outside the core:
-
-- coordinate refinement: `ELACoordinateRefiner`;
-- conservative forces: scalar energy plus `-grad_x E`;
-- invariant conditioning and deep-stack AttnRes: advanced/experimental classes;
-- readout masks, ligand/pocket roles, and task heads: adapters;
-- neighbor construction and rebuild: geometry providers.
-
-This separation keeps the layer one mathematical object while allowing different
-3D applications to compose it explicitly.
+Historical numerical reference modules may remain internal while canonical ELA
+depends on them or migration provenance requires them. They are not selectable
+public architectures.
