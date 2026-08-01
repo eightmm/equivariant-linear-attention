@@ -102,8 +102,7 @@ uv run --locked pytest -q \
   tests/test_canonical_resource_benchmark.py \
   tests/test_canonical_resource_summary.py \
   tests/test_canonical_branch_fusion_downstream.py \
-  tests/test_conditioning_wrapper.py \
-  tests/test_refinement_wrapper.py \
+  tests/test_ela_context.py \
   tests/test_api_policy.py \
   2>&1 | tee "$RUN_DIR/focused-tests.log"
 
@@ -194,7 +193,7 @@ for name in required:
     }
 
 manifest = {
-    "schema_version": 2,
+    "schema_version": 3,
     "suite": "canonical_ela",
     "status": "completed",
     "mode": mode,
@@ -203,6 +202,8 @@ manifest = {
     "git_sha": git_sha,
     "git_dirty": bool(overhead["git_dirty"]),
     "source_file": overhead["source_file"],
+    "public_architecture": "ELA",
+    "public_layer": "ELALayer",
     "benchmark_role": "functional_and_dtype_safety_not_resource_decision",
     "commands": commands,
     "files": files,
