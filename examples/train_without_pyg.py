@@ -8,7 +8,7 @@ from equivariant_attention import ELA
 
 
 class ToyMoleculeDataset(Dataset[dict[str, torch.Tensor]]):
-    """Example variable-size graph dataset using ordinary tensor dictionaries."""
+    """Variable-size graph dataset using ordinary tensor dictionaries."""
 
     def __init__(self, size: int = 128, seed: int = 0) -> None:
         generator = torch.Generator().manual_seed(seed)
@@ -21,8 +21,8 @@ class ToyMoleculeDataset(Dataset[dict[str, torch.Tensor]]):
                 atomic_features[:, 0].sum()
                 + 0.1 * positions.square().sum().sqrt()
             ).reshape(1)
-            # edge_index is deliberately omitted. ELA will construct radius
-            # candidates for this small example batch.
+            # edge_index is deliberately omitted. ELA constructs geometric
+            # radius candidates for this small example batch.
             self.samples.append(
                 {
                     "x": atomic_features,
@@ -50,9 +50,9 @@ def main() -> None:
         pin_memory=device.type == "cuda",
     )
 
-    model = ELA.scalar(
-        node_dim=8,
-        output_dim=1,
+    model = ELA(
+        input_irreps="8x0e",
+        output_irreps="1x0e",
         width=64,
         depth=4,
         cutoff=4.5,
@@ -67,6 +67,8 @@ def main() -> None:
             dtype=compute_dtype,
             non_blocking=True,
         )
+        if batch.target is None:
+            raise RuntimeError("training batch is missing targets")
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(
             device_type=device.type,
@@ -76,7 +78,7 @@ def main() -> None:
             output = model(batch)
             loss = loss_fn(
                 output["graph_irreps"].float(),
-                batch["target"].float(),
+                batch.target.float(),
             )
         loss.backward()
         optimizer.step()
