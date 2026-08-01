@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.canonical import ELA, ELAConfig, SparseGeometry
+from equivariant_attention import (
+    ELA,
+    ELAConfig,
+    ELAFeatures,
+    SparseGeometry,
+    prepare_3d_graph,
+)
 from equivariant_attention.equivariant_linear_attention import (
     EquivariantLinearAttention,
 )
-from equivariant_attention.unified import prepare_3d_graph
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:
@@ -34,12 +39,31 @@ def test_minimal_config_derives_internal_execution_options() -> None:
     assert advanced.drop_path_rate == 0.0
 
 
-def test_canonical_contract_has_no_implicit_or_schedule_option() -> None:
+def test_optional_features_allocate_one_conditioned_layer_stack() -> None:
+    config = ELAConfig(
+        input_irreps="4x0e",
+        width=64,
+        features=ELAFeatures(
+            condition_dim=8,
+            order_dim=1,
+            coordinate_refinement=True,
+        ),
+    )
+    advanced = config.to_advanced_config()
+    assert advanced.condition_dim == config.features.total_condition_dim(64)
+    assert advanced.coordinate_updates is False
+    model = ELA(config)
+    assert all(layer.condition_dim == advanced.condition_dim for layer in model.layers)
+    assert model.coordinate_head is not None
+
+
+def test_canonical_contract_has_no_implicit_or_attnres_option() -> None:
     contract = ELAConfig(input_irreps="4x0e").canonical_contract()
     assert contract["spatial_policy"] == (
         "exact_global_linear_attention_plus_exact_sparse_short_range"
     )
-    assert contract["implicit_spatial"] == "experimental_not_canonical"
+    assert contract["implicit_spatial"] == "not_in_canonical_architecture"
+    assert contract["attention_residuals"] == "not_in_canonical_architecture"
     assert "implicit_every" not in contract["public_options"]
     assert "attention_residual_blocks" not in contract["public_options"]
 
