@@ -42,13 +42,34 @@ input.
 
 ## Public API
 
+The default path is deliberately small:
+
+```python
+from equivariant_attention import ELA
+
+model = ELA.scalar(node_dim=32, cutoff=6.0)
+out = model(x, pos)
+```
+
+Generic irreps use:
+
+```python
+model = ELA(
+    input_irreps="32x0e + 4x1o",
+    output_irreps="1x0e + 1x1o",
+    width=128,
+    depth=8,
+    cutoff=6.0,
+)
+```
+
+The advanced config types remain available for reproducibility:
+
 ```python
 from equivariant_attention import (
-    ELA,
     ELAConfig,
     ELAContext,
     ELAFeatures,
-    ELALayer,
     OrderContext,
     RefinementRequest,
     SparseGeometry,
@@ -57,28 +78,32 @@ from equivariant_attention import (
 
 No second backbone or architecture layer is public.
 
-Optional functionality is allocated through
+## Dependency-free data policy
 
-```python
-ELAFeatures(
-    condition_dim=0,
-    order_dim=0,
-    coordinate_refinement=False,
-)
+Core execution and graph batching depend only on PyTorch. Public input forms are:
+
+```text
+flat single graph                 [N,D], [N,3]
+flat packed batch                 [N_total,D], batch[N_total]
+padded batch                      [B,M,D], [B,M,3], mask[B,M]
+plain mapping DataLoader batch    model(batch_dict)
 ```
 
-and activated per call through
+`ELA.collate` concatenates variable-size graph dictionaries and offsets
+per-graph edges. `ELA.forward` accepts flat COO, padded COO, ragged COO lists, or
+boolean adjacency. When graph metadata is omitted, it constructs exact radius
+candidates as a convenience reference path.
 
-```python
-ELAContext(
-    condition=None,
-    order=None,
-    refinement=None,
-)
-```
+Automatic radius discovery performs quadratic pair tests inside each graph.
+Repeated and performance-sensitive workloads must prepare and reuse a graph or
+use a cell-list/Verlet provider.
 
-Absent context fields bypass their modules entirely. Semantic order is a
-node-attached label such as residue rank or time, never the tensor row index.
+## Optional functionality
+
+Condition, semantic order, and coordinate refinement use the same model class.
+They may be passed directly as forward keywords or packaged in `ELAContext`.
+Absent fields bypass their modules entirely. Semantic order is a node-attached
+label such as residue rank or time, never the tensor row index.
 
 ## Architecture policy
 
@@ -91,7 +116,8 @@ Canonical:
 - parity-valid gated nonlinearities;
 - low-order tensor closure and aggregate chirality;
 - optional invariant context and semantic-order PE in the same layer;
-- optional coordinate refinement through the same model entry point.
+- optional coordinate refinement through the same model entry point;
+- flat, padded, and mapping input facades over one packed execution path.
 
 Not canonical:
 
@@ -99,7 +125,9 @@ Not canonical:
   backbone selection;
 - full-state implicit Gaussian--Taylor residual;
 - architecture schedules such as `implicit_every` or AttnRes block count;
-- a separate conditioned or coordinate-updating model class.
+- a separate conditioned, padded, or coordinate-updating model class;
+- PyG/DGL as a core execution dependency;
+- kernel backend as a model hyperparameter.
 
 Historical numerical implementation modules and tracked artifacts may remain as
 internal provenance while canonical ELA or checkpoint migration depends on them.
@@ -120,19 +148,45 @@ The model is node-linear only for graph families with
 E=O(N).
 \]
 
-A refinement request with `S` outer steps evaluates the stack approximately
-`S+1` times. Neighbor discovery and graph reconstruction are external costs and
-must be reported separately.
+The built-in reference radius builder has
+
+\[
+O\left(\sum_g N_g^2\right)
+\]
+
+pair-test arithmetic. A refinement request with `S` outer steps evaluates the
+stack approximately `S+1` times. Neighbor discovery and graph reconstruction
+must be accounted for separately.
+
+## Kernel policy
+
+The PyTorch prepared-graph path is the numerical contract. `torch.compile`,
+Triton, C++/CUDA, or other kernels may optimize execution without creating a new
+model class or checkpoint schema.
+
+Priority order:
+
+1. fuse receiver-major local geometry, score, and reductions;
+2. use recomputation for local backward;
+3. implement exact on-the-fly cell-list candidates;
+4. leave global GEMM/BMM to Inductor/vendor libraries unless profiling proves a
+   specific deficit.
+
+Every custom kernel requires a PyTorch fallback, numerical/equivariant gradient
+checks, and measured end-to-end latency or memory benefit.
 
 ## Current validation gates
 
-Required focused contracts:
+Required focused contracts include:
 
 - one package-root architecture and one layer;
 - exact zero-initialized global/local additive behavior;
 - proper and improper O(3), translation, node permutation, edge order, graph
   isolation, and batching;
 - all supported input/output parity sectors;
+- flat/padded/mapping batch equivalence;
+- padded mask and output restoration semantics;
+- dependency-free radius graph agreement with a dense reference;
 - semantic-order permutation consistency and disabled-node isolation;
 - condition path neutrality at initialization and true context-free bypass after
   training;
