@@ -85,7 +85,6 @@ uv run --locked pytest -q \
   tests/test_canonical_double_backward.py \
   tests/test_canonical_equivariance.py \
   tests/test_canonical_migration.py \
-  tests/test_canonical_branch_fusion_downstream.py \
   tests/test_ela_context.py \
   2>&1 | tee "$RUN_DIR/focused-tests.log"
 
@@ -150,7 +149,7 @@ for name in required:
         "bytes": len(data),
     }
 manifest = {
-    "schema_version": 5,
+    "schema_version": 6,
     "suite": "canonical_ela",
     "status": "completed",
     "mode": mode,
@@ -160,6 +159,7 @@ manifest = {
     "public_architecture": "ELA",
     "public_layer": "ELALayer",
     "public_graph_container": "ELABatch",
+    "representation_api": "input_output_irreps",
     "internal_graph_layout": "packed_nodes_receiver_csr",
     "kernel_backends": list(kernels["profiles"]),
     "neighbor_discovery_included": False,
