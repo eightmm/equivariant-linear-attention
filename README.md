@@ -6,24 +6,26 @@ The public architecture is deliberately small:
 
 ```text
 ELA       one model
-ELALayer  one reusable layer
+ELALayer  one inspectable stack-layer type
 ELABatch  one graph container
 ```
 
-Every layer combines
+Every layer combines two exact branches through an invariant learned fusion:
 
 $$
 \boxed{
-\text{exact global equivariant linear attention}
-+
-\text{exact sparse short-range geometry}
-+
-\text{invariant global/local fusion}
+M_i^\ell
+=
+\text{InvariantFusion}\left(
+G_i^\ell,
+L_i^\ell
+\right)
 }
 $$
 
-without constructing a dense `N x N` attention matrix. The core package does not
-require PyG or DGL.
+The fused message then enters the parity-valid update, tensor closure, residual,
+and equivariant FFN. No branch constructs a dense `N x N` attention matrix, and
+the core package does not require PyG or DGL.
 
 Start with [installation](#install), [the minimal example](#quick-start),
 [batching](#mini-batches-without-pyg), [task outputs](#output-contract),
@@ -579,13 +581,13 @@ architecture variants.
 For hidden state `h^l`:
 
 $$
-\bar h^l = \operatorname{EqRMSNorm}(h^l),
+\bar h^l = \text{EqRMSNorm}(h^l),
 $$
 
 $$
-G^l = \operatorname{ExactGlobalELA}_{l\le2}(\bar h^l),
+G^l = \text{ExactGlobalELA}_{l\le2}(\bar h^l),
 \qquad
-L^l = \operatorname{ExactSparseLocal}_{l\le2}(\bar h^l, x, \mathcal E).
+L^l = \text{ExactSparseLocal}_{l\le2}(\bar h^l, x, \mathcal E).
 $$
 
 An invariant, identity-initialized router combines the two branches. At
@@ -665,16 +667,10 @@ uv run python scripts/benchmark_ela.py \
 
 ## Documentation
 
-- [`docs/DATA_API.md`](docs/DATA_API.md)
-- [`docs/CANONICAL_ELA.md`](docs/CANONICAL_ELA.md)
-- [`docs/API_POLICY.md`](docs/API_POLICY.md)
-- [`docs/KERNEL_OPTIMIZATION.md`](docs/KERNEL_OPTIMIZATION.md)
-- [`docs/SCALING.md`](docs/SCALING.md)
-- [`docs/CANONICAL_ELA_VALIDATION.md`](docs/CANONICAL_ELA_VALIDATION.md)
-
-Date-stamped studies, `docs/EXPERIMENTS.jsonl`, and documents marked
-**Historical** preserve prior experiments. Their commands may require the Git
-revision recorded in the document and are not part of the current package API.
+See the [`docs` map](docs/README.md) for current API, equations, execution,
+checkpointing, validation, and migration references. It also separates those
+documents from date-stamped studies and the append-only experiment ledger, whose
+commands may require the recorded historical Git revision.
 
 ## Validation
 

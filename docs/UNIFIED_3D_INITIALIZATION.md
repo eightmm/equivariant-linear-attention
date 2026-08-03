@@ -1,12 +1,12 @@
-# Unified 3D initialization addendum
+# ELA hidden-state initialization addendum
 
 > **Internal implementation note.** This records the initialization rationale
 > for a private carrier used beneath `ELA`; it is not a public architecture or
 > API contract. See [CANONICAL_ELA.md](CANONICAL_ELA.md) and
 > [API_POLICY.md](API_POLICY.md) for the normative contract.
 
-The note describes the zero-initialization exception retained by the internal
-`UnifiedEquivariantAttention` carrier.
+The note describes the zero-initialization exception retained by the private
+ELA runtime.
 
 All ordinary sparse rank-to-head maps remain zero initialized. The one
 exception is the local pseudoscalar rank-to-head bridge. For head `h` and local
@@ -36,6 +36,6 @@ bridge removes that dead start while preserving every SE(3)/parity
 transformation law. The scalar, polar, axial, even-tensor, odd-tensor, and mass
 local output maps otherwise retain their neutral initialization.
 
-The implementation and regression test are in
-`UnifiedEquivariantAttention._initialize_chiral_bridge` and
-`tests/test_unified_chiral_bridge.py`.
+The implementation is in `_ELARuntime._initialize_chiral_bridge`; the focused
+regression remains in `tests/test_unified_chiral_bridge.py` for historical test
+continuity.

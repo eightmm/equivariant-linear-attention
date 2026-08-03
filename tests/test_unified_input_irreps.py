@@ -12,8 +12,8 @@ from equivariant_linear_attention import (
 )
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 
 
@@ -79,7 +79,7 @@ def test_flat_irrep_pack_split_and_st5_round_trips() -> None:
 
 def test_unified_accepts_all_lte2_input_sectors_and_backpropagates() -> None:
     torch.manual_seed(730)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps=INPUT_IRREPS,
         output_irreps="1x0e + 1x0o + 1x1e + 1x1o + 1x2e + 1x2o",
         hidden_dim=16,
@@ -88,7 +88,7 @@ def test_unified_accepts_all_lte2_input_sectors_and_backpropagates() -> None:
         local_rank=2,
         local_cutoff=10.0,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     node_irreps = torch.randn(
         6, config.input_layout.dim, dtype=torch.float64, requires_grad=True
     )
@@ -111,7 +111,7 @@ def test_unified_accepts_all_lte2_input_sectors_and_backpropagates() -> None:
 
 def test_flat_input_obeys_reflection_and_translation_contract() -> None:
     torch.manual_seed(731)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps=INPUT_IRREPS,
         output_irreps="1x0e + 1x0o + 1x1e + 1x1o + 1x2e + 1x2o",
         hidden_dim=16,
@@ -120,7 +120,7 @@ def test_flat_input_obeys_reflection_and_translation_contract() -> None:
         local_rank=2,
         local_cutoff=10.0,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     node_irreps = torch.randn(6, config.input_layout.dim, dtype=torch.float64)
     pos = torch.randn(6, 3, dtype=torch.float64)
     graph = prepare_3d_graph(
@@ -142,13 +142,13 @@ def test_flat_input_obeys_reflection_and_translation_contract() -> None:
 
 
 def test_input_projector_bias_and_geometry_only_contract() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps=INPUT_IRREPS,
         hidden_dim=16,
         num_layers=1,
         num_heads=4,
     )
-    model = UnifiedEquivariantAttention(config)
+    model = _ELARuntime(config)
     projectors = model.core.input_projection.projectors
 
     assert projectors["0e"].bias is not None
@@ -158,8 +158,8 @@ def test_input_projector_bias_and_geometry_only_contract() -> None:
         if name != "0e"
     )
 
-    geometry_only = UnifiedEquivariantAttention(
-        Unified3DConfig(
+    geometry_only = _ELARuntime(
+        _BaseStackConfig(
             input_irreps="0",
             hidden_dim=16,
             num_layers=1,
@@ -177,4 +177,4 @@ def test_input_projector_bias_and_geometry_only_contract() -> None:
 
 def test_unified_rejects_high_degree_input() -> None:
     with pytest.raises(ValueError, match="l<=2"):
-        Unified3DConfig(input_irreps="1x3o")
+        _BaseStackConfig(input_irreps="1x3o")

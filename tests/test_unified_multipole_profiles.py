@@ -4,8 +4,8 @@ import torch
 
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 
 
@@ -30,7 +30,7 @@ def _positions() -> torch.Tensor:
 
 
 def test_positive_radial_profiles_do_not_collapse_inside_large_cutoff() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         hidden_dim=16,
         num_layers=1,
@@ -39,7 +39,7 @@ def test_positive_radial_profiles_do_not_collapse_inside_large_cutoff() -> None:
         local_cutoff=10.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     positions = _positions()
     graph = prepare_3d_graph(
         torch.zeros(positions.shape[0], dtype=torch.long),
@@ -55,7 +55,7 @@ def test_positive_radial_profiles_do_not_collapse_inside_large_cutoff() -> None:
 
 
 def test_radial_profiles_are_positive_and_distinct() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="2x0e",
         hidden_dim=8,
         num_layers=1,
@@ -63,7 +63,7 @@ def test_radial_profiles_are_positive_and_distinct() -> None:
         local_rank=4,
         num_rbf=3,
     )
-    bank = UnifiedEquivariantAttention(config).core.node_multipoles
+    bank = _ELARuntime(config).core.node_multipoles
 
     scales = bank._radial_scales
     assert scales.shape == (4,)

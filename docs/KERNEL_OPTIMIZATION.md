@@ -33,7 +33,7 @@ For edge payload `x_e` and receiver row pointers:
 $$
 y_i
 =
-\sum_{e=\operatorname{ptr}_i}^{\operatorname{ptr}_{i+1}-1}x_e.
+\sum_{e=\text{ptr}_i}^{\text{ptr}_{i+1}-1}x_e.
 $$
 
 The Triton kernel:
@@ -104,7 +104,7 @@ per-group edge-sized `torch.cat` copy. Its temporary memory is bounded by the
 largest already-produced group:
 
 $$
-M_{\rm payload}
+M_{\text{payload}}
 =
 O\left(E\max_k F_k\right)
 $$

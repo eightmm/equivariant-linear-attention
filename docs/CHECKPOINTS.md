@@ -1,61 +1,68 @@
-# CHECKPOINTS
+# Checkpoint contract
 
-Checkpoint contract. Version-pinned to data + model + training.
+ELA supports portable checkpoints made from plain configuration data and a
+`state_dict`. Pickled model, config, or batch objects are not a supported
+cross-version format.
 
-## Schema
+## Minimal schema
 
 ```python
-{
-    "epoch": int,
-    "step": int,
-    "model_state_dict": dict,
-    "optimizer_state_dicts": list[dict],
-    "scheduler_state_dicts": list[dict],
-    "metrics": dict,
-    "config": dict,           # full training config snapshot
-    "data_version": str,      # matches DATA.md version
-    "model_version": str,     # matches MODEL.md version
-    "commit": str,            # git SHA
+from dataclasses import asdict
+import torch
+
+payload = {
+    "format_version": 1,
+    "package": "equivariant-linear-attention",
+    "config": asdict(model.config),
+    "state_dict": model.state_dict(),
+    "metadata": {
+        "source_revision": git_sha,
+        "step": step,
+    },
 }
+torch.save(payload, checkpoint_path)
 ```
 
-## Save
+Training applications may add optimizer, scheduler, scaler, and random-number
+states under their own documented keys. Those fields are not part of the model
+API and should not be required for inference.
+
+## Safe reconstruction
 
 ```python
-torch.save({
-    "epoch": epoch, "step": step,
-    "model_state_dict": model.state_dict(),
-    "optimizer_state_dicts": [o.state_dict() for o in optimizers],
-    "scheduler_state_dicts": [s.state_dict() for s in schedulers],
-    "metrics": metrics, "config": config,
-    "data_version": DATA_VERSION, "model_version": MODEL_VERSION,
-    "commit": git_sha(),
-}, save_dir / f"checkpoint_epoch{epoch:04d}_step{step:07d}.pt")
+import torch
+
+from equivariant_linear_attention import (
+    ELA,
+    ELAConfig,
+    ELAFeatures,
+    SparseGeometry,
+)
+
+payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+if payload["format_version"] != 1:
+    raise ValueError("unsupported ELA checkpoint format")
+
+raw = dict(payload["config"])
+geometry = SparseGeometry(**raw.pop("geometry"))
+features = ELAFeatures(**raw.pop("features"))
+model = ELA(ELAConfig(**raw, geometry=geometry, features=features))
+model.load_state_dict(payload["state_dict"], strict=True)
 ```
 
-- DDP: rank 0 only, `model.module.state_dict()` if wrapped.
-
-## Load
-
-```python
-ckpt = torch.load(path, map_location="cpu", weights_only=False)
-assert ckpt["data_version"] == DATA_VERSION, "data version mismatch"
-assert ckpt["model_version"] == MODEL_VERSION, "model version mismatch"
-model.load_state_dict(ckpt["model_state_dict"])
-```
-
-## Retention
-
-- Keep: best (primary metric), last, every N epochs
-- Storage path: `outputs/checkpoints/` (gitignored)
-- Cleanup policy:
+Only load checkpoints from a trusted source. `weights_only=True` narrows the
+deserialization surface, while the explicit format check and strict state load
+prevent silent partial reconstruction.
 
 ## Compatibility
 
-- Data version bump -> old ckpts incompatible
-- Model version bump -> old ckpts incompatible
-- Optimizer state may be dropped on resume; document if so
+- Source-module moves and private class renames must preserve `state_dict` keys.
+- Public configuration changes require a format-version decision and migration
+  note.
+- A tensor shape or key change requires an explicit migration; never use
+  `strict=False` as an undocumented compatibility policy.
+- Historical advanced-stack checkpoints use the guarded migration described in
+  [`MIGRATION_TO_ELA.md`](MIGRATION_TO_ELA.md).
 
-## Update Triggers
-
-Schema change -> bump ckpt format version + migration note.
+Store large checkpoints outside Git. Record the source revision, data identity,
+and training configuration alongside any scientific result.

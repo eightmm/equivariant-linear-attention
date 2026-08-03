@@ -133,19 +133,33 @@ A sample may be a normal mapping:
 ```
 
 ```python
+import torch
 from torch.utils.data import DataLoader
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+compute_dtype = (
+    torch.bfloat16
+    if device.type == "cuda" and torch.cuda.is_bf16_supported()
+    else torch.float16 if device.type == "cuda" else torch.float32
+)
+model = model.to(device)
 
 loader = DataLoader(
     dataset,
     batch_size=16,
     shuffle=True,
-    pin_memory=True,
+    pin_memory=device.type == "cuda",
     collate_fn=ELA.collate,
 )
 
 for batch in loader:
-    batch = batch.to("cuda", dtype=torch.bfloat16, non_blocking=True)
-    output = model(batch)
+    batch = batch.to(device, non_blocking=True)
+    with torch.autocast(
+        device_type=device.type,
+        dtype=compute_dtype,
+        enabled=device.type == "cuda",
+    ):
+        output = model(batch)
 ```
 
 The collator:

@@ -4,10 +4,10 @@ import torch
 
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
-    UnifiedEquivariantLayer,
+    _BaseStackConfig,
+    _ELARuntime,
 )
+from equivariant_linear_attention.nn.layers import _BaseELALayer
 
 
 def _complete_edge_index(num_nodes: int) -> torch.Tensor:
@@ -53,7 +53,7 @@ def _assert_state_close(left: object, right: object) -> None:
 
 def test_stack_is_exact_composition_of_public_layers() -> None:
     torch.manual_seed(101)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e + 1x1o",
         hidden_dim=16,
@@ -63,13 +63,13 @@ def test_stack_is_exact_composition_of_public_layers() -> None:
         local_cutoff=10.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     features, positions, graph = _fixture()
 
     state, context = model.embed_input(features, positions, graph)
     manual = state
     for layer in model.layers:
-        assert isinstance(layer, UnifiedEquivariantLayer)
+        assert isinstance(layer, _BaseELALayer)
         manual = layer(manual, context).state
 
     reference = model(features, positions, graph)
@@ -88,7 +88,7 @@ def test_stack_is_exact_composition_of_public_layers() -> None:
 
 def test_attention_and_ffn_residuals_compose_to_layer_forward() -> None:
     torch.manual_seed(103)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         hidden_dim=16,
         num_layers=1,
@@ -97,7 +97,7 @@ def test_attention_and_ffn_residuals_compose_to_layer_forward() -> None:
         local_cutoff=10.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     features, positions, graph = _fixture()
     state, context = model.embed_input(features, positions, graph)
     layer = model.layers[0]
@@ -110,7 +110,7 @@ def test_attention_and_ffn_residuals_compose_to_layer_forward() -> None:
 
 def test_dit_condition_is_neutral_at_initialization_and_trainable() -> None:
     torch.manual_seed(107)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -121,7 +121,7 @@ def test_dit_condition_is_neutral_at_initialization_and_trainable() -> None:
         num_rbf=8,
         condition_dim=5,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     features, positions, graph = _fixture()
     condition_a = torch.randn(1, 5, dtype=torch.float64)
     condition_b = torch.randn(1, 5, dtype=torch.float64)
@@ -143,7 +143,7 @@ def test_dit_condition_is_neutral_at_initialization_and_trainable() -> None:
 
 def test_graph_and_node_conditions_have_identical_broadcast_semantics() -> None:
     torch.manual_seed(109)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -154,7 +154,7 @@ def test_graph_and_node_conditions_have_identical_broadcast_semantics() -> None:
         num_rbf=8,
         condition_dim=3,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     with torch.no_grad():
         output = model.layers[0].conditioner.projection[-1]
         output.weight.normal_(mean=0.0, std=0.03)
@@ -180,7 +180,7 @@ def test_graph_and_node_conditions_have_identical_broadcast_semantics() -> None:
 
 def test_coordinate_refinement_is_se3_equivariant_and_bounded() -> None:
     torch.manual_seed(113)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -192,7 +192,7 @@ def test_coordinate_refinement_is_se3_equivariant_and_bounded() -> None:
         coordinate_updates=True,
         max_coordinate_step=0.2,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     with torch.no_grad():
         for layer in model.layers:
             layer.coordinate_vector.weight.normal_(mean=0.0, std=0.2)
@@ -230,7 +230,7 @@ def test_coordinate_refinement_is_se3_equivariant_and_bounded() -> None:
 
 
 def test_condition_and_coordinate_contract_is_explicit() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         condition_dim=8,
         coordinate_updates=True,

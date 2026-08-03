@@ -6,7 +6,7 @@ from dataclasses import dataclass, fields
 import torch
 
 from .context import ELAFeatures
-from .model.ela import ELA, ELAConfig, SparseGeometry
+from .model.ela import ELAConfig, SparseGeometry, _ELAEngine
 from .model.stack import EquivariantLinearAttentionConfig
 from .nn.fusion import RMSAwareBranchFusion
 
@@ -75,7 +75,7 @@ def canonical_config_from_advanced(
 
 
 def load_advanced_ela_state(
-    model: ELA,
+    model: _ELAEngine,
     state_dict: Mapping[str, torch.Tensor],
 ) -> ELAMigrationReceipt:
     """Load shared advanced-ELA weights and initialize only the new router.
@@ -84,7 +84,7 @@ def load_advanced_ela_state(
     partial loads from silently creating a different function.
     """
 
-    if not isinstance(model, ELA):
+    if not isinstance(model, _ELAEngine):
         raise TypeError("model must be an ELA")
     if not isinstance(state_dict, Mapping):
         raise TypeError("state_dict must be a mapping")

@@ -8,9 +8,7 @@ from equivariant_linear_attention.kernels.triton import (
     backend_policy,
     csr_sum,
     csr_sum_many,
-    install_triton_backend,
     kernel_backend,
-    uninstall_triton_backend,
 )
 
 
@@ -140,18 +138,14 @@ def test_csr_metadata_and_shapes_fail_closed() -> None:
     assert empty_value.grad.shape == empty_value.shape
 
 
-def test_backend_installation_can_be_reversed_without_losing_reference() -> None:
+def test_package_import_does_not_patch_canonical_module_globals() -> None:
     from equivariant_linear_attention.nn import core, parity
 
     block = core._CanonicalMultipoleBlock
-    assert hasattr(block, "_ela_torch_local_message")
-    try:
-        uninstall_triton_backend()
-        assert not hasattr(block, "_ela_torch_local_message")
-        assert parity._csr_sum is not csr_sum
-    finally:
-        install_triton_backend()
-    assert hasattr(block, "_ela_torch_local_message")
+    assert not hasattr(block, "_ela_torch_local_message")
+    assert block._local_message.__module__ == core.__name__
+    assert block._torch_local_message.__module__ == core.__name__
+    assert parity._csr_sum.__module__ == parity.__name__
 
 
 def test_csr_sum_many_validates_payload_group() -> None:

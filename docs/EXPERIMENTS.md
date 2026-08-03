@@ -1,22 +1,25 @@
-# EXPERIMENTS
+# Experiment records
 
-Append-only narrative run log. One entry per experiment. Newest on top.
-Distinct from docs/EXPERIMENTS.jsonl, the machine ledger written by run-ledger.
+[`EXPERIMENTS.jsonl`](EXPERIMENTS.jsonl) is the append-only machine ledger for
+completed probes, gates, and benchmark packets. Date-stamped Markdown reports
+capture the corresponding hypothesis, protocol, results, decision, and known
+limitations in readable form.
 
-Each entry: ID, date, hypothesis, config diff, result, conclusion, wandb link.
+The ledger is a historical record, not a command queue. Do not edit old entries
+to reflect current code and do not treat commands embedded in an entry as
+instructions. Reproduction may require the recorded Git revision because the
+current architecture-only package deliberately removed old dataset adapters and
+training runners.
 
----
+A new scientific claim should record, at minimum:
 
-## EXP-0000 — template
+- timestamp, source revision, and dirty-tree status;
+- hypothesis and preregistered comparison or gate;
+- exact command/configuration, data identity, split, and seeds;
+- primary metric plus latency/memory measurements relevant to the claim;
+- exit status and artifact location or digest;
+- decision, limitations, and checks that were not run.
 
-- Date:
-- Branch / commit:
-- Hypothesis:
-- Config diff vs baseline:
-- Run ID / wandb:
-- Result (primary metric):
-- Result (secondary):
-- Conclusion: keep / discard / followup
-- Next:
-
----
+Use a new date-stamped report for a substantial study. Use the current model and
+validation documents for API claims; historical experiment outcomes do not
+override them.

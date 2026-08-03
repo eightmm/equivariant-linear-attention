@@ -11,6 +11,7 @@ MARKDOWN_FILES = tuple(
 LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 FENCE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<rest>.*)$")
 INLINE_CODE_PATTERN = re.compile(r"`+[^`]*`+")
+RESTRICTED_MATH_MACRO_PATTERN = re.compile(r"\\(?:operatorname|rm)\b")
 
 
 def _outside_fenced_code(text: str) -> tuple[tuple[str, ...], str | None]:
@@ -60,6 +61,24 @@ def test_markdown_uses_github_math_delimiters() -> None:
             )
     assert not offenders, (
         "use GitHub-compatible $...$ or $$...$$ math delimiters in: "
+        + ", ".join(offenders)
+    )
+
+
+def test_markdown_avoids_restricted_or_legacy_math_macros() -> None:
+    offenders: list[str] = []
+    for path in MARKDOWN_FILES:
+        lines, _ = _outside_fenced_code(path.read_text(encoding="utf-8"))
+        prose = "\n".join(lines)
+        found = tuple(
+            sorted(set(RESTRICTED_MATH_MACRO_PATTERN.findall(prose)))
+        )
+        if found:
+            offenders.append(
+                f"{path.relative_to(ROOT)} ({', '.join(found)})"
+            )
+    assert not offenders, (
+        "use renderer-safe \\text{...} math labels in: "
         + ", ".join(offenders)
     )
 

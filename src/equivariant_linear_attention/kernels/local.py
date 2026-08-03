@@ -19,23 +19,18 @@ from .triton import (
 )
 
 
-def triton_local_message(
+def dispatch_local_message(
     self: object,
     state: _ParityState,
     geometry: _StaticGeometry,
 ) -> tuple[torch.Tensor, ...]:
-    """Canonical local operator with memory-bounded grouped CSR reductions.
+    """Run the canonical local operator through the selected backend.
 
-    Projection and edge-score equations remain ordinary PyTorch autograd. The
-    receiver statistics are reduced in five semantic groups instead of packing
-    the full local operator into one giant ``[E,F]`` tensor. This trades a few
-    launches for a lower peak edge-payload lifetime while preserving the
-    canonical FP32/FP64 work-precision equations.
+    The PyTorch method is the numerical reference. Forced Triton uses
+    memory-bounded grouped CSR reductions while preserving the canonical
+    FP32/FP64 work-precision equations.
     """
 
-    original = getattr(type(self), "_ela_torch_local_message", None)
-    if original is None:
-        raise RuntimeError("canonical PyTorch local reference was not installed")
     work_dtype = _compute_dtype(
         state.even_scalar,
         state.polar_vector,
@@ -51,7 +46,7 @@ def triton_local_message(
         )
         != "triton"
     ):
-        return original(self, state, geometry)
+        return self._torch_local_message(state, geometry)
 
     receiver = geometry.receiver
     sender = geometry.sender
@@ -316,4 +311,4 @@ def triton_local_message(
     )
 
 
-__all__ = ["triton_local_message"]
+__all__ = ["dispatch_local_message"]

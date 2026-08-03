@@ -10,6 +10,14 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.26 -> v0.27 (2026-08-03) — replace import-time Triton monkeypatching
+  with explicit task-local CSR and local-operator dispatch, and rename the
+  remaining private `Unified*` implementation classes by their ELA runtime
+  roles. impact: importing the package no longer mutates `nn` module globals;
+  public names, constructor signatures, parameter keys, output tensors, and
+  checked first-order gradients are unchanged. GitHub-incompatible math macros,
+  the mixed-precision data example, checkpoint/logging guidance, and the
+  current-versus-historical documentation map are corrected in the same pass.
 - [model] v0.25 -> v0.26 (2026-08-03) — align the repository, distribution,
   and Python namespace as `equivariant-linear-attention` /
   `equivariant_linear_attention`, remove the unused placeholder CLI, and group

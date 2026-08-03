@@ -10,13 +10,17 @@ The repository has one public architecture:
 
 $$
 \boxed{
-\text{exact global equivariant linear attention}
-+
-\text{exact sparse short-range local residual}
-+
-\text{invariant branch-aware fusion}
+M_i^\ell
+=
+\text{InvariantFusion}\left(
+G_i^\ell,
+L_i^\ell
+\right)
 }
 $$
+
+The fused message feeds the parity-valid update, tensor closure, residual, and
+equivariant FFN; this equation names the spatial message, not the entire layer.
 
 The public computational objects are:
 

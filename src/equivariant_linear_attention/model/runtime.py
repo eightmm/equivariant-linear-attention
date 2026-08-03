@@ -9,10 +9,9 @@ from torch import nn
 from ..geometry.prepared import Prepared3DGraph
 from ..irreps import IrrepLayout, split_irreps
 from ..nn.layers import (
-    LayeredCanonicalSE3Core,
-    UnifiedEquivariantLayer,
-    UnifiedSE3Context,
-    UnifiedSE3State,
+    _ELAStackCore,
+    _ELALayerContext,
+    _ELAHiddenState,
 )
 
 
@@ -51,8 +50,8 @@ def _nonnegative_real(name: str, value: object) -> float:
 
 
 @dataclass(frozen=True, slots=True)
-class Unified3DConfig:
-    """Canonical layer-stack configuration.
+class _BaseStackConfig:
+    """Private shared configuration for ELA stack implementations.
 
     Input and output representations are public. Hidden parity and angular
     degree stay fixed to the canonical low-order parity-complete carrier. An
@@ -106,7 +105,7 @@ class Unified3DConfig:
         if unsupported_input or unsupported_output:
             raise ValueError(
                 "input_irreps and output_irreps support l<=2 in the optimized "
-                "unified core; "
+                "ELA core; "
                 f"unsupported={unsupported_input + unsupported_output}"
             )
 
@@ -187,20 +186,20 @@ class Unified3DConfig:
         }
 
 
-class UnifiedEquivariantAttention(nn.Module):
-    """Layered parity-complete SE(3) stack with optional condition and coordinates."""
+class _ELARuntime(nn.Module):
+    """Private parity-complete runtime shared by ELA stack implementations."""
 
     attention_kind = "layered_multipole_parity_factorized_moment"
     symmetry = "SE3"
     internal_symmetry = "O3_parity_complete"
     supports_graph_layout = True
 
-    def __init__(self, config: Unified3DConfig) -> None:
+    def __init__(self, config: _BaseStackConfig) -> None:
         super().__init__()
-        if not isinstance(config, Unified3DConfig):
-            raise TypeError("config must be a Unified3DConfig")
+        if not isinstance(config, _BaseStackConfig):
+            raise TypeError("config must be an ELA stack configuration")
         self.config = config
-        self.core = LayeredCanonicalSE3Core(
+        self.core = _ELAStackCore(
             input_irreps=config.input_layout,
             output_irreps=config.output_layout,
             hidden_dim=config.hidden_dim,
@@ -255,7 +254,7 @@ class UnifiedEquivariantAttention(nn.Module):
         self,
         pos: torch.Tensor,
         graph: Prepared3DGraph,
-    ) -> UnifiedSE3Context:
+    ) -> _ELALayerContext:
         dummy = pos.new_zeros((graph.num_nodes, self.config.input_layout.dim))
         self._validate_graph_inputs(dummy, pos, graph)
         self.core._assert_finite("pos", pos)
@@ -273,7 +272,7 @@ class UnifiedEquivariantAttention(nn.Module):
         graph: Prepared3DGraph,
         *,
         node_role_id: torch.Tensor | None = None,
-    ) -> tuple[UnifiedSE3State, UnifiedSE3Context]:
+    ) -> tuple[_ELAHiddenState, _ELALayerContext]:
         self._validate_graph_inputs(node_irreps, pos, graph)
         self.core._validate_inputs(
             node_irreps,
@@ -298,7 +297,7 @@ class UnifiedEquivariantAttention(nn.Module):
             context,
         )
 
-    def project_state(self, state: UnifiedSE3State) -> torch.Tensor:
+    def project_state(self, state: _ELAHiddenState) -> torch.Tensor:
         return self.core.project_state(state)
 
     def split_input(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -315,7 +314,7 @@ class UnifiedEquivariantAttention(nn.Module):
         *,
         node_role_id: torch.Tensor | None = None,
         condition: torch.Tensor | None = None,
-    ) -> tuple[UnifiedSE3State, torch.Tensor, torch.Tensor]:
+    ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor]:
         self._validate_graph_inputs(node_irreps, pos, graph)
         return self.core.forward_features(
             node_irreps,
@@ -356,12 +355,3 @@ class UnifiedEquivariantAttention(nn.Module):
             f"condition_dim={self.config.condition_dim}, "
             f"coordinate_updates={self.config.coordinate_updates}"
         )
-
-
-__all__ = [
-    "Unified3DConfig",
-    "UnifiedEquivariantAttention",
-    "UnifiedEquivariantLayer",
-    "UnifiedSE3Context",
-    "UnifiedSE3State",
-]

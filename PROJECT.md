@@ -19,17 +19,21 @@ ELALayer
 ELABatch
 ```
 
-Every layer evaluates
+Every layer first fuses its exact global and sparse local messages as
 
 $$
 \boxed{
-\text{exact global equivariant linear attention}
-+
-\text{exact sparse short-range residual}
-+
-\text{invariant global/local fusion}
+M_i^\ell
+=
+\text{InvariantFusion}\left(
+G_i^\ell,
+L_i^\ell
+\right)
 }
 $$
+
+and then applies the parity-valid update, low-order tensor closure, residual
+scaling, and equivariant FFN.
 
 The hidden carrier is parity-complete over
 

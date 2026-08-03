@@ -5,10 +5,8 @@ from .triton import (
     backend_policy,
     csr_sum,
     csr_sum_many,
-    install_triton_backend,
     kernel_backend,
     triton_available,
-    uninstall_triton_backend,
 )
 
 __all__ = [
@@ -16,8 +14,6 @@ __all__ = [
     "backend_policy",
     "csr_sum",
     "csr_sum_many",
-    "install_triton_backend",
     "kernel_backend",
     "triton_available",
-    "uninstall_triton_backend",
 ]

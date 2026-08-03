@@ -10,6 +10,7 @@ from torch import nn
 from ..geometry.layout import PackedGraphLayout
 from ..geometry.neighbors import PackedNeighborGraph
 from ..irreps import Irrep, IrrepLayout, split_irreps
+from ..kernels.triton import _trusted_csr_sum
 
 
 def _compute_dtype(*values: torch.Tensor) -> torch.dtype:
@@ -29,48 +30,10 @@ def _segment_sum(
     return output.index_add(0, index, value)
 
 
-class _CsrSum(torch.autograd.Function):
-    """CSR sum with an explicit backward that supports higher derivatives."""
-
-    @staticmethod
-    def forward(
-        ctx: object,
-        value: torch.Tensor,
-        row_ptr: torch.Tensor,
-    ) -> torch.Tensor:
-        result = torch.segment_reduce(value, reduce="sum", offsets=row_ptr)
-        ctx.save_for_backward(value, result, row_ptr)
-        return result
-
-    @staticmethod
-    def backward(
-        ctx: object,
-        grad_output: torch.Tensor,
-    ) -> tuple[torch.Tensor, None]:
-        value, result, row_ptr = ctx.saved_tensors
-        if torch.is_grad_enabled():
-            counts = (row_ptr[1:] - row_ptr[:-1]).to(dtype=torch.long)
-            grad_value = torch.repeat_interleave(
-                grad_output,
-                counts,
-                dim=0,
-                output_size=value.shape[0],
-            )
-        else:
-            # The native kernel keeps ordinary training fast, while the
-            # differentiable branch above supplies PyTorch's missing gradgrad.
-            grad_value = torch.ops.aten._segment_reduce_backward.default(
-                grad_output,
-                result,
-                value,
-                "sum",
-                offsets=row_ptr,
-            )
-        return grad_value, None
-
-
 def _csr_sum(value: torch.Tensor, row_ptr: torch.Tensor) -> torch.Tensor:
-    return _CsrSum.apply(value, row_ptr)
+    """Dispatch a validated execution plan without mutating module globals."""
+
+    return _trusted_csr_sum(value, row_ptr)
 
 
 def _unit_ball(value: torch.Tensor, eps: float) -> torch.Tensor:
@@ -782,7 +745,7 @@ class _ParityCompleteBlock(nn.Module):
         if self.relation_score_bias is not None:
             if geometry.relation_id is None:
                 raise ValueError(
-                    "relation-aware unified model requires relation metadata"
+                    "relation-aware ELA requires relation metadata"
                 )
             score = score + self.relation_score_bias.to(dtype=dtype)[
                 geometry.relation_id
@@ -1163,7 +1126,7 @@ class _OutputProjection(nn.Module):
         ]
         if unsupported:
             raise ValueError(
-                "unified parity-complete core supports output degrees l<=2; "
+                "the parity-complete ELA core supports output degrees l<=2; "
                 f"unsupported={unsupported}"
             )
         self.scalar_paths = nn.ModuleDict()
@@ -1440,7 +1403,7 @@ class ParityCompleteSE3Core(nn.Module):
         if self.num_edge_relations:
             if neighbors.relation_id is None:
                 raise ValueError(
-                    "relation-aware unified model requires relation IDs"
+                    "relation-aware ELA requires relation IDs"
                 )
             relation_id = neighbors.relation_id.to(dtype=torch.long)
             relation_cutoff = torch.tensor(

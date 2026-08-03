@@ -11,17 +11,22 @@ ELABatch
 
 ## 1. Architecture
 
-Every layer evaluates one homogeneous operator:
+Every layer forms its branch message as
 
 $$
 \boxed{
-\operatorname{ELA}
+M_i^\ell
 =
-\operatorname{ExactGlobalLinearAttention}
-+
-\operatorname{ExactSparseLocalResidual}
+\text{InvariantFusion}\left(
+G_i^\ell,
+L_i^\ell
+\right)
 }
 $$
+
+That message is not the whole layer: Sections 4--5 define the following
+parity-valid update, low-order tensor closure, residual scaling, and equivariant
+FFN.
 
 Molecules, proteins, particles, point clouds, and meshes use the same equations.
 They differ only in declared irreps, sparse geometry, optional context, and task
@@ -55,7 +60,7 @@ There is no parallel `node_dim`, `output_dim`, or scalar-only model API.
 The public call receives one `ELABatch`:
 
 $$
-\mathcal B=(X,x,\operatorname{ptr},\mathcal E,c,o,r),
+\mathcal B=(X,x,\text{ptr},\mathcal E,c,o,r),
 $$
 
 where
@@ -84,7 +89,7 @@ For layer `l`:
 $$
 \bar h_i^l
 =
-\operatorname{EqRMSNorm}_{\rm attn}(h_i^l).
+\text{EqRMSNorm}_{\text{attn}}(h_i^l).
 $$
 
 The exact global branch is
@@ -92,7 +97,7 @@ The exact global branch is
 $$
 G_i^l
 =
-\operatorname{ExactGlobalELA}_{l\le2}(\bar h^l)_i.
+\text{ExactGlobalELA}_{l\le2}(\bar h^l)_i.
 $$
 
 It uses a finite positive feature map, graph sufficient statistics, and an
@@ -104,7 +109,7 @@ The exact sparse local branch is
 $$
 L_i^l
 =
-\operatorname{ExactSparseLocal}_{l\le2}
+\text{ExactSparseLocal}_{l\le2}
 (\bar h^l,x,\mathcal E)_i.
 $$
 
@@ -125,11 +130,11 @@ define invariant branch magnitudes
 $$
 r_{G,i}^{\tau}
 =
-\sqrt{\operatorname{RMS}(G_i^\tau)^2+\epsilon},
+\sqrt{\text{RMS}(G_i^\tau)^2+\epsilon},
 \qquad
 r_{L,i}^{\tau}
 =
-\sqrt{\operatorname{RMS}(L_i^\tau)^2+\epsilon}.
+\sqrt{\text{RMS}(L_i^\tau)^2+\epsilon}.
 $$
 
 For compact ST5 tensors, RMS uses the represented Frobenius norm rather than a
@@ -152,30 +157,84 @@ Positive two-way weights are
 $$
 (w_{G,i}^{\tau},w_{L,i}^{\tau})
 =
-2\operatorname{softmax}[R_\tau(z_i)].
+2\text{softmax}[R_\tau(z_i)].
 $$
 
 The same invariant scalar weight is broadcast over every component of one irrep
 sector.
 
-Router and branch-balance parameters are zero initialized:
+Let
 
 $$
-R_\tau=0,
+\rho_i^\tau
+=
+\sqrt{
+\frac{(r_{G,i}^{\tau})^2+(r_{L,i}^{\tau})^2}{2}
+},
 \qquad
-\beta_\tau=0.
+n_i^\tau
+=
+\sqrt{
+\frac{(w_{G,i}^{\tau})^2+(w_{L,i}^{\tau})^2}{2}
++\epsilon
+}.
 $$
 
-Therefore
+The RMS-balanced coefficients are
 
 $$
-w_G^\tau=w_L^\tau=1,
+\widehat w_{G,i}^{\tau}
+=
+\frac{\rho_i^\tau w_{G,i}^{\tau}}
+{r_{G,i}^{\tau}n_i^\tau},
 \qquad
-M_i^\tau=G_i^\tau+L_i^\tau
+\widehat w_{L,i}^{\tau}
+=
+\frac{\rho_i^\tau w_{L,i}^{\tau}}
+{r_{L,i}^{\tau}n_i^\tau}.
 $$
 
-at initialization. The model starts from the established additive equation and
-learns branch preference only when gradients support it.
+With learned sector strength
+
+$$
+s^\tau=\tanh(\beta^\tau),
+$$
+
+the effective coefficients and fused message are
+
+$$
+\widetilde w_{B,i}^{\tau}
+=
+w_{B,i}^{\tau}
++s^\tau
+\left(
+\widehat w_{B,i}^{\tau}-w_{B,i}^{\tau}
+\right),
+\qquad B\in\{G,L\},
+$$
+
+$$
+M_i^\tau
+=
+\widetilde w_{G,i}^{\tau}G_i^\tau
++
+\widetilde w_{L,i}^{\tau}L_i^\tau.
+$$
+
+The router output linear layer and `balance_strength` are zero initialized; the
+router's first linear layer is ordinarily initialized. Thus initially the
+logits vanish, $w_G^\tau=w_L^\tau=1$, $s^\tau=0$, and
+$M_i^\tau=G_i^\tau+L_i^\tau$ exactly.
+
+The local operator also returns one auxiliary aggregate chiral pseudoscalar
+$C_i^{0o}$. It is routed separately as
+
+$$
+\widetilde C_i^{0o}=w_{L,i}^{0o}C_i^{0o},
+$$
+
+using the raw local `0o` router weight before the parity update. This lane is
+not one of the six fused sector tensors above.
 
 ## 5. Update and FFN
 
@@ -183,34 +242,34 @@ The fused message enters one parity-complete update and one low-order tensor
 closure:
 
 $$
-\Delta h_{i,\rm msg}^{l}
+\Delta h_{i,\text{msg}}^{\ell}
 =
-\operatorname{ParityUpdate}(M_i^l),
+\text{ParityUpdate}\left(M_i^\ell,\widetilde C_i^{0o}\right),
 $$
 
 $$
-\Delta h_{i,\rm tp}^{l}
+\Delta h_{i,\text{tp}}^{\ell}
 =
-\operatorname{TPClosure}_{l\le2}
+\text{TPClosure}_{l\le2}
 \left(
-\widetilde h_i^l,
-A_i^{\rm multipole}
+\widetilde h_i^\ell,
+A_i^{\text{multipole}}
 \right).
 $$
 
 The attention residual is
 
 $$
-\widetilde h_i^l
+\widetilde h_i^\ell
 =
-h_i^l
+h_i^\ell
 +
-\operatorname{LayerScale}_{\rm attn}
-\operatorname{NormGate}
+\text{LayerScale}_{\text{attn}}
+\text{NormGate}
 \left(
-\Delta h_{i,\rm msg}^{l}
+\Delta h_{i,\text{msg}}^{\ell}
 +
-\Delta h_{i,\rm tp}^{l}
+\Delta h_{i,\text{tp}}^{\ell}
 \right).
 $$
 
@@ -219,7 +278,7 @@ Then
 $$
 \widehat h_i^l
 =
-\operatorname{EqRMSNorm}_{\rm ffn}(\widetilde h_i^l),
+\text{EqRMSNorm}_{\text{ffn}}(\widetilde h_i^l),
 $$
 
 $$
@@ -227,8 +286,8 @@ h_i^{l+1}
 =
 \widetilde h_i^l
 +
-\operatorname{LayerScale}_{\rm ffn}
-\operatorname{EqFFN}(\widehat h_i^l).
+\text{LayerScale}_{\text{ffn}}
+\text{EqFFN}(\widehat h_i^l).
 $$
 
 Even-scalar nonlinearities operate directly. Pseudoscalar, vector, and tensor
@@ -274,13 +333,13 @@ other invariant condition.
 displacement head. A `RefinementRequest` in the batch activates an outer loop:
 
 $$
-h^t=\operatorname{ELA}(X,x^t,\mathcal G^t;c),
+h^t=\text{ELA}(X,x^t,\mathcal G^t;c),
 $$
 
 $$
 \Delta x^t
 =
-\operatorname{BoundedVectorHead}(h^t),
+\text{BoundedVectorHead}(h^t),
 $$
 
 $$
@@ -303,9 +362,9 @@ $$
 The projected output is returned per node. Two graph reductions are provided:
 
 $$
-h_g^{\rm sum}=\sum_{i\in g}h_i,
+h_g^{\text{sum}}=\sum_{i\in g}h_i,
 \qquad
-h_g^{\rm mean}=\frac{h_g^{\rm sum}}{N_g}.
+h_g^{\text{mean}}=\frac{h_g^{\text{sum}}}{N_g}.
 $$
 
 `graph_irreps` and `graph` denote the mean. `graph_sum` is available for
@@ -341,6 +400,11 @@ The package root exposes `ELA` and `ELALayer` as the only backbone and
 architecture layer, and `ELABatch` as the only graph container. Optional
 capability does not create names such as `ConditionedELA`,
 `OrderConditionedELA`, coordinate-refiner ELA, implicit ELA, or AttnRes ELA.
+
+`ELALayer` is the concrete type stored in `ELA.layers` for inspection. `ELA`
+constructs it from the public configuration; its private hidden-state/context
+call protocol is not a second standalone tensor API or a supported layer
+injection interface.
 
 Historical numerical modules may remain private while the canonical
 implementation or checkpoint migration depends on them. They are not selectable

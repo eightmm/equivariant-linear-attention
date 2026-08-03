@@ -8,10 +8,10 @@ from torch import nn
 
 from ..irreps import IrrepLayout
 from ..nn.layers import (
-    LayeredCanonicalSE3Core,
-    UnifiedEquivariantLayer,
-    UnifiedSE3Context,
-    UnifiedSE3State,
+    _ELAStackCore,
+    _BaseELALayer,
+    _ELALayerContext,
+    _ELAHiddenState,
     _BranchModulation,
     _LayerModulation,
     _gate_delta,
@@ -26,7 +26,7 @@ from ..nn.parity import (
     _st_square,
     _unit_ball,
 )
-from .runtime import Unified3DConfig, UnifiedEquivariantAttention
+from .runtime import _BaseStackConfig, _ELARuntime
 
 
 def _probability(name: str, value: object) -> float:
@@ -39,7 +39,7 @@ def _probability(name: str, value: object) -> float:
 
 
 @dataclass(frozen=True, slots=True)
-class EquivariantLinearAttentionConfig(Unified3DConfig):
+class EquivariantLinearAttentionConfig(_BaseStackConfig):
     """Canonical configuration for the refined equivariant linear-attention stack.
 
     The exact positive feature-map global operator and the single sparse local
@@ -53,7 +53,7 @@ class EquivariantLinearAttentionConfig(Unified3DConfig):
     norm_eps: float = 1e-6
 
     def __post_init__(self) -> None:
-        Unified3DConfig.__post_init__(self)
+        _BaseStackConfig.__post_init__(self)
         _probability("residual_dropout", self.residual_dropout)
         _probability("drop_path_rate", self.drop_path_rate)
         if isinstance(self.norm_eps, bool) or not isinstance(
@@ -65,7 +65,7 @@ class EquivariantLinearAttentionConfig(Unified3DConfig):
             raise ValueError("norm_eps must be finite and positive")
 
     def canonical_contract(self) -> dict[str, object]:
-        contract = Unified3DConfig.canonical_contract(self)
+        contract = _BaseStackConfig.canonical_contract(self)
         contract.update(
             {
                 "architecture": "equivariant_linear_attention",
@@ -310,7 +310,7 @@ def _bounded_modulate_state(
     )
 
 
-class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
+class EquivariantLinearAttentionLayer(_BaseELALayer):
     """Pre-norm equivariant linear-attention layer with norm-gated residuals."""
 
     def __init__(
@@ -424,7 +424,7 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
         activation: _NormGatedIrrepActivation,
         dropout: _EquivariantDropout,
         drop_path: _GraphDropPath,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
     ) -> _ParityState:
         delta = activation(delta, reference)
         delta = dropout(delta)
@@ -437,7 +437,7 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
     def _attention_branch(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         modulation: _BranchModulation | None,
     ) -> _ParityState:
         normalized = self.attention_norm(state)
@@ -495,7 +495,7 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
     def _ffn_branch(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         modulation: _BranchModulation | None,
     ) -> _ParityState:
         normalized = self.ffn_state_norm(state)
@@ -568,13 +568,13 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
 
     def attention_residual(
         self,
-        state: UnifiedSE3State,
-        context: UnifiedSE3Context,
+        state: _ELAHiddenState,
+        context: _ELALayerContext,
         condition: torch.Tensor | None = None,
-    ) -> UnifiedSE3State:
+    ) -> _ELAHiddenState:
         internal = state._to_internal()
         modulation = self._resolve_modulation(condition, context, internal)
-        return UnifiedSE3State._from_internal(
+        return _ELAHiddenState._from_internal(
             self._attention_branch(
                 internal,
                 context,
@@ -584,13 +584,13 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
 
     def ffn_residual(
         self,
-        state: UnifiedSE3State,
-        context: UnifiedSE3Context,
+        state: _ELAHiddenState,
+        context: _ELALayerContext,
         condition: torch.Tensor | None = None,
-    ) -> UnifiedSE3State:
+    ) -> _ELAHiddenState:
         internal = state._to_internal()
         modulation = self._resolve_modulation(condition, context, internal)
-        return UnifiedSE3State._from_internal(
+        return _ELAHiddenState._from_internal(
             self._ffn_branch(
                 internal,
                 context,
@@ -620,7 +620,7 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
     def _forward_internal(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         condition: torch.Tensor | None,
     ) -> tuple[_ParityState, torch.Tensor, torch.Tensor]:
         modulation = self._resolve_modulation(condition, context, state)
@@ -638,7 +638,7 @@ class EquivariantLinearAttentionLayer(UnifiedEquivariantLayer):
         return updated, context.positions + coordinate_delta, coordinate_delta
 
 
-class EquivariantLinearAttentionCore(LayeredCanonicalSE3Core):
+class EquivariantLinearAttentionCore(_ELAStackCore):
     """Stack of refined equivariant linear-attention layers."""
 
     def __init__(
@@ -707,7 +707,7 @@ class EquivariantLinearAttentionCore(LayeredCanonicalSE3Core):
         self.blocks = nn.ModuleList(layers)
 
 
-class EquivariantLinearAttention(UnifiedEquivariantAttention):
+class EquivariantLinearAttention(_ELARuntime):
     """Canonical equivariant linear-attention stack.
 
     Exact global linear attention remains the defining operation. Node

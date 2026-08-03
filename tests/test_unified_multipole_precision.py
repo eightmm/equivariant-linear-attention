@@ -5,8 +5,8 @@ import torch
 
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 
 
@@ -18,7 +18,7 @@ def _complete_edge_index(num_nodes: int, *, device: torch.device) -> torch.Tenso
 
 def test_multipole_core_supports_coordinate_double_backward() -> None:
     torch.manual_seed(211)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=12,
@@ -28,7 +28,7 @@ def test_multipole_core_supports_coordinate_double_backward() -> None:
         local_cutoff=5.0,
         num_rbf=6,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     num_nodes = 5
     node_features = torch.randn(
         num_nodes,
@@ -68,7 +68,7 @@ def test_multipole_core_supports_coordinate_double_backward() -> None:
 def test_multipole_core_cuda_bfloat16_forward_backward() -> None:
     torch.manual_seed(223)
     device = torch.device("cuda")
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e + 1x0o + 1x1o + 1x2e",
         hidden_dim=16,
@@ -78,7 +78,7 @@ def test_multipole_core_cuda_bfloat16_forward_backward() -> None:
         local_cutoff=6.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).to(
+    model = _ELARuntime(config).to(
         device=device,
         dtype=torch.bfloat16,
     )

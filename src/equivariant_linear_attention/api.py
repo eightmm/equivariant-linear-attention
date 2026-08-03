@@ -10,18 +10,11 @@ from .context import ELAFeatures
 from .geometry.radius import radius_graph
 from .kernels import (
     backend_policy,
-    install_triton_backend,
     triton_available,
 )
-from .model.ela import ELA as _CanonicalELA
-from .model.ela import ELAConfig, ELALayer, SparseGeometry
+from .model.ela import ELAConfig, ELALayer, SparseGeometry, _ELAEngine
 
-# Install once at import. Unsupported devices and dtypes continue through the
-# exact PyTorch reference without changing model configuration or checkpoints.
-install_triton_backend()
-
-
-class ELA(_CanonicalELA):
+class ELA(_ELAEngine):
     """Single public equivariant linear-attention model.
 
     Input and output representations are always declared with irreps. Scalar-only
@@ -257,7 +250,7 @@ class ELA(_CanonicalELA):
         if batch._prepared_graph is None:
             raise ValueError("batch is not prepared; call model.prepare(batch) first")
         output = dict(
-            _CanonicalELA.forward(
+            _ELAEngine.forward(
                 self,
                 batch.node_irreps,
                 batch.positions,

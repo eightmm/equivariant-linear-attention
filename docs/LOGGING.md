@@ -1,57 +1,29 @@
-# LOGGING
+# Logging contract
 
-Run tracking and observability.
+The ELA library is tracker-neutral. Importing or running the model does not
+initialize a network client, create a run, print metrics, or mutate a global
+logging configuration. Training applications own their logger and tracker.
 
-## Tracker: Weights & Biases
+The shipped benchmark writes a JSON result when `--output` is supplied:
 
-- Project name:
-- Entity:
-- Mode: `online` (default) / `offline` (HPC w/o net) / `disabled` (debug)
-
-```python
-import wandb
-wandb.init(
-    project=PROJECT, entity=ENTITY,
-    name=run_name, group=group, tags=tags,
-    config=config, resume="allow", id=run_id,
-)
+```bash
+uv run python scripts/benchmark_ela.py \
+  --nodes 4096 --degree 32 --device cuda --dtype bfloat16 \
+  --output artifacts/ela-kernels.json
 ```
 
-- DDP: init on rank 0 only.
+The canonical suite records its environment, Git state, focused-test output,
+benchmark output, and a manifest in one run directory:
 
-## What to Log
+```bash
+bash scripts/run_canonical_ela_suite.sh artifacts/canonical-ela/smoke
+```
 
-Step level:
-- `train/loss`, `train/lr`, `train/grad_norm`
-- `train/throughput_samples_per_sec`
-- `train/gpu_mem_alloc`, `train/gpu_mem_reserved`
+Downstream training logs should at minimum identify the source revision,
+configuration, data/split identity, seed, update count, primary validation
+metric, elapsed time, and peak allocated memory. Test metrics belong only in a
+final evaluation, not adaptive architecture selection.
 
-Epoch / eval:
-- `val/<metric>`, `val/loss`
-- `test/<metric>` (only at final eval)
-
-Artifacts:
-- Config snapshot (yaml)
-- Best checkpoint
-- Eval plots
-
-## Local Logs
-
-- stdout: structured (JSON line or `[step N] key=val`)
-- file: `outputs/logs/<run_id>.log`
-- tqdm: rank 0 only
-
-## Console Discipline
-
-- No `print` for metrics — use logger.
-- No emoji / decoration in log lines.
-- One metric per key; do not concat.
-
-## Resume
-
-- `wandb.init(id=run_id, resume="allow")`
-- Match seed, data version, model version from checkpoint.
-
-## Update Triggers
-
-New metric or removed metric -> update this file + `EVALUATION.md` if it affects reporting.
+Historical Weights & Biases conventions are not a package dependency or current
+default. Retained experiment evidence is indexed by
+[`EXPERIMENTS.md`](EXPERIMENTS.md).

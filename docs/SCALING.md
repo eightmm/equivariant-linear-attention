@@ -24,7 +24,7 @@ Therefore
 
 $$
 \boxed{
-T_{\rm ELA}=O\left(L(N+E)\right)
+T_{\text{ELA}}=O\left(L(N+E)\right)
 }
 $$
 
@@ -82,7 +82,7 @@ A `RefinementRequest` with $S$ outer update steps evaluates the ELA stack once
 per update and once more at the final geometry:
 
 $$
-T_{\rm refine}
+T_{\text{refine}}
 =
 O\left((S+1)L(N+E)\right)
 $$
@@ -107,7 +107,7 @@ No end-to-end linear claim may exclude a rebuild that is actually performed.
 At fixed widths and ranks,
 
 $$
-M_{\rm infer}=O(N+E).
+M_{\text{infer}}=O(N+E).
 $$
 
 This includes node state, graph metadata, geometry, and bounded layer
@@ -118,7 +118,7 @@ workspace.
 Autograd may retain node and edge activations for every depth:
 
 $$
-M_{\rm train}=O\left(L(N+E)\right)
+M_{\text{train}}=O\left(L(N+E)\right)
 $$
 
 up to fixed channel/rank factors.
@@ -129,7 +129,7 @@ Backpropagating through all $S$ refinement steps without recomputation gives a
 conservative bound
 
 $$
-M_{\rm refine,train}
+M_{\text{refine,train}}
 =
 O\left((S+1)L(N+E)\right).
 $$

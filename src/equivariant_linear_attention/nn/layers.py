@@ -26,8 +26,8 @@ from .parity import (
 
 
 @dataclass(frozen=True)
-class UnifiedSE3State:
-    """Public parity-complete hidden state used by one layer.
+class _ELAHiddenState:
+    """Private parity-complete hidden state used by one layer.
 
     The component dimensions are fixed by the canonical hidden carrier:
     ``0e + 0o + 1o + 1e + 2e + 2o``. Positions are deliberately not part of
@@ -42,7 +42,7 @@ class UnifiedSE3State:
     odd_tensor: torch.Tensor
 
     @classmethod
-    def _from_internal(cls, state: _ParityState) -> UnifiedSE3State:
+    def _from_internal(cls, state: _ParityState) -> _ELAHiddenState:
         return cls(
             even_scalar=state.even_scalar,
             odd_scalar=state.odd_scalar,
@@ -64,8 +64,8 @@ class UnifiedSE3State:
 
 
 @dataclass(frozen=True)
-class UnifiedSE3Context:
-    """Geometry and batching data shared by one or more layer calls."""
+class _ELALayerContext:
+    """Private geometry and batching data shared by layer calls."""
 
     positions: torch.Tensor
     normalized_positions: torch.Tensor
@@ -78,10 +78,10 @@ class UnifiedSE3Context:
 
 
 @dataclass(frozen=True)
-class UnifiedSE3LayerOutput:
-    """Output of one layer-level step."""
+class _ELALayerOutput:
+    """Private output of one layer-level step."""
 
-    state: UnifiedSE3State
+    state: _ELAHiddenState
     positions: torch.Tensor
     coordinate_delta: torch.Tensor
 
@@ -258,7 +258,7 @@ def _gate_delta(
     )
 
 
-class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
+class _BaseELALayer(_CanonicalMultipoleBlock):
     """One canonical SE(3) layer with explicit attention and FFN residuals.
 
     The layer preserves the same global/local/tensor-closure equations as the
@@ -325,7 +325,7 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
     def _resolve_modulation(
         self,
         condition: torch.Tensor | None,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         state: _ParityState,
     ) -> _LayerModulation | None:
         if self.conditioner is None:
@@ -344,10 +344,10 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
 
     def attention_residual(
         self,
-        state: UnifiedSE3State,
-        context: UnifiedSE3Context,
+        state: _ELAHiddenState,
+        context: _ELALayerContext,
         condition: torch.Tensor | None = None,
-    ) -> UnifiedSE3State:
+    ) -> _ELAHiddenState:
         internal = state._to_internal()
         modulation = self._resolve_modulation(condition, context, internal)
         updated = self._attention_residual_internal(
@@ -355,36 +355,36 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
             context,
             None if modulation is None else modulation.attention,
         )
-        return UnifiedSE3State._from_internal(updated)
+        return _ELAHiddenState._from_internal(updated)
 
     def ffn_residual(
         self,
-        state: UnifiedSE3State,
-        context: UnifiedSE3Context,
+        state: _ELAHiddenState,
+        context: _ELALayerContext,
         condition: torch.Tensor | None = None,
-    ) -> UnifiedSE3State:
+    ) -> _ELAHiddenState:
         internal = state._to_internal()
         modulation = self._resolve_modulation(condition, context, internal)
         updated = self._ffn_residual_internal(
             internal,
             None if modulation is None else modulation.ffn,
         )
-        return UnifiedSE3State._from_internal(updated)
+        return _ELAHiddenState._from_internal(updated)
 
     def forward(
         self,
-        state: UnifiedSE3State,
-        context: UnifiedSE3Context,
+        state: _ELAHiddenState,
+        context: _ELALayerContext,
         condition: torch.Tensor | None = None,
-    ) -> UnifiedSE3LayerOutput:
+    ) -> _ELALayerOutput:
         internal = state._to_internal()
         updated, positions, coordinate_delta = self._forward_internal(
             internal,
             context,
             condition,
         )
-        return UnifiedSE3LayerOutput(
-            state=UnifiedSE3State._from_internal(updated),
+        return _ELALayerOutput(
+            state=_ELAHiddenState._from_internal(updated),
             positions=positions,
             coordinate_delta=coordinate_delta,
         )
@@ -392,7 +392,7 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
     def _attention_residual_internal(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         modulation: _BranchModulation | None,
     ) -> _ParityState:
         normalized = self.pre_norm(state)
@@ -532,7 +532,7 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
     def _forward_internal(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         condition: torch.Tensor | None,
     ) -> tuple[_ParityState, torch.Tensor, torch.Tensor]:
         modulation = self._resolve_modulation(condition, context, state)
@@ -550,7 +550,7 @@ class UnifiedEquivariantLayer(_CanonicalMultipoleBlock):
         return updated, positions, coordinate_delta
 
 
-class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
+class _ELAStackCore(CanonicalMultipoleSE3Core):
     """Canonical stack implemented as reusable conditioned layer primitives."""
 
     def __init__(
@@ -594,7 +594,7 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
         block_scale = residual_scale_init / sqrt(max(1, num_layers))
         self.blocks = nn.ModuleList(
             [
-                UnifiedEquivariantLayer(
+                _BaseELALayer(
                     scalar_width=hidden_dim,
                     num_heads=num_heads,
                     local_rank=local_rank,
@@ -621,14 +621,14 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
         batch: torch.Tensor,
         graph_layout: PackedGraphLayout,
         neighbors: PackedNeighborGraph,
-    ) -> UnifiedSE3Context:
+    ) -> _ELALayerContext:
         normalized_positions, radius, centered_norm = self._normalized_geometry(
             positions,
             batch,
             graph_layout,
         )
         geometry = self._build_geometry(positions, neighbors)
-        return UnifiedSE3Context(
+        return _ELALayerContext(
             positions=positions,
             normalized_positions=normalized_positions,
             radius=radius,
@@ -642,10 +642,10 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
     def embed_input(
         self,
         node_irreps: torch.Tensor,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         *,
         node_role_id: torch.Tensor | None = None,
-    ) -> UnifiedSE3State:
+    ) -> _ELAHiddenState:
         external = self.input_projection(node_irreps)
         batch = context.batch
         even_scalar = external.even_scalar
@@ -685,7 +685,7 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
         )
         even_tensor = even_tensor + external.even_tensor.to(dtype=even_tensor.dtype)
 
-        return UnifiedSE3State(
+        return _ELAHiddenState(
             even_scalar=even_scalar,
             odd_scalar=external.odd_scalar.to(dtype=even_scalar.dtype)
             + self.initial_multipole_odd_scalar(
@@ -703,7 +703,7 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
             ),
         )
 
-    def project_state(self, state: UnifiedSE3State) -> torch.Tensor:
+    def project_state(self, state: _ELAHiddenState) -> torch.Tensor:
         return self.output_projection(state._to_internal())
 
     def forward_features(
@@ -716,7 +716,7 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
         *,
         node_role_id: torch.Tensor | None = None,
         condition: torch.Tensor | None = None,
-    ) -> tuple[UnifiedSE3State, torch.Tensor, torch.Tensor]:
+    ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor]:
         self._validate_inputs(
             node_irreps,
             positions,
@@ -739,7 +739,7 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
                 context,
                 condition,
             )
-            state = UnifiedSE3State._from_internal(internal)
+            state = _ELAHiddenState._from_internal(internal)
             current_positions = next_positions
             total_delta = total_delta + coordinate_delta.to(dtype=total_delta.dtype)
             if self.coordinate_updates and index + 1 < len(self.blocks):
@@ -787,12 +787,3 @@ class LayeredCanonicalSE3Core(CanonicalMultipoleSE3Core):
             "positions": positions,
             "coordinate_delta": coordinate_delta,
         }
-
-
-__all__ = [
-    "LayeredCanonicalSE3Core",
-    "UnifiedEquivariantLayer",
-    "UnifiedSE3Context",
-    "UnifiedSE3LayerOutput",
-    "UnifiedSE3State",
-]

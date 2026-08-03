@@ -15,9 +15,6 @@ _BACKEND_OVERRIDE: ContextVar[str | None] = ContextVar(
     "ela_kernel_backend_override",
     default=None,
 )
-_BACKEND_INSTALLED = False
-_ORIGINAL_CSR_SUMS: dict[str, object] = {}
-_ORIGINAL_LOCAL_MESSAGE: object | None = None
 
 try:
     import triton
@@ -1272,59 +1269,11 @@ def _csr_sum_many(
     )
 
 
-def install_triton_backend() -> None:
-    """Install optimized primitives into the canonical numerical core once."""
-
-    global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
-    if _BACKEND_INSTALLED:
-        return
-    from ..nn import core, multipoles, parity
-    from .local import triton_local_message
-
-    _ORIGINAL_CSR_SUMS["parity"] = parity._csr_sum
-    _ORIGINAL_CSR_SUMS["core"] = core._csr_sum
-    parity._csr_sum = _trusted_csr_sum
-    core._csr_sum = _trusted_csr_sum
-    if hasattr(multipoles, "_csr_sum"):
-        _ORIGINAL_CSR_SUMS["multipoles"] = multipoles._csr_sum
-        multipoles._csr_sum = _trusted_csr_sum
-
-    block = core._CanonicalMultipoleBlock
-    _ORIGINAL_LOCAL_MESSAGE = block._local_message
-    block._ela_torch_local_message = block._local_message
-    block._local_message = triton_local_message
-    _BACKEND_INSTALLED = True
-
-
-def uninstall_triton_backend() -> None:
-    """Restore the pristine PyTorch primitives after an optional installation."""
-
-    global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
-    if not _BACKEND_INSTALLED:
-        return
-    from ..nn import core, multipoles, parity
-
-    parity._csr_sum = _ORIGINAL_CSR_SUMS["parity"]
-    core._csr_sum = _ORIGINAL_CSR_SUMS["core"]
-    if "multipoles" in _ORIGINAL_CSR_SUMS:
-        multipoles._csr_sum = _ORIGINAL_CSR_SUMS["multipoles"]
-    block = core._CanonicalMultipoleBlock
-    if _ORIGINAL_LOCAL_MESSAGE is not None:
-        block._local_message = _ORIGINAL_LOCAL_MESSAGE
-    if hasattr(block, "_ela_torch_local_message"):
-        delattr(block, "_ela_torch_local_message")
-    _ORIGINAL_CSR_SUMS.clear()
-    _ORIGINAL_LOCAL_MESSAGE = None
-    _BACKEND_INSTALLED = False
-
-
 __all__ = [
     "active_backend",
     "backend_policy",
     "csr_sum",
     "csr_sum_many",
-    "install_triton_backend",
     "kernel_backend",
     "triton_available",
-    "uninstall_triton_backend",
 ]

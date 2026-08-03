@@ -5,8 +5,8 @@ import torch
 
 from equivariant_linear_attention.geometry import Prepared3DGraph, prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 
 
@@ -43,7 +43,7 @@ def _matrix_to_st(value: torch.Tensor) -> torch.Tensor:
 
 
 def _transform_output(
-    model: UnifiedEquivariantAttention,
+    model: _ELARuntime,
     value: torch.Tensor,
     orthogonal: torch.Tensor,
 ) -> torch.Tensor:
@@ -83,7 +83,7 @@ def _transform_output(
 
 
 def test_unified_config_exposes_only_output_representation() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="5x0e",
         output_irreps="2x0e + 1x0o + 2x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
@@ -103,12 +103,12 @@ def test_unified_config_exposes_only_output_representation() -> None:
 
 def test_unified_config_rejects_unsupported_output_degree() -> None:
     with pytest.raises(ValueError, match="l<=2"):
-        Unified3DConfig(input_irreps="3x0e", output_irreps="1x3o")
+        _BaseStackConfig(input_irreps="3x0e", output_irreps="1x3o")
 
 
 def test_relation_cutoff_may_only_narrow_shared_domain() -> None:
     with pytest.raises(ValueError, match="only narrow"):
-        Unified3DConfig(
+        _BaseStackConfig(
             input_irreps="3x0e",
             local_cutoff=4.0,
             relation_cutoffs=(2.0, 5.0),
@@ -134,7 +134,7 @@ def test_prepared_graph_same_device_move_is_identity() -> None:
 
 def test_output_irreps_shape_and_split_contract() -> None:
     torch.manual_seed(4)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="2x0e + 1x0o + 2x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
@@ -143,7 +143,7 @@ def test_output_irreps_shape_and_split_contract() -> None:
         local_rank=2,
         local_cutoff=10.0,
     )
-    model = UnifiedEquivariantAttention(config)
+    model = _ELARuntime(config)
     graph = prepare_3d_graph(
         torch.zeros(6, dtype=torch.long),
         _complete_edge_index(6),
@@ -163,7 +163,7 @@ def test_output_irreps_shape_and_split_contract() -> None:
 
 def test_parity_complete_output_obeys_improper_transform() -> None:
     torch.manual_seed(9)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         output_irreps="1x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o",
         hidden_dim=16,
@@ -172,7 +172,7 @@ def test_parity_complete_output_obeys_improper_transform() -> None:
         local_rank=3,
         local_cutoff=20.0,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     with torch.no_grad():
         for block in model.core.blocks:
             block.local_chiral_scalar_out.weight.fill_(0.2)
@@ -208,7 +208,7 @@ def test_parity_complete_output_obeys_improper_transform() -> None:
 
 def test_unified_forward_and_coordinate_gradients_are_finite() -> None:
     torch.manual_seed(12)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e + 1x0o + 1x1o",
         hidden_dim=16,
@@ -217,7 +217,7 @@ def test_unified_forward_and_coordinate_gradients_are_finite() -> None:
         local_rank=2,
         local_cutoff=10.0,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     node_feats = torch.randn(6, 4, dtype=torch.float64, requires_grad=True)
     pos = torch.randn(6, 3, dtype=torch.float64, requires_grad=True)
     graph = prepare_3d_graph(
@@ -241,7 +241,7 @@ def test_unified_forward_and_coordinate_gradients_are_finite() -> None:
 
 
 def test_relation_metadata_is_packed_once_and_range_checked() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -249,7 +249,7 @@ def test_relation_metadata_is_packed_once_and_range_checked() -> None:
         relation_cutoffs=(2.0, 4.0),
         local_cutoff=4.0,
     )
-    model = UnifiedEquivariantAttention(config)
+    model = _ELARuntime(config)
     batch = torch.zeros(4, dtype=torch.long)
     edge_index = _complete_edge_index(4)
     relation_id = torch.arange(edge_index.shape[1], dtype=torch.long) % 2

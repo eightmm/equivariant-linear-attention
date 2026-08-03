@@ -18,6 +18,10 @@ No public legacy, implicit, AttnRes, conditioned, padded, scalar-only, or
 coordinate-updating model class may be added. Optional capabilities remain
 facades around the same `ELA` and `ELALayer` implementation.
 
+`ELALayer` is the inspectable concrete type used by `ELA.layers`. Users
+construct layers through `ELA`; the layer's hidden-state/context call protocol
+is an implementation boundary, not a second public model invocation API.
+
 ## 1. Representation policy
 
 Input and output representations are declared only with irreps.

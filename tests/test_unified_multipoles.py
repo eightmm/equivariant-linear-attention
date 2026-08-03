@@ -4,8 +4,8 @@ import torch
 
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 from equivariant_linear_attention.nn.multipoles import _c2_cutoff
 
@@ -73,7 +73,7 @@ def _noncoplanar_positions() -> torch.Tensor:
 
 
 def test_unified_contract_records_multipole_complete_path() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="5x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -117,7 +117,7 @@ def test_c2_cutoff_has_zero_value_slope_and_curvature_at_boundary() -> None:
 
 def test_node_multipoles_obey_full_parity_transform() -> None:
     torch.manual_seed(17)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -127,7 +127,7 @@ def test_node_multipoles_obey_full_parity_transform() -> None:
         local_cutoff=10.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).double().eval()
+    model = _ELARuntime(config).double().eval()
     positions = _noncoplanar_positions()
     batch = torch.zeros(positions.shape[0], dtype=torch.long)
     graph = prepare_3d_graph(
@@ -196,7 +196,7 @@ def test_node_multipoles_obey_full_parity_transform() -> None:
 
 def test_even_objective_reaches_new_multipole_and_tensor_paths() -> None:
     torch.manual_seed(29)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -206,7 +206,7 @@ def test_even_objective_reaches_new_multipole_and_tensor_paths() -> None:
         local_cutoff=10.0,
         num_rbf=8,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     positions = _noncoplanar_positions().requires_grad_(True)
     node_features = torch.randn(
         positions.shape[0],
@@ -244,14 +244,14 @@ def test_even_objective_reaches_new_multipole_and_tensor_paths() -> None:
 
 
 def test_local_tensor_routing_uses_one_mass_and_one_value_lane() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         hidden_dim=16,
         num_layers=1,
         num_heads=4,
         local_rank=3,
     )
-    block = UnifiedEquivariantAttention(config).core.blocks[0]
+    block = _ELARuntime(config).core.blocks[0]
 
     assert not hasattr(block, "tensor_local_scalar_out")
     assert hasattr(block, "local_tensor_mix")
@@ -259,14 +259,14 @@ def test_local_tensor_routing_uses_one_mass_and_one_value_lane() -> None:
 
 
 def test_layerscale_is_copy_specific_for_every_irrep_sector() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="3x0e",
         hidden_dim=24,
         num_layers=1,
         num_heads=6,
         local_rank=3,
     )
-    block = UnifiedEquivariantAttention(config).core.blocks[0]
+    block = _ELARuntime(config).core.blocks[0]
 
     assert block.scalar_scale.shape == (24,)
     assert block.odd_scale.shape == (6,)

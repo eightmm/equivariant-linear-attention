@@ -4,8 +4,8 @@ import torch
 
 from equivariant_linear_attention.geometry import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
+    _BaseStackConfig,
+    _ELARuntime,
 )
 
 
@@ -16,7 +16,7 @@ def _complete_edge_index(num_nodes: int) -> torch.Tensor:
 
 
 def test_chiral_bridge_is_deterministic_cyclic_selector() -> None:
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -24,7 +24,7 @@ def test_chiral_bridge_is_deterministic_cyclic_selector() -> None:
         num_heads=4,
         local_rank=3,
     )
-    model = UnifiedEquivariantAttention(config)
+    model = _ELARuntime(config)
 
     expected = torch.tensor(
         [
@@ -43,7 +43,7 @@ def test_chiral_bridge_is_deterministic_cyclic_selector() -> None:
 
 def test_even_only_objective_reaches_chiral_bridge_on_first_backward() -> None:
     torch.manual_seed(23)
-    config = Unified3DConfig(
+    config = _BaseStackConfig(
         input_irreps="4x0e",
         output_irreps="1x0e",
         hidden_dim=16,
@@ -52,7 +52,7 @@ def test_even_only_objective_reaches_chiral_bridge_on_first_backward() -> None:
         local_rank=3,
         local_cutoff=10.0,
     )
-    model = UnifiedEquivariantAttention(config).double()
+    model = _ELARuntime(config).double()
     num_nodes = 6
     batch = torch.zeros(num_nodes, dtype=torch.long)
     graph = prepare_3d_graph(batch, _complete_edge_index(num_nodes))

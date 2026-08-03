@@ -9,6 +9,7 @@ from torch import nn
 from ..geometry.layout import PackedGraphLayout
 from ..geometry.neighbors import PackedNeighborGraph
 from ..irreps import IrrepLayout
+from ..kernels.local import dispatch_local_message
 from .multipoles import (
     NodeMultipoleBank,
     NodeMultipoles,
@@ -391,6 +392,17 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         state: _ParityState,
         geometry: _StaticGeometry,
     ) -> tuple[torch.Tensor, ...]:
+        """Dispatch the canonical local operator through the active backend."""
+
+        return dispatch_local_message(self, state, geometry)
+
+    def _torch_local_message(
+        self,
+        state: _ParityState,
+        geometry: _StaticGeometry,
+    ) -> tuple[torch.Tensor, ...]:
+        """PyTorch numerical reference for the canonical local operator."""
+
         receiver = geometry.receiver
         sender = geometry.sender
         direction = geometry.direction
@@ -510,7 +522,7 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         if self.relation_score_bias is not None:
             if geometry.relation_id is None:
                 raise ValueError(
-                    "relation-aware unified model requires relation metadata"
+                    "relation-aware ELA requires relation metadata"
                 )
             score = score + self.relation_score_bias.to(dtype=dtype)[
                 geometry.relation_id
@@ -912,7 +924,7 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
         if self.num_edge_relations:
             if neighbors.relation_id is None:
                 raise ValueError(
-                    "relation-aware unified model requires relation IDs"
+                    "relation-aware ELA requires relation IDs"
                 )
             relation_id = neighbors.relation_id.to(dtype=torch.long)
             relation_cutoff = self._relation_cutoff_buffer.to(

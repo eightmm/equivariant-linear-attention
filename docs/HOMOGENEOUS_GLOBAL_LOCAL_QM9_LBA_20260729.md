@@ -7,7 +7,7 @@ update
 
 $$
 H_{t+1} =
-\operatorname{FFN}_t\!\left(
+\text{FFN}_t\!\left(
 H_t + G_t(H_t, X)
 + \mathbf{1}[t \in \{0,2\}]S_t(H_t, X, E)
 \right),

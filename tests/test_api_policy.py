@@ -35,6 +35,8 @@ def test_package_root_exposes_one_architecture_layer_and_graph_container() -> No
         "SpatialOperatorAblationModel",
         "UnifiedEquivariantAttention",
         "UnifiedEquivariantLayer",
+        "_ELARuntime",
+        "_BaseELALayer",
         "collate_graphs",
         "prepare_3d_graph",
         "radius_graph",

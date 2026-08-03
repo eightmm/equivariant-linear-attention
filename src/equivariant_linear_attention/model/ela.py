@@ -18,9 +18,9 @@ from ..nn.core import CanonicalMultipoleSE3Core
 from ..nn.fusion import RMSAwareBranchFusion
 from ..nn.heads import EquivariantVectorHead
 from ..nn.layers import (
-    LayeredCanonicalSE3Core,
-    UnifiedSE3Context,
-    UnifiedSE3State,
+    _ELAStackCore,
+    _ELALayerContext,
+    _ELAHiddenState,
     _BranchModulation,
     _LayerModulation,
     _gate_delta,
@@ -34,7 +34,7 @@ from ..nn.parity import (
     _bounded_st,
     _unit_ball,
 )
-from .runtime import UnifiedEquivariantAttention
+from .runtime import _ELARuntime
 from .stack import (
     EquivariantLinearAttentionConfig,
     EquivariantLinearAttentionLayer,
@@ -262,7 +262,7 @@ class ELAConfig:
 
 
 class ELALayer(EquivariantLinearAttentionLayer):
-    """The single public ELA layer with branch-aware global/local fusion."""
+    """Concrete stack-layer type constructed and exposed by :class:`ELA`."""
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -274,7 +274,7 @@ class ELALayer(EquivariantLinearAttentionLayer):
     def _resolve_modulation(
         self,
         condition: torch.Tensor | None,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         state: _ParityState,
     ) -> _LayerModulation | None:
         # A configured capability is genuinely optional per call. In particular,
@@ -286,7 +286,7 @@ class ELALayer(EquivariantLinearAttentionLayer):
     def _attention_branch(
         self,
         state: _ParityState,
-        context: UnifiedSE3Context,
+        context: _ELALayerContext,
         modulation: _BranchModulation | None,
     ) -> _ParityState:
         normalized = self.attention_norm(state)
@@ -359,7 +359,7 @@ class ELALayer(EquivariantLinearAttentionLayer):
         return _state_add(state, total_delta)
 
 
-class _ELACore(LayeredCanonicalSE3Core):
+class _ELACore(_ELAStackCore):
     """Internal stack of the single public ELALayer implementation."""
 
     def __init__(self, config: EquivariantLinearAttentionConfig) -> None:
@@ -405,8 +405,8 @@ class _ELACore(LayeredCanonicalSE3Core):
         )
 
 
-class ELA(UnifiedEquivariantAttention):
-    """The single public equivariant linear-attention architecture.
+class _ELAEngine(_ELARuntime):
+    """Internal engine behind the single public ELA architecture.
 
     Optional features do not create alternative model classes. They are enabled
     by :class:`ELAFeatures` at construction and activated by fields present in
@@ -622,7 +622,7 @@ class ELA(UnifiedEquivariantAttention):
 
     def _coordinate_delta(
         self,
-        state: UnifiedSE3State,
+        state: _ELAHiddenState,
         graph: Prepared3DGraph,
         request: RefinementRequest,
     ) -> torch.Tensor:
@@ -647,7 +647,7 @@ class ELA(UnifiedEquivariantAttention):
         graph: Prepared3DGraph,
         *,
         context: ELAContext | None = None,
-    ) -> tuple[UnifiedSE3State, torch.Tensor, torch.Tensor]:
+    ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor]:
         condition = self.encode_context(
             context,
             graph,
@@ -751,4 +751,4 @@ class ELA(UnifiedEquivariantAttention):
         )
 
 
-__all__ = ["ELA", "ELAConfig", "ELALayer", "SparseGeometry"]
+__all__ = ["ELAConfig", "ELALayer", "SparseGeometry"]
