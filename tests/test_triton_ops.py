@@ -5,8 +5,12 @@ import torch
 
 from equivariant_attention.triton_ops import (
     active_backend,
+    backend_policy,
     csr_sum,
     csr_sum_many,
+    install_triton_backend,
+    kernel_backend,
+    uninstall_triton_backend,
 )
 
 
@@ -50,6 +54,14 @@ def test_csr_sum_many_uses_one_packed_contract() -> None:
     torch.testing.assert_close(actual_scalar, expected_scalar)
 
 
+def test_csr_sum_supports_inference_tensors_without_version_counters() -> None:
+    with torch.inference_mode():
+        value, row_ptr = _fixture()
+        expected = torch.segment_reduce(value, reduce="sum", offsets=row_ptr)
+        actual = csr_sum(value, row_ptr)
+    torch.testing.assert_close(actual, expected)
+
+
 def test_forced_triton_fails_closed_on_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ELA_KERNEL_BACKEND", "triton")
     value, row_ptr = _fixture(torch.float32)
@@ -62,3 +74,94 @@ def test_invalid_backend_policy_is_rejected(monkeypatch: pytest.MonkeyPatch) -> 
     value, row_ptr = _fixture(torch.float32)
     with pytest.raises(ValueError, match="ELA_KERNEL_BACKEND"):
         csr_sum(value, row_ptr)
+
+
+def test_backend_context_is_nested_and_reversible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ELA_KERNEL_BACKEND", "auto")
+    assert backend_policy() == "auto"
+    with kernel_backend("torch"):
+        assert backend_policy() == "torch"
+        with kernel_backend("triton"):
+            assert backend_policy() == "triton"
+        assert backend_policy() == "torch"
+    assert backend_policy() == "auto"
+    with pytest.raises(TypeError, match="string"):
+        with kernel_backend(1):  # type: ignore[arg-type]
+            pass
+    with pytest.raises(ValueError, match="backend policy"):
+        with kernel_backend("invalid"):
+            pass
+
+
+def test_noncontiguous_row_ptr_is_copied_before_reduction() -> None:
+    value = torch.arange(5, dtype=torch.float64).reshape(5, 1)
+    storage = torch.tensor([0, 99, 2, 99, 5], dtype=torch.int64)
+    row_ptr = storage[::2]
+    assert not row_ptr.is_contiguous()
+    expected = torch.segment_reduce(value, reduce="sum", offsets=row_ptr)
+    torch.testing.assert_close(csr_sum(value, row_ptr), expected)
+
+
+def test_low_precision_reference_accumulates_in_fp32() -> None:
+    value = torch.tensor(
+        [4096.0, 1.0, 1.0, 1.0, 1.0, -4096.0],
+        dtype=torch.bfloat16,
+    ).reshape(-1, 1)
+    row_ptr = torch.tensor([0, value.shape[0]])
+    expected = value.float().sum(dim=0, keepdim=True).to(value.dtype)
+    torch.testing.assert_close(csr_sum(value, row_ptr), expected)
+
+
+def test_csr_metadata_and_shapes_fail_closed() -> None:
+    value, row_ptr = _fixture()
+    with pytest.raises(ValueError, match="edge dimension"):
+        csr_sum(torch.tensor(1.0), row_ptr)
+    with pytest.raises(ValueError, match="row_ptr"):
+        csr_sum(value, torch.tensor(0))
+    with pytest.raises(ValueError, match="row_ptr"):
+        csr_sum(value, torch.empty(0, dtype=torch.long))
+    with pytest.raises(TypeError, match="int32 or int64"):
+        csr_sum(value, row_ptr.float())
+    with pytest.raises(ValueError, match="start at zero"):
+        csr_sum(value, torch.tensor([1, 2, 2, 5, 6]))
+    with pytest.raises(ValueError, match="edge count"):
+        csr_sum(value, torch.tensor([0, 2, 2, 5, 5]))
+    with pytest.raises(ValueError, match="nondecreasing"):
+        csr_sum(value, torch.tensor([0, 3, 2, 5, 6]))
+
+    empty_value = value[:0].detach().clone().requires_grad_(True)
+    empty = csr_sum(empty_value, torch.tensor([0, 0, 0]))
+    assert empty.shape == (2, 3)
+    assert empty.requires_grad
+    empty.sum().backward()
+    assert empty_value.grad is not None
+    assert empty_value.grad.shape == empty_value.shape
+
+
+def test_backend_installation_can_be_reversed_without_losing_reference() -> None:
+    from equivariant_attention import canonical_se3, parity_se3
+
+    block = canonical_se3._CanonicalMultipoleBlock
+    assert hasattr(block, "_ela_torch_local_message")
+    try:
+        uninstall_triton_backend()
+        assert not hasattr(block, "_ela_torch_local_message")
+        assert parity_se3._csr_sum is not csr_sum
+    finally:
+        install_triton_backend()
+    assert hasattr(block, "_ela_torch_local_message")
+
+
+def test_csr_sum_many_validates_payload_group() -> None:
+    value, row_ptr = _fixture()
+    assert csr_sum_many((), row_ptr) == ()
+    with pytest.raises(ValueError, match="edge dimension"):
+        csr_sum_many((value, value[:-1]), row_ptr)
+    with pytest.raises(ValueError, match="device and dtype"):
+        csr_sum_many((value, value.float()), row_ptr)
+    with pytest.raises(ValueError, match="edge dimension"):
+        csr_sum_many((torch.tensor(1.0),), row_ptr)
+    with pytest.raises(ValueError, match="nonzero"):
+        csr_sum_many((value.reshape(6, 3, 1)[:, :, :0],), row_ptr)

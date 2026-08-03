@@ -28,6 +28,15 @@ def test_single_graph_batch_is_the_only_model_input() -> None:
     output = model(batch)
     assert output["node_irreps"].shape == (5, 1)
     assert output["graph_irreps"].shape == (1, 1)
+    assert output["node"] is output["node_irreps"]
+    assert output["graph"] is output["graph_irreps"]
+    assert output["graph_mean"] is output["graph_irreps"]
+    assert output["pos"] is output["positions"]
+    assert output["delta"] is output["coordinate_delta"]
+    torch.testing.assert_close(
+        output["graph_sum"],
+        output["node_irreps"].sum(dim=0, keepdim=True),
+    )
     with pytest.raises(TypeError, match="one ELABatch"):
         model(batch.node_irreps)  # type: ignore[arg-type]
 
@@ -44,6 +53,14 @@ def test_ptr_is_the_canonical_graph_membership() -> None:
         batch.batch,
         torch.tensor([0, 0, 1, 1, 1, 1, 1]),
     )
+
+
+def test_empty_graph_is_rejected_at_the_public_container_boundary() -> None:
+    with pytest.raises(ValueError, match="at least one node"):
+        ELABatch(
+            node_irreps=torch.empty(0, 3),
+            positions=torch.empty(0, 3),
+        )
 
 
 def test_from_flat_accepts_graph_major_batch_vector() -> None:
@@ -94,7 +111,7 @@ def test_padded_constructor_packs_and_restores_nodes() -> None:
     restored = batch.restore_nodes(packed)
     assert restored.shape == (2, 4, 1)
     torch.testing.assert_close(restored[mask], packed)
-    torch.testing.assert_close(restored[~mask], torch.zeros(3, 1))
+    torch.testing.assert_close(restored[~mask], restored.new_zeros(3, 1))
 
 
 def test_collate_offsets_edges_and_keeps_training_metadata() -> None:

@@ -1,5 +1,10 @@
 # Model Contract
 
+> **Historical:** this document describes the retired pre-ELA architecture.
+> For the current model contract, use `docs/CANONICAL_ELA.md`,
+> `docs/API_POLICY.md`, and `PROJECT.md`. Commands and symbols below require
+> their recorded Git revision.
+
 ## Scope and domain boundary
 
 `EquivariantAttention` is a domain-agnostic neural operator for unordered 3D

@@ -13,7 +13,11 @@ from .parity_se3 import (
     _st_inner,
     _st_matvec,
 )
-from .triton_ops import active_backend, csr_sum_many
+from .triton_ops import (
+    _trusted_csr_sum_many,
+    _trusted_weighted_gather_reduce_pair,
+    active_backend,
+)
 
 
 def triton_local_message(
@@ -33,22 +37,27 @@ def triton_local_message(
     original = getattr(type(self), "_ela_torch_local_message", None)
     if original is None:
         raise RuntimeError("canonical PyTorch local reference was not installed")
-    if geometry.direction.shape[0] == 0 or active_backend(
+    work_dtype = _compute_dtype(
+        state.even_scalar,
+        state.polar_vector,
+        state.even_tensor,
         geometry.direction,
-        geometry.row_ptr,
-    ) != "triton":
+    )
+    if (
+        geometry.direction.shape[0] == 0
+        or active_backend(
+            geometry.direction,
+            geometry.row_ptr,
+            payload_dtype=work_dtype,
+        )
+        != "triton"
+    ):
         return original(self, state, geometry)
 
     receiver = geometry.receiver
     sender = geometry.sender
     direction = geometry.direction
-    work_dtype = _compute_dtype(
-        state.even_scalar,
-        state.polar_vector,
-        state.even_tensor,
-        direction,
-    )
-    rbf_work = geometry.rbf.to(dtype=work_dtype)
+    rbf = geometry.rbf.to(dtype=state.even_scalar.dtype)
 
     scalar_state = self.scalar_norm(state.even_scalar)
     scalar_query = self.local_scalar_query(scalar_state).to(dtype=work_dtype)
@@ -59,18 +68,18 @@ def triton_local_message(
         self.local_rank,
         1,
     )
-    polar_query = (
-        self.local_polar_query(state.polar_vector) * gates[:, 0]
-    ).to(dtype=work_dtype)
-    polar_key = (
-        self.local_polar_key(state.polar_vector) * gates[:, 1]
-    ).to(dtype=work_dtype)
-    axial_query = (
-        self.local_axial_query(state.axial_vector) * gates[:, 2]
-    ).to(dtype=work_dtype)
-    axial_key = (
-        self.local_axial_key(state.axial_vector) * gates[:, 3]
-    ).to(dtype=work_dtype)
+    polar_query = (self.local_polar_query(state.polar_vector) * gates[:, 0]).to(
+        dtype=work_dtype
+    )
+    polar_key = (self.local_polar_key(state.polar_vector) * gates[:, 1]).to(
+        dtype=work_dtype
+    )
+    axial_query = (self.local_axial_query(state.axial_vector) * gates[:, 2]).to(
+        dtype=work_dtype
+    )
+    axial_key = (self.local_axial_key(state.axial_vector) * gates[:, 3]).to(
+        dtype=work_dtype
+    )
 
     edge_direction = direction[:, None, :].to(dtype=work_dtype)
     unit_direction = _safe_unit_direction(
@@ -121,7 +130,7 @@ def triton_local_message(
     ).sum(dim=-1)
     tensor_mix = self.local_tensor_mix.to(dtype=work_dtype)
     tensor_score = (
-        self.local_tensor_radial_score(rbf_work).to(dtype=work_dtype)
+        self.local_tensor_radial_score(rbf).to(dtype=work_dtype)
         + tensor_mix[0][None, :] * odd_query[receiver] * odd_key[sender]
         + tensor_mix[1][None, :]
         * _st_inner(even_tensor_query[receiver], even_tensor_key[sender])
@@ -134,7 +143,7 @@ def triton_local_message(
     score = (
         scalar_query[receiver] * scalar_key[sender]
         + self.local_score_bias.to(dtype=work_dtype)[None, :]
-        + self.local_radial_score(rbf_work).to(dtype=work_dtype)
+        + self.local_radial_score(rbf).to(dtype=work_dtype)
         + self.local_polar_mix[0].to(dtype=work_dtype)[None, :] * polar_dot
         + self.local_polar_mix[1].to(dtype=work_dtype)[None, :]
         * receiver_polar_axis
@@ -148,98 +157,121 @@ def triton_local_message(
     if self.relation_score_bias is not None:
         if geometry.relation_id is None:
             raise ValueError("relation-aware ELA requires relation metadata")
-        score = score + self.relation_score_bias.to(dtype=work_dtype)[
-            geometry.relation_id
-        ]
+        score = (
+            score + self.relation_score_bias.to(dtype=work_dtype)[geometry.relation_id]
+        )
     positive_gate = torch.exp(3.0 * torch.tanh(score / 3.0))
     raw_weight = geometry.cutoff.to(dtype=work_dtype)[:, None] * positive_gate
 
     # Group 1: normalization statistics stay FP32/FP64.
-    mass, mass_square = csr_sum_many(
+    mass, mass_square = _trusted_csr_sum_many(
         (raw_weight, raw_weight.square()),
         geometry.row_ptr,
+        policy="triton",
+        receiver=receiver,
     )
     denominator = 1.0 + mass
 
     num_nodes = state.even_scalar.shape[0]
-    scalar_value = self.local_scalar_value(state.even_scalar).reshape(
-        num_nodes,
-        self.local_rank,
-        self.head_dim,
-    ).to(dtype=work_dtype)
+    scalar_value = (
+        self.local_scalar_value(state.even_scalar)
+        .reshape(
+            num_nodes,
+            self.local_rank,
+            self.head_dim,
+        )
+        .to(dtype=work_dtype)
+    )
     odd_value = self.local_odd_value(state.odd_scalar).to(dtype=work_dtype)
     polar_value = self.local_polar_value(state.polar_vector).to(dtype=work_dtype)
     axial_value = self.local_axial_value(state.axial_vector).to(dtype=work_dtype)
-    even_tensor_value = self.local_even_tensor_value(
-        state.even_tensor
-    ).to(dtype=work_dtype)
-    odd_tensor_value = self.local_odd_tensor_value(
-        state.odd_tensor
-    ).to(dtype=work_dtype)
-    direction_gate = torch.tanh(
-        self.local_direction_gate(scalar_state)
-    ).reshape(num_nodes, 3, self.local_rank).to(dtype=work_dtype)
+    even_tensor_value = self.local_even_tensor_value(state.even_tensor).to(
+        dtype=work_dtype
+    )
+    odd_tensor_value = self.local_odd_tensor_value(state.odd_tensor).to(
+        dtype=work_dtype
+    )
+    direction_gate = (
+        torch.tanh(self.local_direction_gate(scalar_state))
+        .reshape(num_nodes, 3, self.local_rank)
+        .to(dtype=work_dtype)
+    )
     radial_gate = 2.0 * torch.sigmoid(
-        self.local_radial_value(
-            geometry.rbf.to(dtype=state.even_scalar.dtype)
-        ).reshape(
+        self.local_radial_value(rbf).reshape(
             geometry.rbf.shape[0],
             self.local_rank,
             9,
         )
     ).to(dtype=work_dtype)
-    if self.relation_value_gate is not None:
-        if geometry.relation_id is None:
-            raise ValueError("relation-aware ELA requires relation metadata")
-        radial_gate = radial_gate * (
-            1.0
-            + torch.tanh(
-                self.relation_value_gate.to(dtype=work_dtype)[geometry.relation_id]
-            )
-        )
     weight = raw_weight
     direction_payload = edge_direction
 
-    # Group 2: scalar and pseudoscalar values.
-    scalar_rank, odd_rank = csr_sum_many(
-        (
-            weight.unsqueeze(-1)
-            * radial_gate[..., 0, None]
-            * scalar_value[sender],
-            weight * radial_gate[..., 1] * odd_value[sender],
-        ),
-        geometry.row_ptr,
-    )
-
-    # Group 3: vector values.
-    polar_rank, axial_rank = csr_sum_many(
-        (
-            weight.unsqueeze(-1)
-            * radial_gate[..., 2, None]
-            * polar_value[sender],
-            weight.unsqueeze(-1)
-            * radial_gate[..., 3, None]
-            * axial_value[sender],
-        ),
-        geometry.row_ptr,
-    )
+    if torch.is_grad_enabled():
+        # Training keeps the differentiable reference payload equations.
+        scalar_rank, odd_rank = _trusted_csr_sum_many(
+            (
+                weight.unsqueeze(-1)
+                * radial_gate[..., 0, None]
+                * scalar_value[sender],
+                weight * radial_gate[..., 1] * odd_value[sender],
+            ),
+            geometry.row_ptr,
+            policy="triton",
+            receiver=receiver,
+        )
+        polar_rank, axial_rank = _trusted_csr_sum_many(
+            (
+                weight.unsqueeze(-1)
+                * radial_gate[..., 2, None]
+                * polar_value[sender],
+                weight.unsqueeze(-1)
+                * radial_gate[..., 3, None]
+                * axial_value[sender],
+            ),
+            geometry.row_ptr,
+            policy="triton",
+            receiver=receiver,
+        )
+    else:
+        # Inference fuses sender gather, scalar weighting, and receiver sum so
+        # the four largest edge payloads are never materialized.
+        scalar_rank, odd_rank = _trusted_weighted_gather_reduce_pair(
+            weight,
+            radial_gate,
+            scalar_value,
+            odd_value,
+            sender,
+            geometry.row_ptr,
+            gate_lanes=(0, 1),
+            policy="triton",
+        )
+        polar_rank, axial_rank = _trusted_weighted_gather_reduce_pair(
+            weight,
+            radial_gate,
+            polar_value,
+            axial_value,
+            sender,
+            geometry.row_ptr,
+            gate_lanes=(2, 3),
+            policy="triton",
+        )
 
     # Group 4: symmetric-traceless tensor values.
     direction_tensor = _st_from_vector(direction_payload)
-    even_tensor_rank, odd_tensor_rank = csr_sum_many(
+    even_tensor_rank, odd_tensor_rank = _trusted_csr_sum_many(
         (
             weight.unsqueeze(-1)
             * radial_gate[..., 4, None]
             * (even_tensor_value[sender] + direction_tensor),
-            weight.unsqueeze(-1)
-            * radial_gate[..., 5, None]
-            * odd_tensor_value[sender],
+            weight.unsqueeze(-1) * radial_gate[..., 5, None] * odd_tensor_value[sender],
         ),
         geometry.row_ptr,
+        policy="triton",
+        receiver=receiver,
     )
 
     # Group 5: three directional moments used for chirality.
-    first_direction, second_direction, third_direction = csr_sum_many(
+    first_direction, second_direction, third_direction = _trusted_csr_sum_many(
         tuple(
             weight.unsqueeze(-1)
             * radial_gate[..., 6 + index, None]
@@ -248,6 +280,8 @@ def triton_local_message(
             for index in range(3)
         ),
         geometry.row_ptr,
+        policy="triton",
+        receiver=receiver,
     )
 
     # Normalize in work precision after the compact reductions.
@@ -255,21 +289,11 @@ def triton_local_message(
     odd_rank = odd_rank.to(dtype=work_dtype) / denominator
     polar_rank = polar_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
     axial_rank = axial_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    even_tensor_rank = (
-        even_tensor_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    )
-    odd_tensor_rank = (
-        odd_tensor_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    )
-    first_direction = (
-        first_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    )
-    second_direction = (
-        second_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    )
-    third_direction = (
-        third_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
-    )
+    even_tensor_rank = even_tensor_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
+    odd_tensor_rank = odd_tensor_rank.to(dtype=work_dtype) / denominator.unsqueeze(-1)
+    first_direction = first_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
+    second_direction = second_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
+    third_direction = third_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
 
     chiral_axial = torch.cross(first_direction, second_direction, dim=-1)
     chiral_scalar = (chiral_axial * third_direction).sum(dim=-1)
@@ -283,11 +307,9 @@ def triton_local_message(
     ).reshape(num_nodes, self.num_heads, self.head_dim).to(dtype=work_dtype)
     return (
         scalar_message,
-        self.local_odd_out(odd_rank)
-        + self.local_chiral_scalar_out(chiral_scalar),
+        self.local_odd_out(odd_rank) + self.local_chiral_scalar_out(chiral_scalar),
         self.local_polar_out(polar_rank),
-        self.local_axial_out(axial_rank)
-        + self.local_chiral_axial_out(chiral_axial),
+        self.local_axial_out(axial_rank) + self.local_chiral_axial_out(chiral_axial),
         self.local_even_tensor_out(even_tensor_rank),
         self.local_odd_tensor_out(odd_tensor_rank)
         + self.local_chiral_tensor_out(chiral_tensor),

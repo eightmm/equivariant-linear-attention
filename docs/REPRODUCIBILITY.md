@@ -1,5 +1,9 @@
 # REPRODUCIBILITY
 
+> **Historical:** the commands below belong to retired experiment runners.
+> Current validation uses `scripts/check.sh`, `scripts/benchmark_ela.py`, and
+> `scripts/run_canonical_ela_suite.sh`.
+
 Single-command repro for any reported number.
 
 ## Repro Command
@@ -94,6 +98,12 @@ the high-clipping diagnostic remains unresolved.
   reductions are plausible but not yet isolated as the cause.
 - Some CUDA kernels (atomic add, scatter) can remain nondeterministic in the
   seeded lane.
+- The Triton receiver-CSR kernels use a fixed per-row reduction order, but this
+  does not make the entire ELA stack bitwise deterministic. Global `index_add`
+  and vendor kernels still require strict PyTorch deterministic controls.
+- `prepare_for_inference` preserves the caller's TF32 policy by default.
+  Explicit `allow_tf32=True` changes PyTorch's process-global CUDA math policy
+  and can materially loosen geometric covariance error; record that choice.
 - Mixed precision: results may differ across GPU generations
 - Multi-GPU reduction order
 

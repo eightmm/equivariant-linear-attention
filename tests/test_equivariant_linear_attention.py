@@ -3,7 +3,6 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from equivariant_attention import prepare_3d_graph
 from equivariant_attention.equivariant_linear_attention import (
     EquivariantLinearAttention,
     EquivariantLinearAttentionConfig,
@@ -14,6 +13,7 @@ from equivariant_attention.equivariant_linear_attention import (
     _NormGatedIrrepActivation,
 )
 from equivariant_attention.parity_se3 import _ParityState
+from equivariant_attention.unified import prepare_3d_graph
 
 
 def _state(nodes: int = 5, scalar_width: int = 12, heads: int = 3) -> _ParityState:

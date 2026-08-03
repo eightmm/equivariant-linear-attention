@@ -1,7 +1,12 @@
 # Unified 3D initialization addendum
 
-This note is normative for `UnifiedEquivariantAttention` and refines the
-zero-initialization paragraph in `UNIFIED_3D_CORE.md`.
+> **Internal implementation note.** This records the initialization rationale
+> for a private carrier used beneath `ELA`; it is not a public architecture or
+> API contract. See [CANONICAL_ELA.md](CANONICAL_ELA.md) and
+> [API_POLICY.md](API_POLICY.md) for the normative contract.
+
+The note describes the zero-initialization exception retained by the internal
+`UnifiedEquivariantAttention` carrier.
 
 All ordinary sparse rank-to-head maps remain zero initialized. The one
 exception is the local pseudoscalar rank-to-head bridge. For head `h` and local

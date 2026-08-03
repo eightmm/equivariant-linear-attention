@@ -47,6 +47,12 @@ model = ELA(ELAConfig(...))
 
 A config and direct constructor fields are mutually exclusive.
 
+Task names do not create additional model classes. A flow-matching velocity,
+coordinate score field, or learned coordinate displacement is a node-wise `1o`
+output and is read from `output["node"]`. `output["delta"]` has a narrower
+meaning: it is the bounded coordinate-refinement residual and is not a generic
+vector prediction.
+
 ## 2. Model input policy
 
 `ELA.forward` accepts one `ELABatch`:
@@ -191,6 +197,10 @@ Direct refinement is not a conservative integrator. Conservative forces use
 \[
 F_i=-\nabla_{x_i}E.
 \]
+
+Likewise, a direct `1o` vector output is not automatically conservative. It is
+appropriate for velocity/score/displacement supervision; force conservation
+requires the scalar-potential construction above.
 
 ## 10. Dependency policy
 

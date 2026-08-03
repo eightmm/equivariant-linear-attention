@@ -5,13 +5,15 @@ import torch
 
 from equivariant_attention import (
     IrrepLayout,
-    Unified3DConfig,
-    UnifiedEquivariantAttention,
     matrix_to_st5,
     pack_irreps,
-    prepare_3d_graph,
     split_irreps,
     st5_to_matrix,
+)
+from equivariant_attention.unified import (
+    Unified3DConfig,
+    UnifiedEquivariantAttention,
+    prepare_3d_graph,
 )
 
 

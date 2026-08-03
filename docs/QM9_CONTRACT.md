@@ -1,5 +1,9 @@
 # QM9 Probe Contract
 
+> **Historical:** the QM9 loader and training runner described here are not
+> shipped by the current architecture-only package. Use the recorded Git
+> revision when reproducing these results.
+
 This project uses the PyTorch Geometric QM9 representation processed locally
 with PyG `2.8.0`. Coordinates are the supplied equilibrium 3D geometries. The
 current probe predicts target index 4, `gap`, in `eV`.

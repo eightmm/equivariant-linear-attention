@@ -54,6 +54,8 @@ batch = ELABatch(
 ```
 
 `ptr[g]:ptr[g+1]` is the packed node interval of graph `g`.
+Every `ELABatch` contains at least one node, and packed batches do not admit
+empty graph segments.
 
 Existing graph-major batch IDs can be normalized through:
 
@@ -211,6 +213,15 @@ The built-in builder is exact:
 - small graphs use chunked all-pairs distance tests;
 - larger graphs use a 3D cell list and exact final distance filtering.
 
+Both paths use float64 geometry for float64 coordinates and float32 geometry
+otherwise. This makes float16/bfloat16 topology independent of the dense/cell
+dispatch threshold.
+
+An optional `max_neighbors=k` keeps the nearest distance shells. A tie at the
+k-th distance is retained in full, so the realized degree can exceed `k` only
+for an exact boundary tie. This avoids an index-based choice that would violate
+node-permutation consistency.
+
 It never connects different `ptr` segments. Under bounded spatial density and
 fixed cutoff, the cell-list path has expected `O(N+E)` work. Its worst case can
 still be quadratic.
@@ -252,3 +263,11 @@ output["graph_sum"]  graph-wise sum
 output["pos"]        final positions
 output["delta"]      coordinate displacement
 ```
+
+Structured sectors are recovered from either packed readout with
+`model.split_output(...)`. For example, a model with
+`output_irreps="1x1o"` returns a flow-matching velocity as
+`model.split_output(output["node"])["1o"].squeeze(-2)`, with shape `[N,3]`.
+This node `1o` value is independent of `output["delta"]`: the latter is only the
+optional coordinate-refinement displacement and is zero when no refinement
+request is present.

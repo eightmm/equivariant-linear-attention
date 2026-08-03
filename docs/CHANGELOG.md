@@ -10,6 +10,57 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.23 -> v0.24 (2026-08-02) — replace the remaining forced-Triton
+  first-order `repeat_interleave` gradients with direct multi-output receiver
+  gathers and CSR row broadcasts, and fuse inference sender gather, invariant
+  weighting, radial gating, and receiver reduction for scalar/odd and
+  polar/axial values. impact: the fused kernels preserve the covered full
+  O(3), parity, translation, node/edge permutation, ragged/isolated-row, BF16,
+  VJP, and HVP contracts; higher-order or unused-output gradients retain the
+  differentiable PyTorch fallback. Across the bounded BF16 2x2 screen, forced
+  Triton remains a latency tie/regression (`0.998--1.080x` F+B,
+  `1.003--1.039x` inference) but reduces training peak allocation to
+  `0.839--0.880x` and large-graph inference allocation to `0.843--0.873x`.
+  `auto` therefore remains PyTorch. A separate static prepared
+  `torch.compile` diagnostic reached `0.241x` eager inference and `0.220x`
+  eager ordinary F+B time, while default compiled double backward failed;
+  compiled execution is recommended only inside its measured contract.
+- [model] v0.22 -> v0.23 (2026-08-02) — harden the optional Triton receiver-CSR
+  backend: remove graph-wide `max_degree` from the correctness loop and its CUDA
+  to CPU metadata scan, use runtime row bounds, copy non-contiguous offsets,
+  validate arbitrary raw CSR, retain autograd on empty rows, align native
+  FP16/BF16 radial `Linear` inputs with model parameters, and accumulate raw
+  low-precision CSR payloads in FP32. Add reversible task-local backend policy,
+  restoreable backend installation, and cat-free pair/triple grouped reductions.
+  impact: prior silent edge truncation and stride-dependent wrong results are
+  eliminated; forced Triton now passes parity-complete O(3), typed-relation,
+  permutation, coordinate-refinement, all-local-VJP, native-BF16, and force-HVP
+  CUDA contracts. Short complete-stack BF16 checks at `(N,k)=(512,32)` and
+  `(4096,64)` did not meet the performance gate, so `auto` conservatively remains
+  on the PyTorch reference and no speed or memory promotion is claimed. The
+  inference helper also stops enabling TF32 merely because a CUDA device exists:
+  it preserves process policy by default and changes it only for an explicitly
+  requested CUDA target, preventing order-dependent coordinate-covariance drift.
+  The installed PyTorch reference retains native first-order segment-reduction
+  backward and switches to the differentiable gather only for gradgrad, so
+  backend benchmarking does not penalize the reference path. Forced CUDA
+  coverage now also includes FP16 payloads with int64 CSR offsets.
+- [model] v0.21 -> v0.22 (2026-08-02) — close the repository around the
+  canonical `ELA` / `ELALayer` / `ELABatch` runtime and remove the unreachable
+  pre-ELA model, benchmark-task adapters, experimental runners, and their
+  dedicated tests. impact: the tracked Python surface shrinks by about 72k
+  lines while retaining the exact global-plus-sparse-local core, checkpoint
+  migration, dependency-free batching, and historical result ledger. Also fix
+  inference-created CSR metadata handling, skip needless CPU degree scans,
+  remove a stale Triton relation-value branch that could crash canonical ELA,
+  validate scalar grouped payloads explicitly, register prepared receiver
+  degree metadata before CUDA dispatch, and make capped radius construction
+  retain complete distance-tie shells so self, dense/cell-list, and node
+  permutation contracts agree. Dense and cell radius paths now also share one
+  float32-or-float64 geometry dtype, including for half-precision inputs. Empty
+  public batches fail at construction instead of later graph preparation. CPU
+  fast gate and canonical smoke pass; no accuracy or CUDA performance claim is
+  added.
 - [model] v0.20 -> v0.21 (2026-07-29) — add the opt-in homogeneous
   full-global plus rank-`R` sparse residual, exact explicit-feature GEMM global
   reduction, receiver/reverse CSR local reduction, independent local/global

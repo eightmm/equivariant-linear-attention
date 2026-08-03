@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from equivariant_attention import EquivariantAttention, EquivariantAttentionConfig
 from equivariant_attention.irreps import (
     CartesianIrreps,
     Irrep,
@@ -161,41 +160,3 @@ def test_cartesian_irreps_keeps_its_narrow_legacy_contract() -> None:
         CartesianIrreps.parse("1x1e")
     with pytest.raises(ValueError, match="unsupported irreps term"):
         CartesianIrreps.parse("1x3o")
-
-
-def test_model_exposes_static_layouts_and_binds_canonical_fast_executors() -> None:
-    model = EquivariantAttention(
-        EquivariantAttentionConfig(
-            node_dim=7,
-            input_vector_dim=2,
-            input_tensor_dim=1,
-            hidden_irreps="12x0e + 3x1o + 3x2e",
-            output_irreps="2x0e + 1x1o + 1x2e",
-            num_layers=1,
-            num_heads=3,
-            local_head_counts=(3,),
-            use_gated_local_transport=True,
-            use_cartesian_tensor_product_local_transport=True,
-        )
-    )
-
-    assert model.input_irreps == IrrepLayout.parse("7x0e + 2x1o + 1x2e")
-    assert model.hidden_irrep_layout == IrrepLayout.parse(
-        "12x0e + 3x1o + 3x2e"
-    )
-    assert model.workspace_irreps == IrrepLayout.parse("3x2e")
-    assert model.output_irrep_layout == IrrepLayout.parse(
-        "2x0e + 1x1o + 1x2e"
-    )
-    assert model.tensor_product_plan is not None
-    assert tuple(
-        path.executor for path in model.tensor_product_plan.paths
-    ) == (
-        "vector_passthrough",
-        "vector_direction",
-        "tensor_passthrough",
-        "tensor_direction",
-    )
-    local = model.layers[0].gated_local
-    assert local is not None
-    assert local.tensor_product_plan == model.tensor_product_plan

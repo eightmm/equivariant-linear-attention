@@ -190,6 +190,8 @@ class ELABatch:
             raise ValueError("node_irreps and positions must share one device")
         if not node.is_floating_point() or not pos.is_floating_point():
             raise TypeError("node_irreps and positions must be floating point")
+        if node.shape[0] == 0:
+            raise ValueError("ELABatch requires at least one node")
 
         ptr = self.ptr
         if ptr is None:

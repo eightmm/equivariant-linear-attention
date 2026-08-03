@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import inspect
+from pathlib import Path
 
 import equivariant_attention as ela
 from equivariant_attention import (
@@ -81,3 +84,38 @@ def test_optional_capabilities_stay_in_one_model_and_batch() -> None:
     assert config.canonical_contract()["public_model"] == "ELA"
     assert config.canonical_contract()["public_layer"] == "ELALayer"
     assert ELABatch.__name__ == "ELABatch"
+
+
+def test_every_shipped_core_module_imports_without_optional_dependencies() -> None:
+    package_dir = Path(ela.__file__).resolve().parent
+    modules = sorted(
+        path.stem
+        for path in package_dir.glob("*.py")
+        if path.name != "__init__.py"
+    )
+    for module in modules:
+        importlib.import_module(f"equivariant_attention.{module}")
+
+
+def test_retired_architecture_modules_are_not_shipped() -> None:
+    retired = {
+        "_egnn_baseline",
+        "_matched_vnext_arms",
+        "benchmarking",
+        "config",
+        "diagnostics",
+        "execution",
+        "high_order",
+        "local_streaming",
+        "moment",
+        "multiscale",
+        "neighbor_providers",
+        "pdbbind",
+        "reference_irreps",
+        "reproducibility",
+        "spherical",
+        "tensor_product_executor",
+        "training",
+    }
+    for module in retired:
+        assert importlib.util.find_spec(f"equivariant_attention.{module}") is None

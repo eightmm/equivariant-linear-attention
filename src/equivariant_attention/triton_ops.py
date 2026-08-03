@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
-import weakref
 from math import prod
-from typing import Final, Sequence
+from typing import Final
 
 import torch
 
 _BACKEND_ENV: Final = "ELA_KERNEL_BACKEND"
 _ALLOWED_BACKENDS: Final = frozenset({"auto", "torch", "triton"})
-_MAX_DEGREE_ENV: Final = "ELA_TRITON_MAX_DEGREE"
-_MIN_EDGES_ENV: Final = "ELA_TRITON_MIN_EDGES"
-_MAX_DEGREE_CACHE: dict[
-    int,
-    tuple[weakref.ReferenceType[torch.Tensor], int, int],
-] = {}
+_BACKEND_OVERRIDE: ContextVar[str | None] = ContextVar(
+    "ela_kernel_backend_override",
+    default=None,
+)
 _BACKEND_INSTALLED = False
+_ORIGINAL_CSR_SUMS: dict[str, object] = {}
+_ORIGINAL_LOCAL_MESSAGE: object | None = None
 
 try:
     import triton
@@ -25,111 +27,57 @@ except Exception:  # pragma: no cover - optional runtime dependency
     tl = None
 
 
-def backend_policy() -> str:
-    """Return the requested execution backend policy."""
-
-    value = os.environ.get(_BACKEND_ENV, "auto").strip().lower()
+def _validate_backend_name(value: str, *, source: str) -> str:
+    value = value.strip().lower()
     if value not in _ALLOWED_BACKENDS:
         raise ValueError(
-            f"{_BACKEND_ENV} must be one of {sorted(_ALLOWED_BACKENDS)}, "
-            f"got {value!r}"
+            f"{source} must be one of {sorted(_ALLOWED_BACKENDS)}, got {value!r}"
         )
     return value
+
+
+def backend_policy() -> str:
+    """Return the task-local override or environment backend policy."""
+
+    override = _BACKEND_OVERRIDE.get()
+    if override is not None:
+        return override
+    return _validate_backend_name(
+        os.environ.get(_BACKEND_ENV, "auto"),
+        source=_BACKEND_ENV,
+    )
+
+
+@contextmanager
+def kernel_backend(policy: str) -> Iterator[None]:
+    """Temporarily select one backend without mutating process-global state."""
+
+    if not isinstance(policy, str):
+        raise TypeError("backend policy must be a string")
+    resolved = _validate_backend_name(policy, source="backend policy")
+    token = _BACKEND_OVERRIDE.set(resolved)
+    try:
+        yield
+    finally:
+        _BACKEND_OVERRIDE.reset(token)
 
 
 def triton_available() -> bool:
     return triton is not None and tl is not None
 
 
-def _minimum_triton_edges() -> int:
-    raw = os.environ.get(_MIN_EDGES_ENV, "256")
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{_MIN_EDGES_ENV} must be an integer") from exc
-    if value < 0:
-        raise ValueError(f"{_MIN_EDGES_ENV} must be nonnegative")
-    return value
-
-
-def _max_supported_degree() -> int:
-    raw = os.environ.get(_MAX_DEGREE_ENV, "2048")
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{_MAX_DEGREE_ENV} must be an integer") from exc
-    if value <= 0:
-        raise ValueError(f"{_MAX_DEGREE_ENV} must be positive")
-    return value
-
-
-def register_csr_metadata(row_ptr: torch.Tensor, max_degree: int) -> None:
-    """Register trusted immutable CSR metadata without a device-to-host read."""
-
-    if isinstance(max_degree, bool) or not isinstance(max_degree, int):
-        raise TypeError("max_degree must be an integer")
-    if max_degree < 0:
-        raise ValueError("max_degree must be nonnegative")
-    key = id(row_ptr)
-
-    def remove(_: weakref.ReferenceType[torch.Tensor]) -> None:
-        _MAX_DEGREE_CACHE.pop(key, None)
-
-    if len(_MAX_DEGREE_CACHE) >= 1024:
-        stale = [
-            name
-            for name, entry in _MAX_DEGREE_CACHE.items()
-            if entry[0]() is None
-        ]
-        for name in stale:
-            _MAX_DEGREE_CACHE.pop(name, None)
-        if len(_MAX_DEGREE_CACHE) >= 1024:
-            _MAX_DEGREE_CACHE.clear()
-    _MAX_DEGREE_CACHE[key] = (
-        weakref.ref(row_ptr, remove),
-        row_ptr._version,
-        max_degree,
-    )
-
-
-def _row_ptr_max_degree(row_ptr: torch.Tensor) -> int:
-    entry = _MAX_DEGREE_CACHE.get(id(row_ptr))
-    if (
-        entry is not None
-        and entry[0]() is row_ptr
-        and entry[1] == row_ptr._version
-    ):
-        return entry[2]
-    offsets = tuple(int(value) for value in row_ptr.detach().to("cpu").tolist())
-    degree = (
-        0
-        if len(offsets) <= 1
-        else max(
-            stop - start
-            for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
-        )
-    )
-    register_csr_metadata(row_ptr, degree)
-    return degree
-
-
-def _compile_degree(max_degree: int) -> int:
-    if max_degree <= 1:
-        return 1
-    if triton is None:
-        return 1 << (max_degree - 1).bit_length()
-    return triton.next_power_of_2(max_degree)
-
-
 def _basic_triton_support(
     value: torch.Tensor,
     row_ptr: torch.Tensor,
+    *,
+    payload_dtype: torch.dtype | None = None,
 ) -> bool:
+    dtype = value.dtype if payload_dtype is None else payload_dtype
     return (
         triton_available()
         and value.device.type == "cuda"
         and row_ptr.device == value.device
-        and value.dtype in {torch.float16, torch.bfloat16, torch.float32}
+        and dtype in {torch.float16, torch.bfloat16, torch.float32}
         and row_ptr.dtype in {torch.int32, torch.int64}
     )
 
@@ -137,53 +85,58 @@ def _basic_triton_support(
 def _can_use_triton(
     value: torch.Tensor,
     row_ptr: torch.Tensor,
-    max_degree: int,
+    *,
+    policy: str,
+    payload_dtype: torch.dtype | None = None,
 ) -> bool:
-    policy = backend_policy()
     if policy == "torch":
         return False
-    minimum_size = policy == "triton" or (
-        value.shape[0] >= _minimum_triton_edges()
-    )
-    supported = (
-        _basic_triton_support(value, row_ptr)
-        and max_degree <= _max_supported_degree()
-        and minimum_size
+    supported = _basic_triton_support(
+        value,
+        row_ptr,
+        payload_dtype=payload_dtype,
     )
     if policy == "triton" and not supported:
         raise RuntimeError(
-            "Triton CSR reduction was forced but the current device, dtype, or "
-            "maximum degree is unsupported"
+            "Triton CSR reduction was forced but the current device or dtype "
+            "is unsupported"
         )
-    return supported
+    # ``auto`` stays on the numerical reference until a complete-stack
+    # hardware/runtime regime passes the documented promotion gate. Forced
+    # Triton remains available for contract tests and explicit benchmarks.
+    return supported and policy == "triton"
 
 
 def active_backend(
     value: torch.Tensor,
     row_ptr: torch.Tensor,
     *,
-    max_degree: int | None = None,
+    payload_dtype: torch.dtype | None = None,
 ) -> str:
     """Return the backend that would execute this CSR reduction."""
 
     policy = backend_policy()
     if policy == "torch":
         return "torch"
-    if not _basic_triton_support(value, row_ptr):
+    if not _basic_triton_support(
+        value,
+        row_ptr,
+        payload_dtype=payload_dtype,
+    ):
         if policy == "triton":
             raise RuntimeError(
                 "Triton CSR reduction was forced but the current device or "
                 "dtype is unsupported"
             )
         return "torch"
-    resolved_degree = (
-        _row_ptr_max_degree(row_ptr)
-        if max_degree is None
-        else int(max_degree)
-    )
     return (
         "triton"
-        if _can_use_triton(value, row_ptr, resolved_degree)
+        if _can_use_triton(
+            value,
+            row_ptr,
+            policy=policy,
+            payload_dtype=payload_dtype,
+        )
         else "torch"
     )
 
@@ -196,7 +149,6 @@ if triton_available():
         row_ptr,
         output_ptr,
         num_features: tl.constexpr,
-        compile_degree: tl.constexpr,
         block_edges: tl.constexpr,
         block_features: tl.constexpr,
     ):
@@ -207,14 +159,15 @@ if triton_available():
         start = tl.load(row_ptr + row).to(tl.int64)
         stop = tl.load(row_ptr + row + 1).to(tl.int64)
         accumulator = tl.zeros((block_features,), dtype=tl.float32)
-        for base in range(0, compile_degree, block_edges):
+        for base in tl.range(
+            0,
+            stop - start,
+            block_edges,
+            loop_unroll_factor=1,
+        ):
             edge = start + base + tl.arange(0, block_edges)
             edge_mask = edge < stop
-            pointer = (
-                value_ptr
-                + edge[:, None] * num_features
-                + feature[None, :]
-            )
+            pointer = value_ptr + edge[:, None] * num_features + feature[None, :]
             loaded = tl.load(
                 pointer,
                 mask=edge_mask[:, None] & feature_mask[None, :],
@@ -227,6 +180,412 @@ if triton_available():
             mask=feature_mask,
         )
 
+    @triton.jit
+    def _csr_sum_pair_kernel(
+        value0_ptr,
+        value1_ptr,
+        row_ptr,
+        output0_ptr,
+        output1_ptr,
+        num_features0: tl.constexpr,
+        num_features1: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        logical_block = tl.program_id(1)
+        blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
+        start = tl.load(row_ptr + row).to(tl.int64)
+        stop = tl.load(row_ptr + row + 1).to(tl.int64)
+
+        if logical_block < blocks0:
+            feature = logical_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < num_features0
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                loaded = tl.load(
+                    value0_ptr + edge[:, None] * num_features0 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                accumulator += tl.sum(loaded, axis=0)
+            tl.store(
+                output0_ptr + row * num_features0 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+        else:
+            local_block = logical_block - blocks0
+            feature = local_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < num_features1
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                loaded = tl.load(
+                    value1_ptr + edge[:, None] * num_features1 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                accumulator += tl.sum(loaded, axis=0)
+            tl.store(
+                output1_ptr + row * num_features1 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+
+    @triton.jit
+    def _csr_sum_triple_kernel(
+        value0_ptr,
+        value1_ptr,
+        value2_ptr,
+        row_ptr,
+        output0_ptr,
+        output1_ptr,
+        output2_ptr,
+        num_features0: tl.constexpr,
+        num_features1: tl.constexpr,
+        num_features2: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        logical_block = tl.program_id(1)
+        blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
+        blocks1: tl.constexpr = tl.cdiv(num_features1, block_features)
+        start = tl.load(row_ptr + row).to(tl.int64)
+        stop = tl.load(row_ptr + row + 1).to(tl.int64)
+
+        if logical_block < blocks0:
+            feature = logical_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < num_features0
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                loaded = tl.load(
+                    value0_ptr + edge[:, None] * num_features0 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                accumulator += tl.sum(loaded, axis=0)
+            tl.store(
+                output0_ptr + row * num_features0 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+        elif logical_block < blocks0 + blocks1:
+            local_block = logical_block - blocks0
+            feature = local_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < num_features1
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                loaded = tl.load(
+                    value1_ptr + edge[:, None] * num_features1 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                accumulator += tl.sum(loaded, axis=0)
+            tl.store(
+                output1_ptr + row * num_features1 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+        else:
+            local_block = logical_block - blocks0 - blocks1
+            feature = local_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < num_features2
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                loaded = tl.load(
+                    value2_ptr + edge[:, None] * num_features2 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                accumulator += tl.sum(loaded, axis=0)
+            tl.store(
+                output2_ptr + row * num_features2 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+
+    @triton.jit
+    def _weighted_gather_reduce_pair_kernel(  # pragma: no cover - Triton JIT
+        weight_ptr,
+        radial_gate_ptr,
+        source0_ptr,
+        source1_ptr,
+        sender_ptr,
+        row_ptr,
+        output0_ptr,
+        output1_ptr,
+        rank: tl.constexpr,
+        components0: tl.constexpr,
+        components1: tl.constexpr,
+        gate_lane0: tl.constexpr,
+        gate_lane1: tl.constexpr,
+        num_gates: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        logical_block = tl.program_id(1)
+        width0: tl.constexpr = rank * components0
+        width1: tl.constexpr = rank * components1
+        blocks0: tl.constexpr = tl.cdiv(width0, block_features)
+        start = tl.load(row_ptr + row).to(tl.int64)
+        stop = tl.load(row_ptr + row + 1).to(tl.int64)
+
+        if logical_block < blocks0:
+            feature = logical_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < width0
+            rank_index = feature // components0
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                sender = tl.load(sender_ptr + edge, mask=edge_mask, other=0).to(
+                    tl.int64
+                )
+                coefficient = tl.load(
+                    weight_ptr + edge[:, None] * rank + rank_index[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ) * tl.load(
+                    radial_gate_ptr
+                    + (edge[:, None] * rank + rank_index[None, :]) * num_gates
+                    + gate_lane0,
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                )
+                source = tl.load(
+                    source0_ptr + sender[:, None] * width0 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                )
+                accumulator += tl.sum(coefficient.to(tl.float32) * source, axis=0)
+            tl.store(
+                output0_ptr + row * width0 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+        else:
+            local_block = logical_block - blocks0
+            feature = local_block * block_features + tl.arange(0, block_features)
+            feature_mask = feature < width1
+            rank_index = feature // components1
+            accumulator = tl.zeros((block_features,), dtype=tl.float32)
+            for base in tl.range(
+                0,
+                stop - start,
+                block_edges,
+                loop_unroll_factor=1,
+            ):
+                edge = start + base + tl.arange(0, block_edges)
+                edge_mask = edge < stop
+                sender = tl.load(sender_ptr + edge, mask=edge_mask, other=0).to(
+                    tl.int64
+                )
+                coefficient = tl.load(
+                    weight_ptr + edge[:, None] * rank + rank_index[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                ) * tl.load(
+                    radial_gate_ptr
+                    + (edge[:, None] * rank + rank_index[None, :]) * num_gates
+                    + gate_lane1,
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                )
+                source = tl.load(
+                    source1_ptr + sender[:, None] * width1 + feature[None, :],
+                    mask=edge_mask[:, None] & feature_mask[None, :],
+                    other=0.0,
+                )
+                accumulator += tl.sum(coefficient.to(tl.float32) * source, axis=0)
+            tl.store(
+                output1_ptr + row * width1 + feature,
+                accumulator,
+                mask=feature_mask,
+            )
+
+    @triton.jit
+    def _receiver_gather_pair_kernel(  # pragma: no cover - Triton JIT
+        grad0_ptr,
+        grad1_ptr,
+        receiver_ptr,
+        output0_ptr,
+        output1_ptr,
+        num_edges: tl.constexpr,
+        num_features0: tl.constexpr,
+        num_features1: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        edge = tl.program_id(0) * block_edges + tl.arange(0, block_edges)
+        edge_mask = edge < num_edges
+        receiver = tl.load(receiver_ptr + edge, mask=edge_mask, other=0).to(tl.int64)
+        logical_block = tl.program_id(1)
+        blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
+        if logical_block < blocks0:
+            feature = logical_block * block_features + tl.arange(0, block_features)
+            mask = edge_mask[:, None] & (feature[None, :] < num_features0)
+            value = tl.load(
+                grad0_ptr + receiver[:, None] * num_features0 + feature[None, :],
+                mask=mask,
+            )
+            tl.store(
+                output0_ptr + edge[:, None] * num_features0 + feature[None, :],
+                value,
+                mask=mask,
+            )
+        else:
+            feature = (
+                logical_block - blocks0
+            ) * block_features + tl.arange(0, block_features)
+            mask = edge_mask[:, None] & (feature[None, :] < num_features1)
+            value = tl.load(
+                grad1_ptr + receiver[:, None] * num_features1 + feature[None, :],
+                mask=mask,
+            )
+            tl.store(
+                output1_ptr + edge[:, None] * num_features1 + feature[None, :],
+                value,
+                mask=mask,
+            )
+
+    @triton.jit
+    def _receiver_gather_triple_kernel(  # pragma: no cover - Triton JIT
+        grad0_ptr,
+        grad1_ptr,
+        grad2_ptr,
+        receiver_ptr,
+        output0_ptr,
+        output1_ptr,
+        output2_ptr,
+        num_edges: tl.constexpr,
+        num_features0: tl.constexpr,
+        num_features1: tl.constexpr,
+        num_features2: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        edge = tl.program_id(0) * block_edges + tl.arange(0, block_edges)
+        edge_mask = edge < num_edges
+        receiver = tl.load(receiver_ptr + edge, mask=edge_mask, other=0).to(tl.int64)
+        logical_block = tl.program_id(1)
+        blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
+        blocks1: tl.constexpr = tl.cdiv(num_features1, block_features)
+        if logical_block < blocks0:
+            feature = logical_block * block_features + tl.arange(0, block_features)
+            mask = edge_mask[:, None] & (feature[None, :] < num_features0)
+            value = tl.load(
+                grad0_ptr + receiver[:, None] * num_features0 + feature[None, :],
+                mask=mask,
+            )
+            tl.store(
+                output0_ptr + edge[:, None] * num_features0 + feature[None, :],
+                value,
+                mask=mask,
+            )
+        elif logical_block < blocks0 + blocks1:
+            feature = (
+                logical_block - blocks0
+            ) * block_features + tl.arange(0, block_features)
+            mask = edge_mask[:, None] & (feature[None, :] < num_features1)
+            value = tl.load(
+                grad1_ptr + receiver[:, None] * num_features1 + feature[None, :],
+                mask=mask,
+            )
+            tl.store(
+                output1_ptr + edge[:, None] * num_features1 + feature[None, :],
+                value,
+                mask=mask,
+            )
+        else:
+            feature = (
+                logical_block - blocks0 - blocks1
+            ) * block_features + tl.arange(0, block_features)
+            mask = edge_mask[:, None] & (feature[None, :] < num_features2)
+            value = tl.load(
+                grad2_ptr + receiver[:, None] * num_features2 + feature[None, :],
+                mask=mask,
+            )
+            tl.store(
+                output2_ptr + edge[:, None] * num_features2 + feature[None, :],
+                value,
+                mask=mask,
+            )
+
+    @triton.jit
+    def _csr_broadcast_kernel(  # pragma: no cover - Triton JIT
+        grad_ptr,
+        row_ptr,
+        output_ptr,
+        num_features: tl.constexpr,
+        block_edges: tl.constexpr,
+        block_features: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        feature = tl.program_id(1) * block_features + tl.arange(0, block_features)
+        feature_mask = feature < num_features
+        value = tl.load(
+            grad_ptr + row * num_features + feature,
+            mask=feature_mask,
+            other=0.0,
+        )
+        start = tl.load(row_ptr + row).to(tl.int64)
+        stop = tl.load(row_ptr + row + 1).to(tl.int64)
+        for base in tl.range(
+            0,
+            stop - start,
+            block_edges,
+            loop_unroll_factor=1,
+        ):
+            edge = start + base + tl.arange(0, block_edges)
+            mask = (edge[:, None] < stop) & feature_mask[None, :]
+            tl.store(
+                output_ptr + edge[:, None] * num_features + feature[None, :],
+                value[None, :],
+                mask=mask,
+            )
+
 
 class _TorchCsrSum(torch.autograd.Function):
     @staticmethod
@@ -235,8 +594,17 @@ class _TorchCsrSum(torch.autograd.Function):
         value: torch.Tensor,
         row_ptr: torch.Tensor,
     ) -> torch.Tensor:
-        result = torch.segment_reduce(value, reduce="sum", offsets=row_ptr)
-        ctx.save_for_backward(row_ptr)
+        reduce_value = (
+            value.float() if value.dtype in {torch.float16, torch.bfloat16} else value
+        )
+        reduced = torch.segment_reduce(
+            reduce_value,
+            reduce="sum",
+            offsets=row_ptr,
+        )
+        result = reduced.to(dtype=value.dtype)
+        if ctx.needs_input_grad[0]:
+            ctx.save_for_backward(value, reduced, row_ptr)
         ctx.input_size = value.shape[0]
         return result
 
@@ -245,14 +613,30 @@ class _TorchCsrSum(torch.autograd.Function):
         ctx: object,
         grad_output: torch.Tensor,
     ) -> tuple[torch.Tensor, None]:
-        (row_ptr,) = ctx.saved_tensors
-        counts = (row_ptr[1:] - row_ptr[:-1]).to(dtype=torch.long)
-        grad_value = torch.repeat_interleave(
-            grad_output,
-            counts,
-            dim=0,
-            output_size=ctx.input_size,
-        )
+        value, reduced, row_ptr = ctx.saved_tensors
+        if torch.is_grad_enabled():
+            counts = (row_ptr[1:] - row_ptr[:-1]).to(dtype=torch.long)
+            grad_value = torch.repeat_interleave(
+                grad_output,
+                counts,
+                dim=0,
+                output_size=ctx.input_size,
+            )
+        else:
+            # Match the pristine reference: ordinary first-order training uses
+            # PyTorch's native fast backward. The differentiable gather above
+            # is reserved for create_graph=True, where native segment-reduce
+            # does not provide the required gradgrad contract.
+            promoted = value.dtype in {torch.float16, torch.bfloat16}
+            reduce_value = value.float() if promoted else value
+            reduce_grad = grad_output.float() if promoted else grad_output
+            grad_value = torch.ops.aten._segment_reduce_backward.default(
+                reduce_grad,
+                reduced,
+                reduce_value,
+                "sum",
+                offsets=row_ptr,
+            ).to(dtype=value.dtype)
         return grad_value, None
 
 
@@ -262,7 +646,6 @@ class _TritonCsrSum(torch.autograd.Function):
         ctx: object,
         value: torch.Tensor,
         row_ptr: torch.Tensor,
-        max_degree: int,
     ) -> torch.Tensor:
         if triton is None:
             raise RuntimeError("Triton is unavailable")
@@ -276,19 +659,17 @@ class _TritonCsrSum(torch.autograd.Function):
             dtype=value.dtype,
         )
         if rows and features:
-            degree_bucket = _compile_degree(max_degree)
             block_features = min(32, triton.next_power_of_2(features))
-            block_edges = min(64, degree_bucket)
+            block_edges = 64
             grid = (rows, triton.cdiv(features, block_features))
             _csr_sum_kernel[grid](
                 flattened,
                 row_ptr,
                 output,
                 num_features=features,
-                compile_degree=degree_bucket,
-                block_edges=max(1, block_edges),
+                block_edges=block_edges,
                 block_features=block_features,
-                num_warps=4 if block_edges <= 128 else 8,
+                num_warps=4,
             )
         ctx.save_for_backward(row_ptr)
         ctx.input_size = value.shape[0]
@@ -298,54 +679,541 @@ class _TritonCsrSum(torch.autograd.Function):
     def backward(
         ctx: object,
         grad_output: torch.Tensor,
-    ) -> tuple[torch.Tensor, None, None]:
+    ) -> tuple[torch.Tensor, None]:
         (row_ptr,) = ctx.saved_tensors
+        if torch.is_grad_enabled():
+            counts = (row_ptr[1:] - row_ptr[:-1]).to(dtype=torch.long)
+            grad_value = torch.repeat_interleave(
+                grad_output,
+                counts,
+                dim=0,
+                output_size=ctx.input_size,
+            )
+        else:
+            if triton is None:  # pragma: no cover - guarded by forward
+                raise RuntimeError("Triton is unavailable")
+            contiguous = grad_output.contiguous().reshape(grad_output.shape[0], -1)
+            features = contiguous.shape[1]
+            grad_value = torch.empty(
+                (ctx.input_size, features),
+                device=grad_output.device,
+                dtype=grad_output.dtype,
+            )
+            if ctx.input_size and features:
+                block_features = min(32, triton.next_power_of_2(features))
+                grid = (
+                    row_ptr.numel() - 1,
+                    triton.cdiv(features, block_features),
+                )
+                _csr_broadcast_kernel[grid](
+                    contiguous,
+                    row_ptr,
+                    grad_value,
+                    num_features=features,
+                    block_edges=128,
+                    block_features=block_features,
+                    num_warps=1,
+                )
+            grad_value = grad_value.reshape(ctx.input_size, *grad_output.shape[1:])
+        return grad_value, None
+
+
+def _receiver_gradients(
+    grad_outputs: Sequence[torch.Tensor | None],
+    row_ptr: torch.Tensor,
+    *,
+    input_size: int,
+    receiver: torch.Tensor | None,
+) -> tuple[torch.Tensor | None, ...]:
+    active = tuple(
+        (index, grad_output)
+        for index, grad_output in enumerate(grad_outputs)
+        if grad_output is not None
+    )
+    if not active:
+        return tuple(None for _ in grad_outputs)
+
+    widths = tuple(grad_output.shape[1] for _, grad_output in active)
+    packed = (
+        active[0][1]
+        if len(active) == 1
+        else torch.cat(tuple(grad_output for _, grad_output in active), dim=-1)
+    )
+    if receiver is not None:
+        gathered = packed.index_select(0, receiver)
+    else:
         counts = (row_ptr[1:] - row_ptr[:-1]).to(dtype=torch.long)
-        grad_value = torch.repeat_interleave(
-            grad_output,
+        gathered = torch.repeat_interleave(
+            packed,
             counts,
             dim=0,
-            output_size=ctx.input_size,
+            output_size=input_size,
         )
-        return grad_value, None, None
+    parts = torch.split(gathered, widths, dim=-1)
+    gradients: list[torch.Tensor | None] = [None] * len(grad_outputs)
+    for (index, _), part in zip(active, parts, strict=True):
+        gradients[index] = part
+    return tuple(gradients)
+
+
+def _triton_receiver_gradients(  # pragma: no cover - CUDA-only dispatch
+    grad_outputs: Sequence[torch.Tensor],
+    receiver: torch.Tensor,
+    *,
+    input_size: int,
+) -> tuple[torch.Tensor, ...]:
+    if triton is None:
+        raise RuntimeError("Triton is unavailable")
+    contiguous = tuple(grad_output.contiguous() for grad_output in grad_outputs)
+    widths = tuple(grad_output.shape[1] for grad_output in contiguous)
+    outputs = tuple(
+        torch.empty(
+            (input_size, width),
+            device=grad_output.device,
+            dtype=grad_output.dtype,
+        )
+        for grad_output, width in zip(contiguous, widths, strict=True)
+    )
+    if input_size == 0:
+        return outputs
+    block_edges = 128
+    block_features = min(32, triton.next_power_of_2(max(widths)))
+    grid = (
+        triton.cdiv(input_size, block_edges),
+        sum(triton.cdiv(width, block_features) for width in widths),
+    )
+    if len(contiguous) == 2:
+        _receiver_gather_pair_kernel[grid](
+            contiguous[0],
+            contiguous[1],
+            receiver,
+            outputs[0],
+            outputs[1],
+            num_edges=input_size,
+            num_features0=widths[0],
+            num_features1=widths[1],
+            block_edges=block_edges,
+            block_features=block_features,
+            num_warps=1,
+        )
+    elif len(contiguous) == 3:
+        _receiver_gather_triple_kernel[grid](
+            contiguous[0],
+            contiguous[1],
+            contiguous[2],
+            receiver,
+            outputs[0],
+            outputs[1],
+            outputs[2],
+            num_edges=input_size,
+            num_features0=widths[0],
+            num_features1=widths[1],
+            num_features2=widths[2],
+            block_edges=block_edges,
+            block_features=block_features,
+            num_warps=1,
+        )
+    else:  # pragma: no cover - internal arity contract
+        raise ValueError("Triton receiver gather supports pair or triple payloads")
+    return outputs
+
+
+class _TritonCsrSumPair(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx: object,
+        value0: torch.Tensor,
+        value1: torch.Tensor,
+        row_ptr: torch.Tensor,
+        receiver: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if triton is None:
+            raise RuntimeError("Triton is unavailable")
+        ctx.set_materialize_grads(False)
+        value0 = value0.contiguous()
+        value1 = value1.contiguous()
+        rows = row_ptr.numel() - 1
+        features0 = value0.shape[1]
+        features1 = value1.shape[1]
+        output0 = torch.empty(
+            (rows, features0),
+            device=value0.device,
+            dtype=value0.dtype,
+        )
+        output1 = torch.empty(
+            (rows, features1),
+            device=value1.device,
+            dtype=value1.dtype,
+        )
+        if rows:
+            block_features = 32
+            grid = (
+                rows,
+                triton.cdiv(features0, block_features)
+                + triton.cdiv(features1, block_features),
+            )
+            _csr_sum_pair_kernel[grid](
+                value0,
+                value1,
+                row_ptr,
+                output0,
+                output1,
+                num_features0=features0,
+                num_features1=features1,
+                block_edges=64,
+                block_features=block_features,
+                num_warps=4,
+            )
+        if receiver is None:
+            ctx.save_for_backward(row_ptr)
+        else:
+            ctx.save_for_backward(row_ptr, receiver)
+        ctx.has_receiver = receiver is not None
+        ctx.input_size = value0.shape[0]
+        return output0, output1
+
+    @staticmethod
+    def backward(
+        ctx: object,
+        grad_output0: torch.Tensor | None,
+        grad_output1: torch.Tensor | None,
+    ) -> tuple[
+        torch.Tensor | None,
+        torch.Tensor | None,
+        None,
+        None,
+    ]:
+        row_ptr = ctx.saved_tensors[0]
+        receiver = ctx.saved_tensors[1] if ctx.has_receiver else None
+        if (
+            not torch.is_grad_enabled()
+            and receiver is not None
+            and grad_output0 is not None
+            and grad_output1 is not None
+        ):
+            gradients = _triton_receiver_gradients(
+                (grad_output0, grad_output1),
+                receiver,
+                input_size=ctx.input_size,
+            )
+        else:
+            gradients = _receiver_gradients(
+                (grad_output0, grad_output1),
+                row_ptr,
+                input_size=ctx.input_size,
+                receiver=receiver,
+            )
+        return gradients[0], gradients[1], None, None
+
+
+class _TritonCsrSumTriple(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx: object,
+        value0: torch.Tensor,
+        value1: torch.Tensor,
+        value2: torch.Tensor,
+        row_ptr: torch.Tensor,
+        receiver: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if triton is None:
+            raise RuntimeError("Triton is unavailable")
+        ctx.set_materialize_grads(False)
+        value0 = value0.contiguous()
+        value1 = value1.contiguous()
+        value2 = value2.contiguous()
+        rows = row_ptr.numel() - 1
+        features0 = value0.shape[1]
+        features1 = value1.shape[1]
+        features2 = value2.shape[1]
+        output0 = torch.empty(
+            (rows, features0),
+            device=value0.device,
+            dtype=value0.dtype,
+        )
+        output1 = torch.empty(
+            (rows, features1),
+            device=value1.device,
+            dtype=value1.dtype,
+        )
+        output2 = torch.empty(
+            (rows, features2),
+            device=value2.device,
+            dtype=value2.dtype,
+        )
+        if rows:
+            block_features = 32
+            grid = (
+                rows,
+                triton.cdiv(features0, block_features)
+                + triton.cdiv(features1, block_features)
+                + triton.cdiv(features2, block_features),
+            )
+            _csr_sum_triple_kernel[grid](
+                value0,
+                value1,
+                value2,
+                row_ptr,
+                output0,
+                output1,
+                output2,
+                num_features0=features0,
+                num_features1=features1,
+                num_features2=features2,
+                block_edges=64,
+                block_features=block_features,
+                num_warps=4,
+            )
+        if receiver is None:
+            ctx.save_for_backward(row_ptr)
+        else:
+            ctx.save_for_backward(row_ptr, receiver)
+        ctx.has_receiver = receiver is not None
+        ctx.input_size = value0.shape[0]
+        return output0, output1, output2
+
+    @staticmethod
+    def backward(
+        ctx: object,
+        grad_output0: torch.Tensor | None,
+        grad_output1: torch.Tensor | None,
+        grad_output2: torch.Tensor | None,
+    ) -> tuple[
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        None,
+        None,
+    ]:
+        row_ptr = ctx.saved_tensors[0]
+        receiver = ctx.saved_tensors[1] if ctx.has_receiver else None
+        if (
+            not torch.is_grad_enabled()
+            and receiver is not None
+            and grad_output0 is not None
+            and grad_output1 is not None
+            and grad_output2 is not None
+        ):
+            gradients = _triton_receiver_gradients(
+                (grad_output0, grad_output1, grad_output2),
+                receiver,
+                input_size=ctx.input_size,
+            )
+        else:
+            gradients = _receiver_gradients(
+                (grad_output0, grad_output1, grad_output2),
+                row_ptr,
+                input_size=ctx.input_size,
+                receiver=receiver,
+            )
+        return gradients[0], gradients[1], gradients[2], None, None
+
+
+def _validated_row_ptr(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    trusted: bool,
+) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        raise TypeError("CSR values must be a tensor")
+    if value.ndim == 0:
+        raise ValueError("CSR values must have an edge dimension")
+    if not isinstance(row_ptr, torch.Tensor):
+        raise TypeError("row_ptr must be a tensor")
+    if row_ptr.ndim != 1 or row_ptr.numel() == 0:
+        raise ValueError("row_ptr must be a non-empty one-dimensional tensor")
+    if row_ptr.dtype not in {torch.int32, torch.int64}:
+        raise TypeError("row_ptr must use int32 or int64")
+    if row_ptr.device != value.device:
+        raise ValueError("row_ptr and CSR values must use the same device")
+    contiguous = row_ptr.contiguous()
+    if trusted:
+        return contiguous
+    if int(contiguous[0].item()) != 0:
+        raise ValueError("row_ptr must start at zero")
+    if int(contiguous[-1].item()) != value.shape[0]:
+        raise ValueError("row_ptr must end at the CSR edge count")
+    if bool((contiguous[1:] < contiguous[:-1]).any().item()):
+        raise ValueError("row_ptr must be nondecreasing")
+    return contiguous
+
+
+def _csr_sum_resolved(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    policy: str,
+) -> torch.Tensor:
+    if policy == "torch":
+        return _TorchCsrSum.apply(value, row_ptr)
+    if _can_use_triton(value, row_ptr, policy=policy):
+        return _TritonCsrSum.apply(value, row_ptr)
+    return _TorchCsrSum.apply(value, row_ptr)
 
 
 def csr_sum(
     value: torch.Tensor,
     row_ptr: torch.Tensor,
-    *,
-    max_degree: int | None = None,
 ) -> torch.Tensor:
-    """CSR row sum with automatic Triton dispatch and a PyTorch fallback."""
+    """Safely validate and reduce arbitrary CSR rows."""
 
-    if value.ndim == 0:
-        raise ValueError("CSR values must have an edge dimension")
-    if row_ptr.ndim != 1 or row_ptr.numel() == 0:
-        raise ValueError("row_ptr must be a non-empty one-dimensional tensor")
-    if value.shape[0] == 0:
-        return value.new_zeros((row_ptr.numel() - 1, *value.shape[1:]))
-    resolved_degree = (
-        _row_ptr_max_degree(row_ptr)
-        if max_degree is None
-        else int(max_degree)
-    )
-    if resolved_degree < 0:
-        raise ValueError("max_degree must be nonnegative")
-    if _can_use_triton(value, row_ptr, resolved_degree):
-        return _TritonCsrSum.apply(value, row_ptr, resolved_degree)
-    return _TorchCsrSum.apply(value, row_ptr)
+    contiguous = _validated_row_ptr(value, row_ptr, trusted=False)
+    return _csr_sum_resolved(value, contiguous, policy=backend_policy())
+
+
+def _trusted_csr_sum(
+    value: torch.Tensor,
+    row_ptr: torch.Tensor,
+) -> torch.Tensor:
+    """Reduce a CSR plan already validated by ``PackedNeighborGraph``."""
+
+    contiguous = _validated_row_ptr(value, row_ptr, trusted=True)
+    return _csr_sum_resolved(value, contiguous, policy=backend_policy())
 
 
 def csr_sum_many(
     values: Sequence[torch.Tensor],
     row_ptr: torch.Tensor,
-    *,
-    max_degree: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Reduce one lifetime-compatible payload group in one backend launch."""
+    """Safely reduce one lifetime-compatible payload group."""
+
+    return _csr_sum_many(
+        values,
+        row_ptr,
+        trusted=False,
+        policy=backend_policy(),
+        receiver=None,
+    )
+
+
+def _trusted_csr_sum_many(
+    values: Sequence[torch.Tensor],
+    row_ptr: torch.Tensor,
+    *,
+    policy: str,
+    receiver: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Reduce payloads over a previously validated immutable CSR plan."""
+
+    return _csr_sum_many(
+        values,
+        row_ptr,
+        trusted=True,
+        policy=policy,
+        receiver=receiver,
+    )
+
+
+def _trusted_weighted_gather_reduce_pair(  # pragma: no cover - CUDA-only dispatch
+    weight: torch.Tensor,
+    radial_gate: torch.Tensor,
+    source0: torch.Tensor,
+    source1: torch.Tensor,
+    sender: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    gate_lanes: tuple[int, int],
+    policy: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fuse two inference-only sender gathers, invariant weights, and CSR sums.
+
+    ``weight`` and every selected radial-gate lane are trusted ``0e`` scalars.
+    ``rank`` is a multiplicity axis, so one coefficient is applied unchanged to
+    every carrier component. ``sender``, weights, gates, and receiver-major CSR
+    rows must share the immutable packed-edge order already validated by
+    ``PackedNeighborGraph``. The operator is homogeneous (`N_source == N_rows`)
+    and intentionally has no autograd path.
+    """
+
+    if torch.is_grad_enabled():
+        raise RuntimeError("weighted Triton gather-reduce is inference-only")
+    if triton is None:
+        raise RuntimeError("Triton is unavailable")
+    if weight.ndim != 2 or radial_gate.ndim != 3:
+        raise ValueError("weight and radial_gate must have [E,R] and [E,R,G] shapes")
+    if radial_gate.shape[:2] != weight.shape:
+        raise ValueError("weight and radial_gate edge/rank dimensions must match")
+    if source0.ndim < 2 or source1.ndim < 2:
+        raise ValueError("weighted sources must have [N,R,...] shapes")
+    contiguous_row_ptr = _validated_row_ptr(weight, row_ptr, trusted=True)
+    rows = contiguous_row_ptr.numel() - 1
+    rank = weight.shape[1]
+    if source0.shape[:2] != (rows, rank) or source1.shape[:2] != (rows, rank):
+        raise ValueError("weighted sources must match the CSR node/rank dimensions")
+    tensors = (radial_gate, source0, source1)
+    if any(tensor.device != weight.device or tensor.dtype != weight.dtype for tensor in tensors):
+        raise ValueError("weighted gather-reduce tensors must share device and dtype")
+    if sender.ndim != 1 or sender.shape[0] != weight.shape[0]:
+        raise ValueError("sender must match the CSR edge dimension")
+    if sender.device != weight.device or sender.dtype not in {torch.int32, torch.int64}:
+        raise ValueError("sender must use the CSR device and integer dtype")
+    if any(lane < 0 or lane >= radial_gate.shape[2] for lane in gate_lanes):
+        raise ValueError("gate lanes must index the radial-gate dimension")
+    if not _can_use_triton(weight, contiguous_row_ptr, policy=policy):
+        raise RuntimeError("weighted gather-reduce requires the forced Triton backend")
+
+    components0 = prod(source0.shape[2:]) if source0.ndim > 2 else 1
+    components1 = prod(source1.shape[2:]) if source1.ndim > 2 else 1
+    width0 = rank * components0
+    width1 = rank * components1
+    if not width0 or not width1:
+        raise ValueError("weighted source feature dimensions must be nonzero")
+    output0 = torch.empty(
+        (rows, width0),
+        device=weight.device,
+        dtype=weight.dtype,
+    )
+    output1 = torch.empty(
+        (rows, width1),
+        device=weight.device,
+        dtype=weight.dtype,
+    )
+    if rows:
+        block_features = min(32, triton.next_power_of_2(max(width0, width1)))
+        grid = (
+            rows,
+            triton.cdiv(width0, block_features)
+            + triton.cdiv(width1, block_features),
+        )
+        _weighted_gather_reduce_pair_kernel[grid](
+            weight.contiguous(),
+            radial_gate.contiguous(),
+            source0.contiguous(),
+            source1.contiguous(),
+            sender.contiguous(),
+            contiguous_row_ptr,
+            output0,
+            output1,
+            rank=rank,
+            components0=components0,
+            components1=components1,
+            gate_lane0=gate_lanes[0],
+            gate_lane1=gate_lanes[1],
+            num_gates=radial_gate.shape[2],
+            block_edges=64,
+            block_features=block_features,
+            num_warps=4,
+        )
+    return (
+        output0.reshape(rows, *source0.shape[1:]),
+        output1.reshape(rows, *source1.shape[1:]),
+    )
+
+
+def _csr_sum_many(
+    values: Sequence[torch.Tensor],
+    row_ptr: torch.Tensor,
+    *,
+    trusted: bool,
+    policy: str,
+    receiver: torch.Tensor | None,
+) -> tuple[torch.Tensor, ...]:
 
     if not values:
         return ()
+    if values[0].ndim == 0:
+        raise ValueError("values[0] has an incompatible edge dimension")
     edge_count = values[0].shape[0]
     device = values[0].device
     dtype = values[0].dtype
@@ -354,45 +1222,100 @@ def csr_sum_many(
     flattened: list[torch.Tensor] = []
     for index, value in enumerate(values):
         if value.ndim == 0 or value.shape[0] != edge_count:
-            raise ValueError(
-                f"values[{index}] has an incompatible edge dimension"
-            )
+            raise ValueError(f"values[{index}] has an incompatible edge dimension")
         if value.device != device or value.dtype != dtype:
             raise ValueError("all CSR payloads must share one device and dtype")
         shape = tuple(value.shape[1:])
         width = prod(shape) if shape else 1
+        if width == 0:
+            raise ValueError("CSR payload feature dimensions must be nonzero")
         shapes.append(shape)
         widths.append(width)
         flattened.append(value.reshape(edge_count, width))
-    packed = torch.cat(flattened, dim=-1)
-    reduced = csr_sum(packed, row_ptr, max_degree=max_degree)
-    parts = torch.split(reduced, widths, dim=-1)
-    rows = row_ptr.numel() - 1
+    contiguous = _validated_row_ptr(values[0], row_ptr, trusted=trusted)
+    if receiver is not None:
+        if receiver.ndim != 1 or receiver.shape[0] != edge_count:
+            raise ValueError("receiver must match the CSR edge dimension")
+        if receiver.device != device or receiver.dtype not in {
+            torch.int32,
+            torch.int64,
+        }:
+            raise ValueError("receiver must use the CSR device and integer dtype")
+        receiver = receiver.contiguous()
+    rows = contiguous.numel() - 1
+    use_triton = _can_use_triton(
+        values[0],
+        contiguous,
+        policy=policy,
+    )
+    if use_triton and len(flattened) == 2:
+        parts = _TritonCsrSumPair.apply(
+            flattened[0],
+            flattened[1],
+            contiguous,
+            receiver,
+        )
+    elif use_triton and len(flattened) == 3:
+        parts = _TritonCsrSumTriple.apply(
+            flattened[0],
+            flattened[1],
+            flattened[2],
+            contiguous,
+            receiver,
+        )
+    else:
+        packed = torch.cat(flattened, dim=-1)
+        reduced = _csr_sum_resolved(packed, contiguous, policy=policy)
+        parts = torch.split(reduced, widths, dim=-1)
     return tuple(
-        part.reshape(rows, *shape)
-        for part, shape in zip(parts, shapes, strict=True)
+        part.reshape(rows, *shape) for part, shape in zip(parts, shapes, strict=True)
     )
 
 
 def install_triton_backend() -> None:
     """Install optimized primitives into the canonical numerical core once."""
 
-    global _BACKEND_INSTALLED
+    global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
     if _BACKEND_INSTALLED:
         return
     from . import canonical_se3, multipole_ops, parity_se3
     from .optimized_local import triton_local_message
 
-    parity_se3._csr_sum = csr_sum
-    canonical_se3._csr_sum = csr_sum
+    _ORIGINAL_CSR_SUMS["parity_se3"] = parity_se3._csr_sum
+    _ORIGINAL_CSR_SUMS["canonical_se3"] = canonical_se3._csr_sum
+    parity_se3._csr_sum = _trusted_csr_sum
+    canonical_se3._csr_sum = _trusted_csr_sum
     if hasattr(multipole_ops, "_csr_sum"):
-        multipole_ops._csr_sum = csr_sum
+        _ORIGINAL_CSR_SUMS["multipole_ops"] = multipole_ops._csr_sum
+        multipole_ops._csr_sum = _trusted_csr_sum
 
     block = canonical_se3._CanonicalMultipoleBlock
-    if not hasattr(block, "_ela_torch_local_message"):
-        block._ela_torch_local_message = block._local_message
+    _ORIGINAL_LOCAL_MESSAGE = block._local_message
+    block._ela_torch_local_message = block._local_message
     block._local_message = triton_local_message
     _BACKEND_INSTALLED = True
+
+
+def uninstall_triton_backend() -> None:
+    """Restore the pristine PyTorch primitives after an optional installation."""
+
+    global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
+    if not _BACKEND_INSTALLED:
+        return
+    from . import canonical_se3, multipole_ops, parity_se3
+
+    parity_se3._csr_sum = _ORIGINAL_CSR_SUMS["parity_se3"]
+    canonical_se3._csr_sum = _ORIGINAL_CSR_SUMS["canonical_se3"]
+    if "multipole_ops" in _ORIGINAL_CSR_SUMS:
+        multipole_ops._csr_sum = _ORIGINAL_CSR_SUMS["multipole_ops"]
+    block = canonical_se3._CanonicalMultipoleBlock
+    if _ORIGINAL_LOCAL_MESSAGE is not None:
+        block._local_message = _ORIGINAL_LOCAL_MESSAGE
+    if hasattr(block, "_ela_torch_local_message"):
+        delattr(block, "_ela_torch_local_message")
+    _ORIGINAL_CSR_SUMS.clear()
+    _ORIGINAL_LOCAL_MESSAGE = None
+    _BACKEND_INSTALLED = False
 
 
 __all__ = [
@@ -401,6 +1324,7 @@ __all__ = [
     "csr_sum",
     "csr_sum_many",
     "install_triton_backend",
-    "register_csr_metadata",
+    "kernel_backend",
     "triton_available",
+    "uninstall_triton_backend",
 ]

@@ -87,13 +87,16 @@ The PyTorch path is the numerical reference. Focused tests cover:
 - backend fail-closed behavior;
 - CUDA FP32 PyTorch/Triton output and gradient agreement;
 - CUDA BF16 finiteness;
-- full ELA feature, coordinate, and local-parameter gradient agreement.
+- native CUDA BF16 full-model equivalence;
+- parity-complete forced-Triton O(3), relation, permutation, and refinement;
+- full ELA feature, coordinate, every-local-parameter, and force-HVP agreement.
 
 Run backend tests directly:
 
 ```bash
 uv run pytest -q tests/test_triton_ops.py
 uv run pytest -q tests/test_triton_ops_cuda.py
+uv run pytest -q tests/test_triton_equivariance_cuda.py
 ```
 
 ## Kernel benchmark

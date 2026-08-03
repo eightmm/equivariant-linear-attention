@@ -1,5 +1,11 @@
 # Factorized Moment Attention
 
+> **Historical research record.** This file preserves equations and rejected or
+> retired architecture branches from the repository's development history. It
+> is not the current public model contract, and some named modules below are no
+> longer shipped. See [CANONICAL_ELA.md](CANONICAL_ELA.md) and
+> [API_POLICY.md](API_POLICY.md) for the normative architecture and API.
+
 For graph `g`, node `i`, and head `h`, map positive scalar-content features
 `phi(q0_ih), phi(k0_jh) in R^D` to
 

@@ -1,5 +1,9 @@
 # Training
 
+> **Historical:** these experiment runners and task adapters are not shipped by
+> the current architecture-only package. Reproduce them from the Git revision
+> recorded with each result in `docs/EXPERIMENTS.jsonl`.
+
 The implemented probe uses one AdamW optimizer with constant learning rate.
 Defaults are `lr=3e-4`, `weight_decay=0.01`, and gradient-norm clipping at 1.0.
 No Muon optimizer or WSD schedule is implemented or claimed.

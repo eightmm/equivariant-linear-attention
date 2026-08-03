@@ -7,7 +7,6 @@ from equivariant_attention.heads import (
     CoordinateUpdateHead,
     EquivariantVectorHead,
 )
-from equivariant_attention.multiscale import HierarchyAssignment
 from equivariant_attention.physics import (
     DirectVectorForceHead,
     ScalarEnergyHead,
@@ -22,13 +21,6 @@ def _orthogonal(*, reflection: bool = False) -> torch.Tensor:
     if bool((torch.linalg.det(matrix) < 0).item()) != reflection:
         matrix[:, 0].neg_()
     return matrix
-
-
-def _rank_two_transform(
-    value: torch.Tensor,
-    transform: torch.Tensor,
-) -> torch.Tensor:
-    return torch.einsum("ai,ncij,bj->ncab", transform, value, transform)
 
 
 def test_masked_invariant_pooling_keeps_global_and_interface_scopes_separate() -> (
@@ -109,115 +101,6 @@ def test_masked_invariant_pooling_empty_policy_is_explicit() -> None:
         MaskedInvariantPooling().interface_pool(value, batch, mask.long())
     with pytest.raises(ValueError, match="same length"):
         MaskedInvariantPooling().global_pool(value[:1], batch)
-
-
-def test_hierarchy_pooling_is_o3_translation_and_permutation_equivariant() -> None:
-    torch.manual_seed(2905)
-    fine_to_coarse = torch.tensor([0, 0, 1, 2, 2], dtype=torch.int32)
-    fine_batch = torch.tensor([0, 0, 0, 1, 1], dtype=torch.int64)
-    hierarchy = HierarchyAssignment(fine_to_coarse, fine_batch)
-    scalars = torch.randn(5, 3, dtype=torch.float64)
-    vectors = torch.randn(5, 2, 3, dtype=torch.float64)
-    tensors = torch.randn(5, 2, 3, 3, dtype=torch.float64)
-    coordinates = torch.randn(5, 3, dtype=torch.float64)
-    transform = _orthogonal(reflection=True)
-    translation = torch.randn(1, 3, dtype=torch.float64)
-    permutation = torch.tensor([2, 0, 1, 4, 3])
-
-    scalar_pool = hierarchy.pool_scalars(scalars)
-    vector_pool = hierarchy.pool_vectors(vectors)
-    tensor_pool = hierarchy.pool_tensors(tensors)
-    centroids = hierarchy.centroids(coordinates)
-    moved_vectors = hierarchy.pool_vectors(vectors @ transform.T)
-    moved_tensors = hierarchy.pool_tensors(
-        _rank_two_transform(tensors, transform)
-    )
-    moved_centroids = hierarchy.centroids(
-        coordinates @ transform.T + translation
-    )
-    permuted_hierarchy = HierarchyAssignment(
-        fine_to_coarse[permutation],
-        fine_batch[permutation],
-    )
-
-    assert hierarchy.num_coarse == 3
-    assert torch.equal(hierarchy.coarse_batch, torch.tensor([0, 0, 1]))
-    assert torch.allclose(moved_vectors, vector_pool @ transform.T)
-    assert torch.allclose(
-        moved_tensors,
-        _rank_two_transform(tensor_pool, transform),
-    )
-    assert torch.allclose(
-        moved_centroids,
-        centroids @ transform.T + translation,
-    )
-    assert torch.equal(
-        permuted_hierarchy.pool_scalars(scalars[permutation]),
-        scalar_pool,
-    )
-    assert torch.equal(
-        permuted_hierarchy.pool_vectors(vectors[permutation]),
-        vector_pool,
-    )
-    assert torch.equal(
-        permuted_hierarchy.pool_tensors(tensors[permutation]),
-        tensor_pool,
-    )
-
-
-def test_hierarchy_broadcast_and_batch_isolation() -> None:
-    hierarchy = HierarchyAssignment(
-        torch.tensor([0, 0, 1, 2, 2]),
-        torch.tensor([0, 0, 0, 1, 1]),
-    )
-    coarse = torch.tensor([[10.0], [20.0], [30.0]])
-    fine = hierarchy.broadcast(coarse)
-    scalars = torch.tensor([[1.0], [3.0], [5.0], [7.0], [9.0]])
-    reference = hierarchy.pool_scalars(scalars)
-    perturbed = scalars.clone()
-    perturbed[hierarchy.fine_batch == 1] += 100.0
-
-    assert torch.equal(
-        fine,
-        torch.tensor([[10.0], [10.0], [20.0], [30.0], [30.0]]),
-    )
-    assert torch.equal(
-        hierarchy.pool_scalars(perturbed)[:2],
-        reference[:2],
-    )
-    assert not torch.equal(
-        hierarchy.pool_scalars(perturbed)[2],
-        reference[2],
-    )
-
-
-@pytest.mark.parametrize(
-    ("assignment", "batch", "message"),
-    [
-        (
-            torch.tensor([0.0, 0.0]),
-            torch.tensor([0, 0]),
-            "integer",
-        ),
-        (
-            torch.tensor([0, 2]),
-            torch.tensor([0, 0]),
-            "contiguous",
-        ),
-        (
-            torch.tensor([0, 0]),
-            torch.tensor([0, 1]),
-            "multiple graphs",
-        ),
-    ],
-)
-def test_hierarchy_assignment_rejects_invalid_maps(
-    assignment: torch.Tensor,
-    batch: torch.Tensor,
-    message: str,
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=message):
-        HierarchyAssignment(assignment, batch)
 
 
 @pytest.mark.parametrize("reflection", [False, True])
@@ -475,13 +358,6 @@ def test_generic_primitives_validate_shapes_and_centering() -> None:
             torch.randn(2, 1),
             torch.randn(2, 1, 2),
         )
-    hierarchy = HierarchyAssignment(torch.tensor([0, 0]), torch.tensor([0, 0]))
-    with pytest.raises(ValueError, match="rank-two"):
-        hierarchy.pool_tensors(torch.randn(2, 3))
-    with pytest.raises(ValueError, match="leading"):
-        hierarchy.broadcast(torch.randn(2, 3))
-
-
 def test_generic_primitives_support_second_order_autograd() -> None:
     torch.manual_seed(2919)
     head = CoordinateUpdateHead(
@@ -533,19 +409,7 @@ def test_generic_primitives_support_second_order_autograd() -> None:
     assert all(torch.isfinite(gradient).all() for gradient in second)
 
 
-def test_empty_hierarchy_and_explicit_empty_graph_pooling_are_well_defined() -> (
-    None
-):
-    hierarchy = HierarchyAssignment(
-        torch.empty(0, dtype=torch.long),
-        torch.empty(0, dtype=torch.long),
-        num_coarse=0,
-    )
-    assert hierarchy.num_fine == 0
-    assert hierarchy.num_graphs == 0
-    assert hierarchy.pool_scalars(torch.empty(0, 2)).shape == (0, 2)
-    assert hierarchy.broadcast(torch.empty(0, 3)).shape == (0, 3)
-
+def test_explicit_empty_graph_pooling_is_well_defined() -> None:
     pooling = MaskedInvariantPooling(empty_policy="zero")
     pooled = pooling.global_pool(
         torch.empty(0, 2),
@@ -559,14 +423,6 @@ def test_empty_hierarchy_and_explicit_empty_graph_pooling_are_well_defined() -> 
             torch.empty(0, 2),
             torch.empty(0, dtype=torch.long),
         )
-    with pytest.raises(ValueError, match="empty fine"):
-        HierarchyAssignment(
-            torch.empty(0, dtype=torch.long),
-            torch.empty(0, dtype=torch.long),
-            num_coarse=1,
-        )
-
-
 def test_generic_primitive_validation_rejects_ambiguous_metadata() -> None:
     with pytest.raises(ValueError, match="reduction"):
         MaskedInvariantPooling(reduction="median")  # type: ignore[arg-type]
@@ -587,26 +443,6 @@ def test_generic_primitive_validation_rejects_ambiguous_metadata() -> None:
             torch.ones(2, 1),
             torch.tensor([0, 1]),
             num_graphs=1,
-        )
-
-    with pytest.raises(ValueError, match="nonnegative"):
-        HierarchyAssignment(
-            torch.tensor([0, -1]),
-            torch.tensor([0, 0]),
-        )
-    with pytest.raises(ValueError, match="start at zero"):
-        HierarchyAssignment(
-            torch.tensor([0, 1]),
-            torch.tensor([0, 2]),
-        )
-    hierarchy = HierarchyAssignment(
-        torch.tensor([0, 0]),
-        torch.tensor([0, 0]),
-    )
-    with pytest.raises(ValueError, match="reduction"):
-        hierarchy.pool_scalars(
-            torch.ones(2, 1),
-            reduction="median",  # type: ignore[arg-type]
         )
 
     with pytest.raises(ValueError, match="positive"):

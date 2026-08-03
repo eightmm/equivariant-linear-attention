@@ -1,5 +1,9 @@
 # Configuration
 
+> **Historical:** this document records the retired multi-architecture config
+> surface. The current configuration contract is `ELAConfig`; see
+> `docs/CANONICAL_ELA.md` and `docs/API_POLICY.md`.
+
 ## Structured architecture boundary
 
 `ArchitectureConfig` is a strict, versioned wrapper around the flat

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import time
 from collections.abc import Callable
@@ -13,7 +12,7 @@ from typing import Any
 import torch
 
 from equivariant_attention import ELA, ELABatch
-from equivariant_attention.triton_ops import triton_available
+from equivariant_attention.triton_ops import kernel_backend, triton_available
 
 
 def _dtype(name: str) -> torch.dtype:
@@ -42,33 +41,59 @@ def _sync(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
-def _measure(
-    function: Callable[[], torch.Tensor],
+def _measure_backends(
+    functions: dict[str, Callable[[], torch.Tensor]],
     *,
     device: torch.device,
     warmup: int,
     repeats: int,
-) -> tuple[dict[str, Any], int | None]:
-    for _ in range(warmup):
-        function()
+) -> dict[str, tuple[dict[str, Any], int | None]]:
+    for function in functions.values():
+        for _ in range(warmup):
+            function()
     _sync(device)
-    samples: list[float] = []
-    peak = 0 if device.type == "cuda" else None
-    for _ in range(repeats):
-        if device.type == "cuda":
-            torch.cuda.reset_peak_memory_stats(device)
-        start = time.perf_counter()
-        function()
-        _sync(device)
-        samples.append((time.perf_counter() - start) * 1000.0)
-        if peak is not None:
-            peak = max(peak, torch.cuda.max_memory_allocated(device))
-    return {
-        "median_ms": statistics.median(samples),
-        "min_ms": min(samples),
-        "max_ms": max(samples),
-        "samples_ms": samples,
-    }, peak
+    wall_samples = {name: [] for name in functions}
+    event_samples = {name: [] for name in functions}
+    peaks = {name: 0 if device.type == "cuda" else None for name in functions}
+    names = tuple(functions)
+    for repeat in range(repeats):
+        order = names if repeat % 2 == 0 else tuple(reversed(names))
+        for name in order:
+            _sync(device)
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(device)
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+            start = time.perf_counter()
+            if device.type == "cuda":
+                start_event.record()
+            functions[name]()
+            if device.type == "cuda":
+                end_event.record()
+            _sync(device)
+            wall_samples[name].append((time.perf_counter() - start) * 1000.0)
+            if device.type == "cuda":
+                event_samples[name].append(start_event.elapsed_time(end_event))
+                peak = peaks[name]
+                assert peak is not None
+                peaks[name] = max(peak, torch.cuda.max_memory_allocated(device))
+
+    results: dict[str, tuple[dict[str, Any], int | None]] = {}
+    for name, samples in wall_samples.items():
+        timing: dict[str, Any] = {
+            "median_ms": statistics.median(samples),
+            "min_ms": min(samples),
+            "max_ms": max(samples),
+            "samples_ms": samples,
+        }
+        cuda_samples = event_samples[name]
+        if cuda_samples:
+            timing["cuda_event_median_ms"] = statistics.median(cuda_samples)
+            timing["cuda_event_min_ms"] = min(cuda_samples)
+            timing["cuda_event_max_ms"] = max(cuda_samples)
+            timing["cuda_event_samples_ms"] = cuda_samples
+        results[name] = timing, peaks[name]
+    return results
 
 
 def _activate_local_outputs(model: ELA) -> None:
@@ -94,7 +119,6 @@ def _functional_probe(
     *,
     backend: str,
 ) -> dict[str, torch.Tensor]:
-    os.environ["ELA_KERNEL_BACKEND"] = backend
     features = prepared.node_irreps.detach().clone().requires_grad_(True)
     positions = prepared.positions.detach().clone().requires_grad_(True)
     batch = ELABatch(
@@ -106,8 +130,9 @@ def _functional_probe(
         _prepared_graph=prepared._prepared_graph,
     )
     model.zero_grad(set_to_none=True)
-    output = model.forward_prepared(batch)["node_irreps"]
-    output.float().square().mean().backward()
+    with kernel_backend(backend):
+        output = model.forward_prepared(batch)["node_irreps"]
+        output.float().square().mean().backward()
     parameter = model.layers[0].local_scalar_out.weight
     if parameter.grad is None or features.grad is None or positions.grad is None:
         raise RuntimeError("functional probe gradients are missing")
@@ -119,24 +144,26 @@ def _functional_probe(
     }
 
 
-def _profile_backend(
+def _profile_backends(
     model: ELA,
     prepared: ELABatch,
     *,
-    backend: str,
+    backends: tuple[str, ...],
     device: torch.device,
     warmup: int,
     repeats: int,
-) -> dict[str, Any]:
-    os.environ["ELA_KERNEL_BACKEND"] = backend
+) -> dict[str, dict[str, Any]]:
     model.eval()
 
-    def inference() -> torch.Tensor:
-        with torch.inference_mode():
+    def inference(backend: str) -> torch.Tensor:
+        with torch.inference_mode(), kernel_backend(backend):
             return model.forward_prepared(prepared)["node_irreps"]
 
-    inference_timing, inference_peak = _measure(
-        inference,
+    inference_profiles = _measure_backends(
+        {
+            backend: lambda backend=backend: inference(backend)
+            for backend in backends
+        },
         device=device,
         warmup=warmup,
         repeats=repeats,
@@ -154,25 +181,32 @@ def _profile_backend(
     )
     model.train()
 
-    def forward_backward() -> torch.Tensor:
+    def forward_backward(backend: str) -> torch.Tensor:
         model.zero_grad(set_to_none=True)
         features.grad = None
         positions.grad = None
-        output = model.forward_prepared(training_batch)["node_irreps"]
-        output.float().square().mean().backward()
+        with kernel_backend(backend):
+            output = model.forward_prepared(training_batch)["node_irreps"]
+            output.float().square().mean().backward()
         return output
 
-    training_timing, training_peak = _measure(
-        forward_backward,
+    training_profiles = _measure_backends(
+        {
+            backend: lambda backend=backend: forward_backward(backend)
+            for backend in backends
+        },
         device=device,
         warmup=warmup,
         repeats=repeats,
     )
     return {
-        "inference": inference_timing,
-        "inference_peak_allocated_bytes": inference_peak,
-        "forward_backward": training_timing,
-        "forward_backward_peak_allocated_bytes": training_peak,
+        backend: {
+            "inference": inference_profiles[backend][0],
+            "inference_peak_allocated_bytes": inference_profiles[backend][1],
+            "forward_backward": training_profiles[backend][0],
+            "forward_backward_peak_allocated_bytes": training_profiles[backend][1],
+        }
+        for backend in backends
     }
 
 
@@ -207,9 +241,7 @@ def main() -> None:
     device = torch.device(args.device)
     dtype = _dtype(args.dtype)
     model_dtype = (
-        torch.float32
-        if dtype == torch.bfloat16 and device.type == "cpu"
-        else dtype
+        torch.float32 if dtype == torch.bfloat16 and device.type == "cpu" else dtype
     )
     torch.manual_seed(0)
     model = ELA(
@@ -237,50 +269,36 @@ def main() -> None:
         )
     )
 
-    original_policy = os.environ.get("ELA_KERNEL_BACKEND")
-    try:
-        torch_probe = _functional_probe(model, prepared, backend="torch")
-        profiles = {
-            "torch": _profile_backend(
-                model,
-                prepared,
-                backend="torch",
-                device=device,
-                warmup=args.warmup,
-                repeats=args.repeats,
-            )
+    torch_probe = _functional_probe(model, prepared, backend="torch")
+    equivalence = None
+    triton_enabled = (
+        device.type == "cuda" and triton_available() and dtype != torch.float64
+    )
+    backends = ("torch", "triton") if triton_enabled else ("torch",)
+    if triton_enabled:
+        triton_probe = _functional_probe(model, prepared, backend="triton")
+        equivalence = {
+            name: _max_abs(triton_probe[name], torch_probe[name])
+            for name in torch_probe
         }
-        equivalence = None
-        triton_enabled = (
-            device.type == "cuda"
-            and triton_available()
-            and dtype != torch.float64
-        )
-        if triton_enabled:
-            triton_probe = _functional_probe(model, prepared, backend="triton")
-            profiles["triton"] = _profile_backend(
-                model,
-                prepared,
-                backend="triton",
-                device=device,
-                warmup=args.warmup,
-                repeats=args.repeats,
-            )
-            equivalence = {
-                name: _max_abs(triton_probe[name], torch_probe[name])
-                for name in torch_probe
-            }
-    finally:
-        if original_policy is None:
-            os.environ.pop("ELA_KERNEL_BACKEND", None)
-        else:
-            os.environ["ELA_KERNEL_BACKEND"] = original_policy
+    profiles = _profile_backends(
+        model,
+        prepared,
+        backends=backends,
+        device=device,
+        warmup=args.warmup,
+        repeats=args.repeats,
+    )
 
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "experiment": "ela_kernel_backend",
         "device": str(device),
         "dtype": args.dtype,
+        "model_dtype": str(model_dtype).removeprefix("torch."),
+        "csr_payload_dtype": (
+            "float64" if model_dtype == torch.float64 else "float32"
+        ),
         "input_irreps": str(model.config.input_layout),
         "output_irreps": str(model.config.output_layout),
         "input_dim": input_dim,
@@ -291,6 +309,13 @@ def main() -> None:
         "depth": args.depth,
         "prepared_graph": True,
         "neighbor_discovery_included": False,
+        "warmup": args.warmup,
+        "repeats": args.repeats,
+        "backend_ordering": "alternating",
+        "cold_compile_included": False,
+        "timing_modes": ["wall", "cuda_event"]
+        if device.type == "cuda"
+        else ["wall"],
         "triton_runtime_available": triton_available(),
         "triton_profiled": "triton" in profiles,
         "equivalence_max_abs": equivalence,

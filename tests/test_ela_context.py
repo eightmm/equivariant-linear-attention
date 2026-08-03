@@ -118,7 +118,7 @@ def test_order_encoder_ignores_disabled_node_labels() -> None:
     enabled = torch.tensor([True, True, True, False, False, False])
     first_rank = torch.arange(node.shape[0], dtype=torch.float64)
     second_rank = first_rank.clone()
-    second_rank[~enabled] = torch.tensor([100.0, -50.0, 999.0])
+    second_rank[~enabled] = first_rank.new_tensor([100.0, -50.0, 999.0])
     first = model.order_encoder(
         OrderContext.sequence(first_rank, enabled=enabled),
         prepared._prepared_graph,

@@ -79,22 +79,36 @@ def _limit_neighbors(
     nodes: int,
     max_neighbors: int | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Keep the nearest receiver neighbors without breaking exact ties.
+
+    A strict index-based top-k is not permutation equivariant when several
+    candidates have the same distance.  ``max_neighbors`` therefore keeps the
+    k-th distance shell in full.  The limit is exact for generic coordinates
+    and may be exceeded only by candidates tied at its boundary.
+    """
+
     if max_neighbors is None or receiver.numel() == 0:
         return receiver, sender
-    by_distance = torch.argsort(distance_squared, stable=True)
-    receiver_distance = receiver[by_distance]
-    by_receiver = torch.argsort(receiver_distance, stable=True)
-    order = by_distance[by_receiver]
+
+    # Stable least-to-most-significant sorting gives receiver, distance,
+    # sender order.  Sender only makes the returned COO deterministic; it does
+    # not decide membership because the complete boundary shell is retained.
+    order = torch.argsort(sender, stable=True)
+    order = order[
+        torch.argsort(distance_squared[order], stable=True)
+    ]
+    order = order[torch.argsort(receiver[order], stable=True)]
     receiver = receiver[order]
     sender = sender[order]
+    distance_squared = distance_squared[order]
     counts = torch.bincount(receiver, minlength=nodes)
-    starts = torch.repeat_interleave(
-        counts.cumsum(0) - counts,
-        counts,
-        output_size=receiver.numel(),
-    )
-    rank = torch.arange(receiver.numel(), device=receiver.device) - starts
-    keep = rank < max_neighbors
+    starts = counts.cumsum(0) - counts
+    boundary_rank = counts.clamp_max(max_neighbors) - 1
+    boundary_index = starts + boundary_rank.clamp_min(0)
+    threshold = distance_squared.new_zeros((nodes,))
+    nonempty = counts > 0
+    threshold[nonempty] = distance_squared[boundary_index[nonempty]]
+    keep = distance_squared <= threshold[receiver]
     return receiver[keep], sender[keep]
 
 
@@ -289,7 +303,9 @@ def radius_graph(
 
     Small graphs use a chunked dense reference. Larger graphs use a cell list
     with exact distance filtering. Both paths return directed receiver/sender
-    COO and never connect nodes from different graphs.
+    COO and never connect nodes from different graphs. ``max_neighbors`` keeps
+    the nearest distance shells; a tie at the boundary is retained in full so
+    topology remains permutation equivariant.
     """
 
     if not isinstance(positions, torch.Tensor):
@@ -314,11 +330,19 @@ def radius_graph(
     boundaries = [
         int(value) for value in graph_ptr.detach().to("cpu").tolist()
     ]
+    geometry_dtype = (
+        torch.float64 if positions.dtype == torch.float64 else torch.float32
+    )
     for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
-        graph_positions = positions[start:stop]
+        # Radius membership must not depend on whether this graph happens to
+        # cross ``dense_threshold``. Half-precision squared distances otherwise
+        # disagree with the cell path, which requires float32 for robust IDs.
+        graph_positions = positions[start:stop].detach().to(
+            dtype=geometry_dtype
+        )
         if graph_positions.shape[0] <= dense_threshold:
             receiver, sender = _dense_edges(
-                graph_positions.detach(),
+                graph_positions,
                 cutoff_squared=cutoff_squared,
                 include_self=include_self,
                 max_neighbors=max_neighbors,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import (
+from equivariant_attention.unified import (
     Unified3DConfig,
     UnifiedEquivariantAttention,
     UnifiedEquivariantLayer,

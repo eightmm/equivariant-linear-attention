@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import (
+from equivariant_attention.unified import (
     Unified3DConfig,
     UnifiedEquivariantAttention,
     prepare_3d_graph,

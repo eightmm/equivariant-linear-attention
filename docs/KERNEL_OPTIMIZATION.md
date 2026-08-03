@@ -41,9 +41,13 @@ The Triton kernel:
 - assigns programs to receiver rows and feature blocks;
 - accumulates FP16/BF16/FP32 payloads in FP32;
 - supports int32 and int64 row pointers;
-- buckets maximum degree by powers of two to limit compile variants;
-- falls back for unsupported device, dtype, graph size, or degree;
-- uses a differentiable receiver-gradient gather in backward.
+- iterates to each row's runtime degree rather than a graph-wide padded maximum;
+- copies non-contiguous raw row pointers and validates arbitrary raw CSR input;
+- falls back for unsupported device or dtype;
+- uses direct receiver-gradient gathers and CSR row broadcasts for ordinary
+  first-order backward;
+- falls back to differentiable PyTorch gathers for `create_graph=True` or unused
+  grouped outputs.
 
 Backend policy:
 
@@ -53,15 +57,19 @@ ELA_KERNEL_BACKEND=torch
 ELA_KERNEL_BACKEND=triton
 ```
 
-Dispatch controls:
+The same policy can be selected task-locally without changing `os.environ`:
 
-```bash
-ELA_TRITON_MIN_EDGES=256
-ELA_TRITON_MAX_DEGREE=2048
+```python
+from equivariant_attention.triton_ops import kernel_backend
+
+with kernel_backend("triton"):
+    output = model.forward_prepared(batch)
 ```
 
-`auto` uses PyTorch below the minimum edge count to avoid launch-overhead
-regression. `triton` fails closed when the requested execution is unsupported.
+`auto` currently selects the PyTorch reference for every regime. `triton` fails
+closed when the requested execution is unsupported. Automatic Triton selection
+will be enabled only for a hardware/runtime-specific regime that passes the
+complete-stack promotion gate below.
 
 ## 3. Local payload grouping
 
@@ -82,8 +90,9 @@ S_{ir}^{f}
 {1+\sum_j w_{ijr}}.
 \]
 
-The Triton path keeps projections and edge-score equations in ordinary PyTorch
-autograd, then reduces five lifetime-compatible payload groups:
+The Triton training path keeps projections and edge-score equations in ordinary
+PyTorch autograd, then reduces five lifetime-compatible payload groups with four
+two-pointer kernels and one three-pointer kernel:
 
 1. mass and squared mass;
 2. scalar and pseudoscalar values;
@@ -91,8 +100,9 @@ autograd, then reduces five lifetime-compatible payload groups:
 4. even and odd symmetric-traceless tensors;
 5. three direction moments used for chirality.
 
-This avoids one giant concatenated `[E,F_all]` payload. Its temporary memory is
-bounded by the largest group:
+This avoids both one giant concatenated `[E,F_all]` payload and the previous
+per-group edge-sized `torch.cat` copy. Its temporary memory is bounded by the
+largest already-produced group:
 
 \[
 M_{\rm payload}
@@ -100,8 +110,18 @@ M_{\rm payload}
 O\left(E\max_k F_k\right)
 \]
 
-instead of the sum of every message family. The trade-off is several CSR kernel
-launches rather than one.
+instead of the sum of every message family. The five semantic launches remain;
+their separate pointers preserve tensor lifetimes and autograd ownership.
+
+When gradients are disabled, groups 2 and 3 use a wider fused boundary:
+
+```text
+sender gather x invariant weight x radial gate -> receiver CSR sum
+```
+
+This avoids materializing the scalar, pseudoscalar, polar, and axial edge
+payloads. Every Cartesian component receives the same invariant scalar weight,
+so the fusion changes execution only, not the represented irrep or parity.
 
 ## 4. Correctness contract
 
@@ -118,7 +138,8 @@ Required checks include:
 - node permutation and edge-order invariance;
 - FP32 and BF16;
 - node-feature, coordinate, and parameter gradients;
-- required double backward through the PyTorch reference;
+- required double backward through both PyTorch and forced Triton;
+- FP16 with int64 CSR as well as BF16 with int32 CSR;
 - forced-backend fail-closed behavior.
 
 Current focused tests:
@@ -126,7 +147,13 @@ Current focused tests:
 ```bash
 uv run pytest -q tests/test_triton_ops.py
 uv run pytest -q tests/test_triton_ops_cuda.py
+uv run pytest -q tests/test_triton_equivariance_cuda.py
 ```
+
+The forced-Triton layer contract activates every `l<=2` parity sector and covers
+generic improper O(3), translation, node and edge permutation, typed relations,
+ragged graphs with an isolated receiver, coordinate refinement, all local
+parameter VJPs, and conservative-force second derivatives.
 
 ## 5. Benchmark
 
@@ -155,7 +182,50 @@ Record:
 - exclusion of neighbor discovery.
 
 A backend should be promoted for a graph regime only when it improves complete
-stack time or memory without violating numerical tolerances.
+stack time or memory without violating numerical tolerances. The benchmark uses
+alternating Torch/Triton order, records both synchronized wall time and CUDA
+events, and excludes cold Triton/Inductor compilation.
+
+### Current promotion status
+
+Bounded BF16 prepared-stack measurements on 2026-08-02 after the backward and
+inference fusions found no latency-promotable regime:
+
+| N | degree | E | inference Triton/Torch | F+B Triton/Torch | training peak Triton/Torch |
+|---:|---:|---:|---:|---:|---:|
+| 512 | 32 | 16,384 | 1.018 | 1.020 | 0.880 |
+| 512 | 64 | 32,768 | 1.039 | 1.080 | 0.867 |
+| 4,096 | 32 | 131,072 | 1.012 | 1.006 | 0.839 |
+| 4,096 | 64 | 262,144 | 1.003 | 0.998 | 0.845 |
+
+These are short single-machine diagnostics, not performance claims. They justify
+keeping `auto` on PyTorch. The exact commands and mechanical receipts are in
+`docs/EXPERIMENTS.jsonl`; neighbor discovery was excluded. Training medians were
+noisy under shared-workstation load, so ratios near one are treated as ties.
+Peak allocation was stable: forced Triton used `0.839--0.880x` training memory
+and `0.843--0.956x` inference memory. Neither result crosses the documented
+promotion threshold.
+
+### Compiled prepared path
+
+The same `N=512, k=32, width=64, depth=2` BF16 model was also measured with
+`torch.compile(model.forward_prepared, mode="reduce-overhead")`:
+
+| path | eager | compiled | compiled/eager |
+|---|---:|---:|---:|
+| inference | 22.714 ms | 5.464 ms | 0.241 |
+| forward/backward | 97.522 ms | 21.472 ms | 0.220 |
+
+Cold compilation was about 6.9 seconds. Output maximum absolute difference was
+`0.03125` at output magnitude `2.640625`; maximum feature, coordinate, and one
+local-parameter gradient differences were `1.94e-5`, `3.62e-3`, and `6.11e-5`.
+This is a strong static-shape speed diagnostic, not a general ragged-graph claim.
+The default compiled backward rejected double backward because Inductor donated
+non-empty buffers, so conservative-force/HVP workloads remain on eager execution.
+A repeat with new tensor inputs and a live parameter perturbation matched eager
+within `0.02344` and `0.03125`; the perturbation changed the compiled output by
+`0.015625`, ruling out constant capture. A generic improper O(3) transform plus
+translation changed the compiled scalar output by at most `0.015625` in BF16.
 
 ## 6. Automatic radius construction
 
@@ -173,10 +243,11 @@ validated.
 
 ## 7. Remaining high-value optimization
 
-The current Triton path accelerates reductions but still materializes edge-level
-scores, gates, and message groups in PyTorch. The next high-value step is a fused
-local forward that consumes node states, positions, CSR metadata, and parameters,
-and writes receiver statistics directly.
+The current Triton path removes graph-wide degree padding and payload
+concatenation, and fuses four inference value families. It still materializes
+edge-level scores, gates, tensor payloads, and directional moments in PyTorch.
+The next high-value step is to extend weighted gather-reduce to the tensor and
+directional groups, then add a deterministic reverse-CSR training backward.
 
 A production fused operator should combine:
 
@@ -187,7 +258,8 @@ A production fused operator should combine:
 5. all receiver sufficient statistics;
 6. normalization by `1 + mass`.
 
-It should avoid persistent intermediates shaped like:
+Learned `Linear` projections should remain in PyTorch/vendor GEMM. The fused
+elementwise/reduction operator should avoid persistent intermediates shaped like:
 
 ```text
 [E, R]

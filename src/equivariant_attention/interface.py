@@ -83,9 +83,7 @@ class ELA(_CanonicalELA):
             resolved_condition_dim = 0 if condition_dim is None else condition_dim
             resolved_order_dim = 0 if order_dim is None else order_dim
             resolved_refinement = (
-                False
-                if coordinate_refinement is None
-                else coordinate_refinement
+                False if coordinate_refinement is None else coordinate_refinement
             )
             if (
                 isinstance(resolved_edge_types, bool)
@@ -110,9 +108,7 @@ class ELA(_CanonicalELA):
                 ) * resolved_edge_types
             resolved = ELAConfig(
                 input_irreps=input_irreps,
-                output_irreps=(
-                    "1x0e" if output_irreps is None else output_irreps
-                ),
+                output_irreps=("1x0e" if output_irreps is None else output_irreps),
                 width=resolved_width,
                 depth=resolved_depth,
                 geometry=SparseGeometry(
@@ -156,9 +152,7 @@ class ELA(_CanonicalELA):
         for alias, canonical in aliases.items():
             if alias in normalized:
                 if canonical in normalized:
-                    raise ValueError(
-                        f"{alias} and {canonical} are mutually exclusive"
-                    )
+                    raise ValueError(f"{alias} and {canonical} are mutually exclusive")
                 normalized[canonical] = normalized.pop(alias)
         return ELABatch.from_padded(x, pos, mask, **normalized)
 
@@ -189,9 +183,7 @@ class ELA(_CanonicalELA):
             "cutoff": self.config.geometry.cutoff,
             "num_rbf": self.config.geometry.num_rbf,
             "num_edge_types": self.config.geometry.num_edge_relations,
-            "num_parameters": sum(
-                parameter.numel() for parameter in self.parameters()
-            ),
+            "num_parameters": sum(parameter.numel() for parameter in self.parameters()),
             "kernel_backend_policy": backend_policy(),
             "triton_available": triton_available(),
             "graph_input": "ELABatch",

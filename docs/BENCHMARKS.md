@@ -1,5 +1,9 @@
 # Benchmarks
 
+> **Historical:** this document preserves pre-canonical benchmark evidence.
+> The current same-model kernel benchmark is `scripts/benchmark_ela.py`; see
+> `docs/CANONICAL_ELA_VALIDATION.md`.
+
 The standalone microbenchmark covers the single `factorized_moment`
 implementation under real batched semantics. Its defaults remain the public
 `ggg`, `M=1`, interaction-off, radial-trace-off configuration.

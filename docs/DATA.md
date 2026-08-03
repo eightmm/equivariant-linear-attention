@@ -1,5 +1,8 @@
 # Data Contract
 
+> **Historical:** this is the retired benchmark data contract. The current
+> dependency-free input boundary is `ELABatch`; see `docs/DATA_API.md`.
+
 `GraphSample` stores node features, coordinates, a graph target, a stable
 sample ID, and optional local candidates/readout mask. `collate_graphs`
 concatenates nodes and creates contiguous integer graph IDs; no neighbor or

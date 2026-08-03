@@ -10,22 +10,25 @@ def prepare_for_inference(
     dtype: torch.dtype | str | None = "auto",
     compile_model: bool = True,
     compile_mode: str = "reduce-overhead",
-    allow_tf32: bool = True,
+    allow_tf32: bool | None = None,
 ) -> nn.Module:
     """Prepare a model for inference with FP32 parameters by default.
 
     ``dtype="auto"`` preserves FP32 parameters and uses CUDA autocast when a
     lower-precision CUDA lane is supported. Explicit ``bf16``/``fp16`` keeps
     the previous whole-model conversion available for controlled experiments.
+    TF32 policy is preserved by default. Passing ``allow_tf32`` explicitly
+    changes PyTorch's process-global CUDA backend policy, and only when the
+    requested target device is CUDA.
     """
-
-    if torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
-        torch.backends.cudnn.allow_tf32 = allow_tf32
 
     target_device = (
         torch.device(device) if device is not None else next(model.parameters()).device
     )
+    if allow_tf32 is not None and target_device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        torch.backends.cudnn.allow_tf32 = allow_tf32
+
     automatic = dtype == "auto"
     target_dtype = torch.float32 if automatic else _resolve_dtype(dtype, target_device)
     model = model.to(device=target_device, dtype=target_dtype).eval()

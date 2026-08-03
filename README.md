@@ -17,6 +17,8 @@ Every layer combines
 \text{exact global equivariant linear attention}
 +
 \text{exact sparse short-range geometry}
++
+\text{invariant global/local fusion}
 }
 \]
 
@@ -29,8 +31,8 @@ require PyG or DGL.
 uv sync --locked
 ```
 
-Triton is optional. If a compatible Triton runtime is present, supported CUDA
-reductions are selected automatically; otherwise ELA uses the PyTorch reference.
+Triton is optional. PyTorch remains the default numerical backend. A compatible
+Triton runtime can be forced for contract-tested experiments and benchmarks.
 
 ## Quick start
 
@@ -98,6 +100,22 @@ x_i \mapsto R x_i + t,
 \]
 
 whereas an ordinary `1o` feature transforms only as `v -> Rv`.
+
+Build mixed inputs with the declared layout instead of concatenating blocks by
+hand:
+
+```python
+from equivariant_attention import pack_irreps
+
+input_irreps = "8x0e + 2x1o"
+node_irreps = pack_irreps(
+    input_irreps,
+    {
+        "0e": scalar_features.unsqueeze(-1),  # [N, 8, 1]
+        "1o": polar_vectors,                  # [N, 2, 3]
+    },
+)
+```
 
 ## Explicit graph topology
 
@@ -222,6 +240,142 @@ coordinate_delta  alias: delta
 `graph_irreps` is the graph-wise mean. `graph_sum` is provided for extensive
 quantities such as additive total energies.
 
+For `D_out = sum(multiplicity * (2*l + 1))`, common choices are shown below;
+`K` means a positive integer multiplicity such as `3x0e`.
+
+| task | `output_irreps` | readout |
+|---|---|---|
+| intensive graph property | `"Kx0e"` | `output["graph"]` |
+| sum readout for an extensive target | `"Kx0e"` | `output["graph_sum"]` |
+| node scalar labels | `"Kx0e"` | node `0e` block |
+| velocity or displacement | `"Kx1o"` | node `1o` block |
+| axial-vector target | `"Kx1e"` | node `1e` block |
+| symmetric-traceless tensor | `"Kx2e"` or `"Kx2o"` | node tensor block |
+
+`graph_sum` selects a sum readout; global interaction means this alone does not
+prove physical size-extensivity or disconnected-component additivity.
+
+Use `model.split_output` instead of manually slicing a mixed output:
+
+```python
+model = ELA(
+    input_irreps="32x0e",
+    output_irreps="2x0e + 1x1o + 1x2e",
+)
+output = model(batch)
+blocks = model.split_output(output["node"])
+
+node_scalars = blocks["0e"][..., 0]  # [N, 2]
+polar_vector = blocks["1o"][:, 0]    # [N, 3]
+st_tensor = blocks["2e"][:, 0]       # [N, 5]
+```
+
+### Energy and forces
+
+A direct `1o` prediction is an equivariant vector but is not necessarily a
+conservative force. When conservation is required, predict one invariant node
+energy, sum it per graph, and differentiate:
+
+```python
+from equivariant_attention import conservative_forces
+
+positions = positions.detach().requires_grad_(True)
+batch = ELABatch(
+    node_irreps=node_features,
+    positions=positions,
+    ptr=ptr,
+    edge_index=edge_index,
+)
+energy_model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
+)
+
+output = energy_model(batch)
+energy = output["graph_sum"][:, 0]
+forces = conservative_forces(
+    energy,
+    batch.positions,
+    create_graph=True,  # required when a force loss is differentiated
+)
+```
+
+Force/HVP training needs higher-order autograd. Keep it on eager PyTorch unless
+the exact compiled workload has passed a separate double-backward contract.
+
+## Flow matching velocity and learned displacement
+
+A coordinate-space flow velocity is a node-wise polar vector. Declare it as
+`1x1o` and read it from the node irreps. It is **not** the refinement-only
+`output["delta"]` value.
+
+```python
+import torch
+import torch.nn.functional as F
+
+flow_model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x1o",
+    condition_dim=1,  # invariant flow time t
+    width=128,
+    depth=8,
+    cutoff=6.0,
+)
+
+# x0 and x1 are corresponding, consistently centered [N, 3] coordinates.
+# batch_index contains graph-major IDs and t has shape [B, 1].
+num_graphs = int(batch_index[-1].item()) + 1
+t = torch.rand(num_graphs, 1, device=x0.device)
+t_node = t[batch_index]
+x_t = (1.0 - t_node) * x0 + t_node * x1
+target_velocity = x1 - x0  # only for this straight conditional path
+
+batch_t = ELA.batch(
+    node_features,
+    x_t,
+    batch=batch_index,
+    edge_index=edge_index,  # omit to build radius candidates at x_t
+    condition=t,
+)
+output = flow_model(batch_t)
+velocity = flow_model.split_output(output["node"])["1o"].squeeze(-2)
+loss = F.mse_loss(velocity, target_velocity)
+
+dt = 0.01
+delta_x = dt * velocity
+x_next = x_t + delta_x
+```
+
+For a non-linear interpolation schedule the target is `d x_t / d t`, not
+automatically `x1 - x0`. Source and target nodes must also have the same
+correspondence; symmetric or unmatched point sets need a matching/OT policy
+before the displacement target is defined.
+
+`1o` specifies polar O(3) covariance, while ELA's relative/centered geometry
+makes the field translation-invariant. Rotation augmentation is therefore not
+required to impose that symmetry. Use the same per-graph centering convention
+for `x0` and `x1`, then derive the target from those centered endpoints. If
+exact zero center-of-mass velocity is part of the task, subtract the predicted
+graph mean explicitly; the generic `1o` output is intentionally neither centered
+nor bounded.
+
+With scalar-only conditions and isotropic noise, exact O(3) equivariance also
+makes a generated distribution reflection-symmetric. A chiral application must
+provide a physically meaningful odd-parity input, such as a `0o` handedness
+signal or a parity-declared polar/axial frame, rather than relabeling an ordinary
+scalar as odd. The `0o` value must change sign when a reflected input is used.
+
+When coordinates move and local radius candidates are used, rebuild candidates
+whenever their membership may change. Reuse a prepared topology only for fixed
+bonds or an intentionally fixed sparse candidate set. A complete runnable
+training step is in
+[`examples/flow_matching_velocity.py`](examples/flow_matching_velocity.py).
+
+The built-in collator treats `target` as graph-level metadata. For ragged node
+targets such as `[N_i,3]` velocities, a task collator should call `ELA.collate`
+for the graph batch, concatenate only the velocity targets in exactly the same
+graph-major node order, and return the two together.
+
 ## Prepared hot path
 
 Graph discovery and COO-to-CSR packing should not be repeated for fixed topology.
@@ -253,7 +407,14 @@ output = compiled_forward(batch)
 
 Small graphs use an exact chunked dense reference. Larger graphs use an exact
 3D cell list followed by distance filtering. Both return directed candidates and
-never connect different graphs.
+never connect different graphs. Both paths use float64 geometry for float64
+coordinates and float32 geometry otherwise, so float16/bfloat16 topology does
+not change at the dense/cell dispatch threshold.
+
+`model.prepare(batch, max_neighbors=k)` keeps the nearest distance shells. If
+several candidates tie at the k-th distance, the complete shell is retained;
+the realized degree may exceed `k` only in that degenerate case. This preserves
+node-permutation consistency instead of selecting tied nodes by storage index.
 
 Under fixed cutoff and bounded spatial density, the cell-list path has expected
 
@@ -274,7 +435,7 @@ from equivariant_attention import OrderContext, RefinementRequest
 
 model = ELA(
     input_irreps="32x0e",
-    output_irreps="1x0e + 1x1o",
+    output_irreps="1x0e",
     condition_dim=256,
     order_dim=1,
     coordinate_refinement=True,
@@ -305,6 +466,13 @@ output = model(batch)
   the current tensor row index.
 - Coordinate refinement is a bounded learned outer loop, not a conservative
   integrator.
+
+`output["delta"]` is the accumulated refinement displacement. Each step is
+bounded by `max_step` and is centered according to the requested policy, which
+may explicitly be `"none"`. Without a `RefinementRequest` the value is zero,
+even if `output_irreps` contains a `1o` block. Use node `1o` for supervised
+velocity/displacement fields and use refinement only when the model should
+iteratively mutate its input geometry.
 
 For conservative forces use a scalar energy:
 
@@ -385,14 +553,34 @@ The PyTorch implementation is the numerical reference. Backend selection does
 not alter the model, config, checkpoint, or equations.
 
 ```bash
-ELA_KERNEL_BACKEND=auto    # default
+ELA_KERNEL_BACKEND=auto    # default; PyTorch until a regime is promoted
 ELA_KERNEL_BACKEND=torch   # force reference
 ELA_KERNEL_BACKEND=triton  # fail if unsupported
 ```
 
-The current Triton path accelerates receiver-major CSR reductions and uses
-memory-bounded payload groups in the local operator. Unsupported devices, dtypes,
-or graph regimes fall back to PyTorch in `auto` mode.
+The current Triton path uses degree-dynamic receiver-major CSR reductions,
+cat-free pair/triple payload groups, fused inference gather-weight-reduce for
+four local value families, and direct first-order backward gathers/broadcasts.
+Unsupported devices or dtypes fail closed when forced. `auto` deliberately stays
+on PyTorch because the current complete-stack latency measurements do not satisfy
+the promotion threshold; the forced path is useful for contract and memory
+experiments.
+
+For static prepared shapes, `torch.compile(model.forward_prepared,
+mode="reduce-overhead")` is currently the strongest speed path. A bounded BF16
+diagnostic reached about `0.24x` eager inference time and `0.22x` eager ordinary
+forward/backward time at `N=512, k=32`. This is not a ragged-shape or
+double-backward claim; force/HVP workloads must retain the eager path unless a
+separate compiled higher-order-autograd contract passes.
+
+Tests and profilers can avoid process-global environment mutation:
+
+```python
+from equivariant_attention.triton_ops import kernel_backend
+
+with kernel_backend("triton"):
+    output = model(batch)
+```
 
 Benchmark the same prepared batch and model state:
 
@@ -417,6 +605,10 @@ uv run python scripts/benchmark_ela.py \
 - [`docs/KERNEL_OPTIMIZATION.md`](docs/KERNEL_OPTIMIZATION.md)
 - [`docs/SCALING.md`](docs/SCALING.md)
 - [`docs/CANONICAL_ELA_VALIDATION.md`](docs/CANONICAL_ELA_VALIDATION.md)
+
+Date-stamped studies, `docs/EXPERIMENTS.jsonl`, and documents marked
+**Historical** preserve prior experiments. Their commands may require the Git
+revision recorded in the document and are not part of the current package API.
 
 ## Validation
 

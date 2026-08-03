@@ -63,6 +63,18 @@ batch = ELABatch(
 output = model(batch)
 ```
 
+Task semantics are selected by the declared output representation, not by a
+second task-specific backbone. In particular, a node-wise coordinate velocity
+or learned displacement is an ordinary polar-vector output:
+
+```python
+velocity = model.split_output(output["node"])["1o"].squeeze(-2)
+```
+
+Such a model declares `output_irreps="1x1o"`. This generic vector field is
+distinct from `output["coordinate_delta"]`, which is reserved for the optional
+bounded coordinate-refinement loop and is zero when refinement is not requested.
+
 Scalar-only features use ordinary scalar irreps such as `"32x0e"`. There is no
 parallel `node_dim`, `output_dim`, or scalar-model API.
 
@@ -154,14 +166,19 @@ discovery and reconstruction must be accounted for separately.
 
 ## Kernel policy
 
-The PyTorch prepared path is the numerical contract. Triton currently accelerates
-receiver-major CSR reductions and groups local payloads to reduce peak temporary
-memory. It is an optional execution backend with automatic PyTorch fallback.
+The PyTorch prepared path is the numerical contract. Triton has a contract-tested
+receiver-major CSR backend with degree-dynamic row loops and cat-free pair/triple
+payload reductions. Its forced inference path also fuses the scalar/odd and
+polar/axial sender gather, radial weighting, and receiver reduction; ordinary
+backward uses direct receiver gathers and CSR row broadcasts while higher-order
+autograd falls back to differentiable PyTorch operations. It is an explicit
+experimental backend; `auto` remains on PyTorch until a hardware/runtime regime
+passes the complete-stack promotion gate.
 
 Further optimization priority:
 
-1. fuse local geometry, score, and receiver reductions;
-2. use recomputation for local backward;
+1. extend weighted gather-reduce fusion to tensor and directional local payloads;
+2. add a deterministic training backward for fused local payloads;
 3. add periodic/minimum-image neighbor construction when required;
 4. leave global GEMM/BMM to Inductor and vendor libraries unless profiling proves
    a specific deficit.
