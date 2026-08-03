@@ -83,6 +83,25 @@ def test_markdown_avoids_restricted_or_legacy_math_macros() -> None:
     )
 
 
+def test_display_math_does_not_contain_bare_setext_markers() -> None:
+    offenders: list[str] = []
+    for path in MARKDOWN_FILES:
+        lines, _ = _outside_fenced_code(path.read_text(encoding="utf-8"))
+        in_display_math = False
+        for line_number, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if stripped == "$$":
+                in_display_math = not in_display_math
+            elif in_display_math and re.fullmatch(r"=+", stripped):
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{line_number} ({stripped})"
+                )
+    assert not offenders, (
+        "bare '=' lines inside $$ blocks become Markdown Setext headings; "
+        "keep the relation on an equation line in:\n" + "\n".join(offenders)
+    )
+
+
 def test_markdown_code_fences_are_balanced() -> None:
     offenders: list[str] = []
     for path in MARKDOWN_FILES:

@@ -23,8 +23,7 @@ Every layer first fuses its exact global and sparse local messages as
 
 $$
 \boxed{
-M_i^\ell
-=
+M_i^\ell =
 \text{InvariantFusion}\left(
 G_i^\ell,
 L_i^\ell

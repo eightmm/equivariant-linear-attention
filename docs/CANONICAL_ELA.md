@@ -15,8 +15,7 @@ Every layer forms its branch message as
 
 $$
 \boxed{
-M_i^\ell
-=
+M_i^\ell =
 \text{InvariantFusion}\left(
 G_i^\ell,
 L_i^\ell
@@ -87,16 +86,14 @@ The numerical layer always receives a prepared receiver-major sparse graph.
 For layer `l`:
 
 $$
-\bar h_i^l
-=
+\bar h_i^l =
 \text{EqRMSNorm}_{\text{attn}}(h_i^l).
 $$
 
 The exact global branch is
 
 $$
-G_i^l
-=
+G_i^l =
 \text{ExactGlobalELA}_{l\le2}(\bar h^l)_i.
 $$
 
@@ -107,8 +104,7 @@ attention matrix.
 The exact sparse local branch is
 
 $$
-L_i^l
-=
+L_i^l =
 \text{ExactSparseLocal}_{l\le2}
 (\bar h^l,x,\mathcal E)_i.
 $$
@@ -128,12 +124,10 @@ $$
 define invariant branch magnitudes
 
 $$
-r_{G,i}^{\tau}
-=
+r_{G,i}^{\tau} =
 \sqrt{\text{RMS}(G_i^\tau)^2+\epsilon},
 \qquad
-r_{L,i}^{\tau}
-=
+r_{L,i}^{\tau} =
 \sqrt{\text{RMS}(L_i^\tau)^2+\epsilon}.
 $$
 
@@ -143,8 +137,7 @@ plain mean of the five stored coordinates.
 The router input is invariant:
 
 $$
-z_i
-=
+z_i =
 \left[
 \bar h_i^{0e},
 \log r_{G,i}^{0e},\ldots,\log r_{G,i}^{2o},
@@ -155,8 +148,7 @@ $$
 Positive two-way weights are
 
 $$
-(w_{G,i}^{\tau},w_{L,i}^{\tau})
-=
+(w_{G,i}^{\tau},w_{L,i}^{\tau}) =
 2\text{softmax}[R_\tau(z_i)].
 $$
 
@@ -166,14 +158,12 @@ sector.
 Let
 
 $$
-\rho_i^\tau
-=
+\rho_i^\tau =
 \sqrt{
 \frac{(r_{G,i}^{\tau})^2+(r_{L,i}^{\tau})^2}{2}
 },
 \qquad
-n_i^\tau
-=
+n_i^\tau =
 \sqrt{
 \frac{(w_{G,i}^{\tau})^2+(w_{L,i}^{\tau})^2}{2}
 +\epsilon
@@ -183,13 +173,11 @@ $$
 The RMS-balanced coefficients are
 
 $$
-\widehat w_{G,i}^{\tau}
-=
+\widehat w_{G,i}^{\tau} =
 \frac{\rho_i^\tau w_{G,i}^{\tau}}
 {r_{G,i}^{\tau}n_i^\tau},
 \qquad
-\widehat w_{L,i}^{\tau}
-=
+\widehat w_{L,i}^{\tau} =
 \frac{\rho_i^\tau w_{L,i}^{\tau}}
 {r_{L,i}^{\tau}n_i^\tau}.
 $$
@@ -203,8 +191,7 @@ $$
 the effective coefficients and fused message are
 
 $$
-\widetilde w_{B,i}^{\tau}
-=
+\widetilde w_{B,i}^{\tau} =
 w_{B,i}^{\tau}
 +s^\tau
 \left(
@@ -214,8 +201,7 @@ w_{B,i}^{\tau}
 $$
 
 $$
-M_i^\tau
-=
+M_i^\tau =
 \widetilde w_{G,i}^{\tau}G_i^\tau
 +
 \widetilde w_{L,i}^{\tau}L_i^\tau.
@@ -242,14 +228,12 @@ The fused message enters one parity-complete update and one low-order tensor
 closure:
 
 $$
-\Delta h_{i,\text{msg}}^{\ell}
-=
+\Delta h_{i,\text{msg}}^{\ell} =
 \text{ParityUpdate}\left(M_i^\ell,\widetilde C_i^{0o}\right),
 $$
 
 $$
-\Delta h_{i,\text{tp}}^{\ell}
-=
+\Delta h_{i,\text{tp}}^{\ell} =
 \text{TPClosure}_{l\le2}
 \left(
 \widetilde h_i^\ell,
@@ -260,8 +244,7 @@ $$
 The attention residual is
 
 $$
-\widetilde h_i^\ell
-=
+\widetilde h_i^\ell =
 h_i^\ell
 +
 \text{LayerScale}_{\text{attn}}
@@ -276,14 +259,12 @@ $$
 Then
 
 $$
-\widehat h_i^l
-=
+\widehat h_i^l =
 \text{EqRMSNorm}_{\text{ffn}}(\widetilde h_i^l),
 $$
 
 $$
-h_i^{l+1}
-=
+h_i^{l+1} =
 \widetilde h_i^l
 +
 \text{LayerScale}_{\text{ffn}}
@@ -337,8 +318,7 @@ h^t=\text{ELA}(X,x^t,\mathcal G^t;c),
 $$
 
 $$
-\Delta x^t
-=
+\Delta x^t =
 \text{BoundedVectorHead}(h^t),
 $$
 

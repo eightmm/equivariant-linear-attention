@@ -82,8 +82,7 @@ A `RefinementRequest` with $S$ outer update steps evaluates the ELA stack once
 per update and once more at the final geometry:
 
 $$
-T_{\text{refine}}
-=
+T_{\text{refine}} =
 O\left((S+1)L(N+E)\right)
 $$
 
@@ -129,8 +128,7 @@ Backpropagating through all $S$ refinement steps without recomputation gives a
 conservative bound
 
 $$
-M_{\text{refine,train}}
-=
+M_{\text{refine,train}} =
 O\left((S+1)L(N+E)\right).
 $$
 
@@ -168,8 +166,7 @@ $$
 Fit
 
 $$
-\alpha_N
-=
+\alpha_N =
 \frac{d\log t}{d\log N}.
 $$
 

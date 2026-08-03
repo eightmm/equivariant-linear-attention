@@ -31,8 +31,7 @@ The current Triton backend accelerates receiver-major CSR reductions.
 For edge payload `x_e` and receiver row pointers:
 
 $$
-y_i
-=
+y_i =
 \sum_{e=\text{ptr}_i}^{\text{ptr}_{i+1}-1}x_e.
 $$
 
@@ -76,15 +75,13 @@ The canonical local operator computes positive receiver-normalized sufficient
 statistics:
 
 $$
-w_{ijr}
-=
+w_{ijr} =
 f_c(r_{ij})
 \exp\left[3\tanh(a_{ijr}/3)\right],
 $$
 
 $$
-S_{ir}^{f}
-=
+S_{ir}^{f} =
 \frac{\sum_j w_{ijr}\rho_{ijr}^{f}z_{jr}^{f}}
 {1+\sum_j w_{ijr}}.
 $$
@@ -104,8 +101,7 @@ per-group edge-sized `torch.cat` copy. Its temporary memory is bounded by the
 largest already-produced group:
 
 $$
-M_{\text{payload}}
-=
+M_{\text{payload}} =
 O\left(E\max_k F_k\right)
 $$
 

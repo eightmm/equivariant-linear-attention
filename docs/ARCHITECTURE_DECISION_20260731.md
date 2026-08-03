@@ -10,8 +10,7 @@ The repository has one public architecture:
 
 $$
 \boxed{
-M_i^\ell
-=
+M_i^\ell =
 \text{InvariantFusion}\left(
 G_i^\ell,
 L_i^\ell
