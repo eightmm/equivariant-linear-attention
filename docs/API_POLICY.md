@@ -9,6 +9,11 @@ ELALayer
 ELABatch
 ```
 
+The repository and distribution are named `equivariant-linear-attention`; the
+single Python import root is `equivariant_linear_attention`. The former
+pre-release root `equivariant_attention` is retired rather than shipped as a
+second compatibility namespace.
+
 No public legacy, implicit, AttnRes, conditioned, padded, scalar-only, or
 coordinate-updating model class may be added. Optional capabilities remain
 facades around the same `ELA` and `ELALayer` implementation.
@@ -170,9 +175,9 @@ zero-input bias.
 Order PE uses node-attached semantic coordinates, never the current tensor row
 index.
 
-\[
+$$
 F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
-\]
+$$
 
 Valid examples include residue rank, polymer-backbone rank, trajectory time,
 grid coordinates, and stable topology coordinates. Arbitrary atom serialization
@@ -194,9 +199,9 @@ update mask, centering policy, and optional graph rebuild callback.
 
 Direct refinement is not a conservative integrator. Conservative forces use
 
-\[
+$$
 F_i=-\nabla_{x_i}E.
-\]
+$$
 
 Likewise, a direct `1o` vector output is not automatically conservative. It is
 appropriate for velocity/score/displacement supervision; force conservation
@@ -239,3 +244,11 @@ The package root may expose:
 It must not expose a second backbone, a second architecture layer, or internal
 packed graph/runtime types. The API-policy test guards historical names and the
 irreps-only representation contract.
+
+Internal modules are grouped by responsibility: `geometry` owns sparse graph
+construction and layout, `kernels` owns backend dispatch and optimized kernels,
+and `packing` normalizes external tensor layouts. `model` contains the canonical
+ELA facade implementation, prepared runtime, and refined stack; `nn` contains
+the parity carrier, multipoles, equivariant core/layers, fusion, and generic
+heads. These paths are implementation boundaries, not additional public
+architectures.

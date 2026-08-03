@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import (
+from equivariant_linear_attention import (
     ELA,
     ELABatch,
     IrrepLayout,
@@ -14,7 +14,7 @@ from equivariant_attention import (
     split_irreps,
     st5_to_matrix,
 )
-from equivariant_attention.triton_ops import kernel_backend, triton_available
+from equivariant_linear_attention.kernels.triton import kernel_backend, triton_available
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available() or not triton_available(),

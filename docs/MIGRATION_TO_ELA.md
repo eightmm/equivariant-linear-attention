@@ -11,7 +11,25 @@ ELABatch
 Historical checkpoint helpers remain internal utilities; they do not reintroduce
 historical models as package-root choices.
 
-## 1. Representation migration
+## 1. Package-name migration
+
+The repository and distribution use `equivariant-linear-attention`, while the
+Python package uses underscores:
+
+```python
+from equivariant_linear_attention import ELA, ELABatch
+```
+
+Replace imports rooted at the former pre-release name `equivariant_attention`.
+No compatibility namespace is shipped. Plain configuration dictionaries,
+optimizer dictionaries, and model `state_dict` checkpoints remain compatible
+because their tensor keys do not contain the Python package path.
+
+Pickles of complete model, config, or batch objects are not supported across the
+rename. If such a private artifact exists, load it using its original source
+revision and resave the plain config plus `state_dict` before upgrading.
+
+## 2. Representation migration
 
 Current ELA uses irreps for every input and output representation.
 
@@ -34,7 +52,7 @@ output_dim=1  -> output_irreps="1x0e"
 
 There is no separate scalar model or dimension-based constructor.
 
-## 2. Configuration mapping
+## 3. Configuration mapping
 
 Historical refined configuration:
 
@@ -55,7 +73,7 @@ EquivariantLinearAttentionConfig(
 Current configuration:
 
 ```python
-from equivariant_attention import ELAConfig, ELAFeatures, SparseGeometry
+from equivariant_linear_attention import ELAConfig, ELAFeatures, SparseGeometry
 
 config = ELAConfig(
     input_irreps="32x0e + 4x1o",
@@ -88,10 +106,10 @@ Mapping:
 | `residual_dropout` | training policy, not canonical config |
 | `drop_path_rate` | training policy, not canonical config |
 
-## 3. Config migration helper
+## 4. Config migration helper
 
 ```python
-from equivariant_attention.migration import canonical_config_from_advanced
+from equivariant_linear_attention.migration import canonical_config_from_advanced
 
 config = canonical_config_from_advanced(historical_config)
 ```
@@ -106,11 +124,11 @@ The helper converts invariant conditioning automatically. It fails when:
 Per-layer coordinate mutation is not silently mapped because current refinement
 uses a different outer-loop execution and head schema.
 
-## 4. Checkpoint migration
+## 5. Checkpoint migration
 
 ```python
-from equivariant_attention import ELA
-from equivariant_attention.migration import load_advanced_ela_state
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.migration import load_advanced_ela_state
 
 model = ELA(config)
 receipt = load_advanced_ela_state(model, historical_state_dict)
@@ -128,15 +146,15 @@ mismatches.
 
 A newly initialized router satisfies
 
-\[
+$$
 w_G=w_L=1,
 \qquad
 \beta=0,
-\]
+$$
 
 so shared historical weights begin at the historical `G + L` function.
 
-## 5. Data-call migration
+## 6. Data-call migration
 
 Historical tensor calls:
 
@@ -147,7 +165,7 @@ output = model(node_irreps, positions, graph)
 become:
 
 ```python
-from equivariant_attention import ELABatch
+from equivariant_linear_attention import ELABatch
 
 batch = ELABatch(
     node_irreps=node_irreps,
@@ -165,7 +183,7 @@ batch = model.prepare(batch)
 output = model.forward_prepared(batch)
 ```
 
-## 6. Runtime conditioning
+## 7. Runtime conditioning
 
 ```python
 batch = ELABatch(
@@ -181,7 +199,7 @@ output = model(batch)
 Omitting `condition` bypasses trained conditioner weights entirely. No separate
 conditioned model exists.
 
-## 7. Semantic order
+## 8. Semantic order
 
 Historical checkpoints have no semantic-order encoder. Allocate it explicitly:
 
@@ -199,12 +217,12 @@ Then attach `OrderContext` to `ELABatch.order`. Loading a historical checkpoint
 into a model with a new order encoder requires an explicit initialization
 receipt; the generic migration helper rejects missing non-router keys.
 
-## 8. Coordinate refinement
+## 9. Coordinate refinement
 
 Current refinement is requested through the same model and batch:
 
 ```python
-from equivariant_attention import ELAFeatures, RefinementRequest
+from equivariant_linear_attention import ELAFeatures, RefinementRequest
 
 config = ELAConfig(
     ...,
@@ -231,7 +249,7 @@ output = model(batch)
 Historical per-layer coordinate-head weights are not automatically compatible
 with this outer-loop head.
 
-## 9. Removed public mechanisms
+## 10. Removed public mechanisms
 
 Do not migrate the following into `ELAConfig`:
 
@@ -245,7 +263,7 @@ node_dim/output_dim representation aliases
 
 They are not public architecture options.
 
-## 10. Checkpoint receipt
+## 11. Checkpoint receipt
 
 Store:
 

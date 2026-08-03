@@ -8,7 +8,7 @@ Status: implemented on `main`.
 
 The repository has one public architecture:
 
-\[
+$$
 \boxed{
 \text{exact global equivariant linear attention}
 +
@@ -16,7 +16,7 @@ The repository has one public architecture:
 +
 \text{invariant branch-aware fusion}
 }
-\]
+$$
 
 The public computational objects are:
 
@@ -71,15 +71,15 @@ router combines them sector by sector.
 
 The router is identity initialized:
 
-\[
+$$
 (w_G^\tau,w_L^\tau)=(1,1),
-\]
+$$
 
 so the initial function is
 
-\[
+$$
 M^\tau=G^\tau+L^\tau.
-\]
+$$
 
 Implicit Gaussian--Taylor full-state transport is not part of the public
 architecture. It overlaps the global sufficient-statistic role, smooths the full
@@ -195,9 +195,9 @@ Backend selection remains execution policy, not architecture configuration.
 For `N` nodes, `E` directed candidates, and `L` layers, fixed widths and ranks
 give
 
-\[
+$$
 T=O(L(N+E)).
-\]
+$$
 
 Node-linear arithmetic additionally requires `E = O(N)`. Neighbor discovery is
 reported separately.
@@ -205,9 +205,9 @@ reported separately.
 With `S` coordinate-refinement steps, ELA is evaluated approximately `S+1`
 times:
 
-\[
+$$
 O((S+1)L(N+E)),
-\]
+$$
 
 excluding graph reconstruction.
 

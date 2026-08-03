@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 import torch
 
-from equivariant_attention.graph_layout import PackedGraphLayout, pack_graph_layout
+from equivariant_linear_attention.geometry.layout import PackedGraphLayout, pack_graph_layout
 
 
 def _batch_from_counts(counts: Sequence[int]) -> torch.Tensor:

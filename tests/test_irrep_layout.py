@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from equivariant_attention.irreps import (
+from equivariant_linear_attention.irreps import (
     CartesianIrreps,
     Irrep,
     IrrepBlock,

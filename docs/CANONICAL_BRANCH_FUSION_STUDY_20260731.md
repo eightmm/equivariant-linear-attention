@@ -27,7 +27,7 @@ Before reading a downstream metric:
 
 - generic proper and improper O(3), translation, node permutation, graph
   isolation, and edge-order tests pass;
-- scalar and non-scalar input/output irreps through \(l=2\) transform correctly;
+- scalar and non-scalar input/output irreps through $l=2$ transform correctly;
 - input and coordinate double backward are finite;
 - CUDA FP32 and BF16 forward/backward pass;
 - all common outputs and gradients in the raw-control/canonical compatibility
@@ -38,8 +38,8 @@ Before reading a downstream metric:
 Five fresh-process AB/BA order pairs (exact seeds `0..4`) are run for each of
 two task-like shapes:
 
-- QM9-like: \(N=128,\ k=8,\ width=64,\ depth=3\);
-- LBA-like: \(N=512,\ k=32,\ width=64,\ depth=3\).
+- QM9-like: $N=128,\ k=8,\ width=64,\ depth=3$;
+- LBA-like: $N=512,\ k=32,\ width=64,\ depth=3$.
 
 Promotion requires, per shape:
 

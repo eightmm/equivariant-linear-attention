@@ -6,12 +6,12 @@ from math import sqrt
 import torch
 from torch import nn
 
-from .canonical_se3 import CanonicalMultipoleSE3Core, _CanonicalMultipoleBlock
-from .graph_layout import PackedGraphLayout
-from .irreps import IrrepLayout
-from .multipole_ops import NodeMultipoles
-from .neighbors import PackedNeighborGraph
-from .parity_se3 import (
+from ..geometry.layout import PackedGraphLayout
+from ..geometry.neighbors import PackedNeighborGraph
+from ..irreps import IrrepLayout
+from .core import CanonicalMultipoleSE3Core, _CanonicalMultipoleBlock
+from .multipoles import NodeMultipoles
+from .parity import (
     _ChannelMix,
     _ParityCompleteBlock,
     _ParityState,

@@ -7,7 +7,7 @@ from math import isfinite
 import torch
 from torch import nn
 
-from .parity_se3 import _ParityState, _st_square
+from .parity import _ParityState, _st_square
 
 
 MessageTuple = tuple[torch.Tensor, ...]

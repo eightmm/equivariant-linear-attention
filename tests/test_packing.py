@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.data import collate_graphs, pack_edges, pack_node_input
+from equivariant_linear_attention.packing import collate_graphs, pack_edges, pack_node_input
 
 
 def _padded_input() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

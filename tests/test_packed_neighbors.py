@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 import torch
 
-from equivariant_attention.neighbors import (
+from equivariant_linear_attention.geometry.neighbors import (
     PackedNeighborGraph,
     _select_index_dtype,
     build_receiver_csr,

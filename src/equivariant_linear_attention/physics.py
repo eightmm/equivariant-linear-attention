@@ -8,8 +8,8 @@ from typing import ClassVar, Mapping
 import torch
 from torch import nn
 
-from .heads import EquivariantVectorHead
-from .pooling import MaskedInvariantPooling
+from .nn.heads import EquivariantVectorHead
+from .nn.pooling import MaskedInvariantPooling
 
 
 class ScalarEnergyHead(nn.Module):

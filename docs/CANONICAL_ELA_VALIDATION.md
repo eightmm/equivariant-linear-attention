@@ -94,8 +94,8 @@ The PyTorch path is the numerical reference. Focused tests cover:
 Run backend tests directly:
 
 ```bash
-uv run pytest -q tests/test_triton_ops.py
-uv run pytest -q tests/test_triton_ops_cuda.py
+uv run pytest -q tests/test_kernel_triton.py
+uv run pytest -q tests/test_kernel_triton_cuda.py
 uv run pytest -q tests/test_triton_equivariance_cuda.py
 ```
 

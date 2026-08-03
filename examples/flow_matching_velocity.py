@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 
 def center_per_graph(

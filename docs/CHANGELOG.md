@@ -10,6 +10,22 @@ Components: `data`, `model`, `training`, `eval`, `ckpt`, `config`.
 
 ## Unreleased
 
+- [model] v0.25 -> v0.26 (2026-08-03) — align the repository, distribution,
+  and Python namespace as `equivariant-linear-attention` /
+  `equivariant_linear_attention`, remove the unused placeholder CLI, and group
+  sparse geometry, execution kernels, model orchestration, and equivariant
+  operators behind dedicated `geometry`, `kernels`, `model`, and `nn` packages
+  while renaming packing/runtime/stack modules by responsibility. impact:
+  package-root exports, constructor signatures,
+  equations, parameter names, and plain `state_dict` checkpoints are unchanged;
+  the unreleased `equivariant_attention` import root and whole-object Python
+  pickles are intentionally unsupported.
+- [model] v0.24 -> v0.25 (2026-08-03) — allocate bucketed global-attention
+  receiver buffers from the computed contraction rather than the FP32 input
+  template. impact: ragged multi-graph batches now preserve the CUDA autocast
+  output dtype instead of failing when BF16/FP16 contractions are scattered
+  into the bucketed layout; deterministic bucketed BF16 forward/backward and
+  the dependency-free training example pass.
 - [model] v0.23 -> v0.24 (2026-08-02) — replace the remaining forced-Triton
   first-order `repeat_interleave` gradients with direct multi-output receiver
   gathers and CSR row broadcasts, and fuse inference sender gather, invariant

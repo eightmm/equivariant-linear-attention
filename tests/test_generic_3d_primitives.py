@@ -3,16 +3,16 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention.heads import (
+from equivariant_linear_attention.nn.heads import (
     CoordinateUpdateHead,
     EquivariantVectorHead,
 )
-from equivariant_attention.physics import (
+from equivariant_linear_attention.physics import (
     DirectVectorForceHead,
     ScalarEnergyHead,
     conservative_forces,
 )
-from equivariant_attention.pooling import MaskedInvariantPooling
+from equivariant_linear_attention.nn.pooling import MaskedInvariantPooling
 
 
 def _orthogonal(*, reflection: bool = False) -> torch.Tensor:

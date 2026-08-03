@@ -6,8 +6,8 @@ import sys
 
 import torch
 
-from equivariant_attention import ELA, ELABatch
-from equivariant_attention.inference import autocast_dtype, prepare_for_inference
+from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention.inference import autocast_dtype, prepare_for_inference
 
 
 def _comparison_tolerance(dtype: torch.dtype, *, automatic: bool) -> float:

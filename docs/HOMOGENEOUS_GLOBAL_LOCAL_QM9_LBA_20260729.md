@@ -5,13 +5,13 @@
 The primary candidate in this packet is **not** LGL.  It is the homogeneous
 update
 
-\[
+$$
 H_{t+1} =
 \operatorname{FFN}_t\!\left(
 H_t + G_t(H_t, X)
 + \mathbf{1}[t \in \{0,2\}]S_t(H_t, X, E)
 \right),
-\]
+$$
 
 where every one of the three blocks retains all four exact factorized global
 heads.  `S_t` is an additive rank-4 sparse local residual at blocks 0 and 2;

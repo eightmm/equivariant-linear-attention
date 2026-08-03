@@ -5,7 +5,7 @@ from contextlib import nullcontext
 import pytest
 import torch
 
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 
 def _fixed_degree_edges(
@@ -83,3 +83,60 @@ def test_canonical_ela_cuda_forward_backward(
     assert torch.count_nonzero(router.weight.grad) > 0
     expected_dtype = torch.float32 if precision == "float32" else torch.bfloat16
     assert output.dtype == expected_dtype
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
+    reason="CUDA BF16 is unavailable",
+)
+def test_canonical_ela_bucketed_cuda_autocast_forward_backward() -> None:
+    torch.manual_seed(53)
+    device = torch.device("cuda")
+    counts = torch.tensor([2, 3, 4, 17], device=device)
+    ptr = torch.cat((counts.new_zeros(1), counts.cumsum(0)))
+    nodes = int(ptr[-1].item())
+    node_index = torch.arange(nodes, device=device)
+    features = torch.randn(
+        nodes,
+        8,
+        device=device,
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    positions = torch.randn(
+        nodes,
+        3,
+        device=device,
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    model = ELA(
+        input_irreps="8x0e",
+        output_irreps="1x0e",
+        width=16,
+        depth=1,
+    ).to(device=device, dtype=torch.float32)
+    batch = model.prepare(
+        ELABatch(
+            node_irreps=features,
+            positions=positions,
+            ptr=ptr,
+            edge_index=torch.stack((node_index, node_index)),
+        )
+    )
+    assert batch._prepared_graph is not None
+    assert batch._prepared_graph.graph_layout.structure == "bucketed"
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        output = model.forward_prepared(batch)["node_irreps"]
+        loss = output.float().square().mean()
+    loss.backward()
+
+    assert output.dtype == torch.bfloat16
+    assert torch.isfinite(output).all()
+    assert features.grad is not None and torch.isfinite(features.grad).all()
+    assert positions.grad is not None and torch.isfinite(positions.grad).all()
+    global_value = model.layers[0].global_scalar_value.weight
+    assert global_value.grad is not None
+    assert torch.isfinite(global_value.grad).all()
+    assert torch.count_nonzero(global_value.grad) > 0

@@ -13,7 +13,7 @@ ELABatch
 
 Every layer evaluates one homogeneous operator:
 
-\[
+$$
 \boxed{
 \operatorname{ELA}
 =
@@ -21,7 +21,7 @@ Every layer evaluates one homogeneous operator:
 +
 \operatorname{ExactSparseLocalResidual}
 }
-\]
+$$
 
 Molecules, proteins, particles, point clouds, and meshes use the same equations.
 They differ only in declared irreps, sparse geometry, optional context, and task
@@ -29,14 +29,14 @@ heads.
 
 The persistent hidden carrier is derived internally:
 
-\[
+$$
 C_0\times0e
 \oplus C_{0o}\times0o
 \oplus C_{1o}\times1o
 \oplus C_{1e}\times1e
 \oplus C_{2e}\times2e
 \oplus C_{2o}\times2o.
-\]
+$$
 
 Users do not select hidden irreps, head count, or local rank.
 
@@ -54,9 +54,9 @@ There is no parallel `node_dim`, `output_dim`, or scalar-only model API.
 
 The public call receives one `ELABatch`:
 
-\[
+$$
 \mathcal B=(X,x,\operatorname{ptr},\mathcal E,c,o,r),
-\]
+$$
 
 where
 
@@ -68,9 +68,9 @@ where
 
 Positions remain separate because
 
-\[
+$$
 x_i\mapsto Rx_i+t,
-\]
+$$
 
 while an irrep feature transforms linearly.
 
@@ -81,19 +81,19 @@ The numerical layer always receives a prepared receiver-major sparse graph.
 
 For layer `l`:
 
-\[
+$$
 \bar h_i^l
 =
 \operatorname{EqRMSNorm}_{\rm attn}(h_i^l).
-\]
+$$
 
 The exact global branch is
 
-\[
+$$
 G_i^l
 =
 \operatorname{ExactGlobalELA}_{l\le2}(\bar h^l)_i.
-\]
+$$
 
 It uses a finite positive feature map, graph sufficient statistics, and an
 augmented numerator/denominator contraction. It does not form an `N x N`
@@ -101,12 +101,12 @@ attention matrix.
 
 The exact sparse local branch is
 
-\[
+$$
 L_i^l
 =
 \operatorname{ExactSparseLocal}_{l\le2}
 (\bar h^l,x,\mathcal E)_i.
-\]
+$$
 
 It retains compact cutoff, radial basis, edge direction, relation metadata,
 tensor contractions, receiver normalization, and aggregate chirality. It has no
@@ -116,13 +116,13 @@ persistent edge hidden state.
 
 For sector
 
-\[
+$$
 \tau\in\{0e,0o,1o,1e,2e,2o\},
-\]
+$$
 
 define invariant branch magnitudes
 
-\[
+$$
 r_{G,i}^{\tau}
 =
 \sqrt{\operatorname{RMS}(G_i^\tau)^2+\epsilon},
@@ -130,14 +130,14 @@ r_{G,i}^{\tau}
 r_{L,i}^{\tau}
 =
 \sqrt{\operatorname{RMS}(L_i^\tau)^2+\epsilon}.
-\]
+$$
 
 For compact ST5 tensors, RMS uses the represented Frobenius norm rather than a
 plain mean of the five stored coordinates.
 
 The router input is invariant:
 
-\[
+$$
 z_i
 =
 \left[
@@ -145,34 +145,34 @@ z_i
 \log r_{G,i}^{0e},\ldots,\log r_{G,i}^{2o},
 \log r_{L,i}^{0e},\ldots,\log r_{L,i}^{2o}
 \right].
-\]
+$$
 
 Positive two-way weights are
 
-\[
+$$
 (w_{G,i}^{\tau},w_{L,i}^{\tau})
 =
 2\operatorname{softmax}[R_\tau(z_i)].
-\]
+$$
 
 The same invariant scalar weight is broadcast over every component of one irrep
 sector.
 
 Router and branch-balance parameters are zero initialized:
 
-\[
+$$
 R_\tau=0,
 \qquad
 \beta_\tau=0.
-\]
+$$
 
 Therefore
 
-\[
+$$
 w_G^\tau=w_L^\tau=1,
 \qquad
 M_i^\tau=G_i^\tau+L_i^\tau
-\]
+$$
 
 at initialization. The model starts from the established additive equation and
 learns branch preference only when gradients support it.
@@ -182,13 +182,13 @@ learns branch preference only when gradients support it.
 The fused message enters one parity-complete update and one low-order tensor
 closure:
 
-\[
+$$
 \Delta h_{i,\rm msg}^{l}
 =
 \operatorname{ParityUpdate}(M_i^l),
-\]
+$$
 
-\[
+$$
 \Delta h_{i,\rm tp}^{l}
 =
 \operatorname{TPClosure}_{l\le2}
@@ -196,11 +196,11 @@ closure:
 \widetilde h_i^l,
 A_i^{\rm multipole}
 \right).
-\]
+$$
 
 The attention residual is
 
-\[
+$$
 \widetilde h_i^l
 =
 h_i^l
@@ -212,24 +212,24 @@ h_i^l
 +
 \Delta h_{i,\rm tp}^{l}
 \right).
-\]
+$$
 
 Then
 
-\[
+$$
 \widehat h_i^l
 =
 \operatorname{EqRMSNorm}_{\rm ffn}(\widetilde h_i^l),
-\]
+$$
 
-\[
+$$
 h_i^{l+1}
 =
 \widetilde h_i^l
 +
 \operatorname{LayerScale}_{\rm ffn}
 \operatorname{EqFFN}(\widehat h_i^l).
-\]
+$$
 
 Even-scalar nonlinearities operate directly. Pseudoscalar, vector, and tensor
 updates use invariant scalar gates.
@@ -255,9 +255,9 @@ IDs, periodicity, and an enable mask.
 
 The contract is
 
-\[
+$$
 F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
-\]
+$$
 
 Semantic coordinates may represent residue rank, polymer rank, time, or stable
 grid coordinates. Tensor row index is never inferred as order.
@@ -273,19 +273,19 @@ other invariant condition.
 `ELAFeatures.coordinate_refinement=True` allocates one zero-initialized `1o`
 displacement head. A `RefinementRequest` in the batch activates an outer loop:
 
-\[
+$$
 h^t=\operatorname{ELA}(X,x^t,\mathcal G^t;c),
-\]
+$$
 
-\[
+$$
 \Delta x^t
 =
 \operatorname{BoundedVectorHead}(h^t),
-\]
+$$
 
-\[
+$$
 x^{t+1}=x^t+\Delta x^t.
-\]
+$$
 
 The request controls step count, maximum displacement, update mask, centering,
 and optional graph reconstruction. Without a rebuilder, candidate topology is
@@ -294,19 +294,19 @@ reused while continuous geometry is recomputed.
 Refinement remains an execution mode of the same ELA architecture. For
 conservative forces use
 
-\[
+$$
 F_i=-\nabla_{x_i}E.
-\]
+$$
 
 ## 9. Readouts
 
 The projected output is returned per node. Two graph reductions are provided:
 
-\[
+$$
 h_g^{\rm sum}=\sum_{i\in g}h_i,
 \qquad
 h_g^{\rm mean}=\frac{h_g^{\rm sum}}{N_g}.
-\]
+$$
 
 `graph_irreps` and `graph` denote the mean. `graph_sum` is available for
 extensive additive quantities. These reductions preserve the transformation law
@@ -316,24 +316,24 @@ of each output irrep sector.
 
 For `N` nodes, `E` directed candidates, `L` layers, and fixed widths/ranks:
 
-\[
+$$
 T=O\left(L(N+E)\right).
-\]
+$$
 
 Branch routing and optional node-level condition add `O(LN)`. With `S`
 refinement steps, the stack is evaluated approximately `S+1` times:
 
-\[
+$$
 O\left((S+1)L(N+E)\right)
-\]
+$$
 
 before neighbor reconstruction cost.
 
 Node-linear arithmetic additionally requires
 
-\[
+$$
 E=O(N).
-\]
+$$
 
 ## 11. Public architecture policy
 

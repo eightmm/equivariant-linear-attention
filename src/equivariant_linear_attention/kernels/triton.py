@@ -1278,18 +1278,18 @@ def install_triton_backend() -> None:
     global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
     if _BACKEND_INSTALLED:
         return
-    from . import canonical_se3, multipole_ops, parity_se3
-    from .optimized_local import triton_local_message
+    from ..nn import core, multipoles, parity
+    from .local import triton_local_message
 
-    _ORIGINAL_CSR_SUMS["parity_se3"] = parity_se3._csr_sum
-    _ORIGINAL_CSR_SUMS["canonical_se3"] = canonical_se3._csr_sum
-    parity_se3._csr_sum = _trusted_csr_sum
-    canonical_se3._csr_sum = _trusted_csr_sum
-    if hasattr(multipole_ops, "_csr_sum"):
-        _ORIGINAL_CSR_SUMS["multipole_ops"] = multipole_ops._csr_sum
-        multipole_ops._csr_sum = _trusted_csr_sum
+    _ORIGINAL_CSR_SUMS["parity"] = parity._csr_sum
+    _ORIGINAL_CSR_SUMS["core"] = core._csr_sum
+    parity._csr_sum = _trusted_csr_sum
+    core._csr_sum = _trusted_csr_sum
+    if hasattr(multipoles, "_csr_sum"):
+        _ORIGINAL_CSR_SUMS["multipoles"] = multipoles._csr_sum
+        multipoles._csr_sum = _trusted_csr_sum
 
-    block = canonical_se3._CanonicalMultipoleBlock
+    block = core._CanonicalMultipoleBlock
     _ORIGINAL_LOCAL_MESSAGE = block._local_message
     block._ela_torch_local_message = block._local_message
     block._local_message = triton_local_message
@@ -1302,13 +1302,13 @@ def uninstall_triton_backend() -> None:
     global _BACKEND_INSTALLED, _ORIGINAL_LOCAL_MESSAGE
     if not _BACKEND_INSTALLED:
         return
-    from . import canonical_se3, multipole_ops, parity_se3
+    from ..nn import core, multipoles, parity
 
-    parity_se3._csr_sum = _ORIGINAL_CSR_SUMS["parity_se3"]
-    canonical_se3._csr_sum = _ORIGINAL_CSR_SUMS["canonical_se3"]
-    if "multipole_ops" in _ORIGINAL_CSR_SUMS:
-        multipole_ops._csr_sum = _ORIGINAL_CSR_SUMS["multipole_ops"]
-    block = canonical_se3._CanonicalMultipoleBlock
+    parity._csr_sum = _ORIGINAL_CSR_SUMS["parity"]
+    core._csr_sum = _ORIGINAL_CSR_SUMS["core"]
+    if "multipoles" in _ORIGINAL_CSR_SUMS:
+        multipoles._csr_sum = _ORIGINAL_CSR_SUMS["multipoles"]
+    block = core._CanonicalMultipoleBlock
     if _ORIGINAL_LOCAL_MESSAGE is not None:
         block._local_message = _ORIGINAL_LOCAL_MESSAGE
     if hasattr(block, "_ela_torch_local_message"):

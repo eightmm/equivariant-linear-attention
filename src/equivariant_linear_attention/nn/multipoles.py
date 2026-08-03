@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from .parity_se3 import (
+from .parity import (
     _ChannelMix,
     _ParityState,
     _StaticGeometry,

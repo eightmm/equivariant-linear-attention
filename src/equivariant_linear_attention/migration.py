@@ -5,10 +5,10 @@ from dataclasses import dataclass, fields
 
 import torch
 
-from .branch_fusion import RMSAwareBranchFusion
-from .canonical import ELA, ELAConfig, SparseGeometry
 from .context import ELAFeatures
-from .equivariant_linear_attention import EquivariantLinearAttentionConfig
+from .model.ela import ELA, ELAConfig, SparseGeometry
+from .model.stack import EquivariantLinearAttentionConfig
+from .nn.fusion import RMSAwareBranchFusion
 
 
 @dataclass(frozen=True, slots=True)

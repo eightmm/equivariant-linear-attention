@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from equivariant_attention import ELA
+from equivariant_linear_attention import ELA
 
 
 class ToyMoleculeDataset(Dataset[dict[str, torch.Tensor]]):
@@ -40,7 +40,12 @@ class ToyMoleculeDataset(Dataset[dict[str, torch.Tensor]]):
 
 def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    compute_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    if device.type == "cuda":
+        compute_dtype = (
+            torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        )
+    else:
+        compute_dtype = torch.float32
     dataset = ToyMoleculeDataset()
     loader = DataLoader(
         dataset,
@@ -64,7 +69,6 @@ def main() -> None:
     for batch in loader:
         batch = batch.to(
             device,
-            dtype=compute_dtype,
             non_blocking=True,
         )
         if batch.target is None:

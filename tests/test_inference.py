@@ -2,8 +2,8 @@ import pytest
 import torch
 from torch import nn
 
-from equivariant_attention import ELA, ELABatch
-from equivariant_attention.inference import (
+from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention.inference import (
     _AutocastInferenceModule,
     _resolve_dtype,
     autocast_dtype,

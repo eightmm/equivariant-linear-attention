@@ -7,13 +7,13 @@ from typing import Any
 import torch
 
 from .context import ELAContext, OrderContext, RefinementRequest
-from .data import (
+from .packing import (
     BatchLayout,
     collate_graphs as _collate_mappings,
     pack_edges,
     pack_node_input,
 )
-from .unified import Prepared3DGraph
+from .geometry.prepared import Prepared3DGraph
 
 _INTEGER_DTYPES = frozenset(
     {torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8}

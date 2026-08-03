@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.multipole_ops import (
+from equivariant_linear_attention.nn.multipoles import (
     NodeMultipoles,
     _LowOrderTensorClosure,
     _ParitySectorNorm,
     _st_commutator_vector,
     _st_jordan_product,
 )
-from equivariant_attention.parity_se3 import _ParityState
+from equivariant_linear_attention.nn.parity import _ParityState
 
 
 def _st_to_matrix(value: torch.Tensor) -> torch.Tensor:

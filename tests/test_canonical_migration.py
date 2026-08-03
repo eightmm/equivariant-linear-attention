@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import ELA
-from equivariant_attention.equivariant_linear_attention import (
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.model.stack import (
     EquivariantLinearAttention,
     EquivariantLinearAttentionConfig,
 )
-from equivariant_attention.migration import (
+from equivariant_linear_attention.migration import (
     canonical_config_from_advanced,
     load_advanced_ela_state,
 )

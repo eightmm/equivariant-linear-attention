@@ -21,7 +21,7 @@ ELABatch
 
 Every layer evaluates
 
-\[
+$$
 \boxed{
 \text{exact global equivariant linear attention}
 +
@@ -29,7 +29,7 @@ Every layer evaluates
 +
 \text{invariant global/local fusion}
 }
-\]
+$$
 
 The hidden carrier is parity-complete over
 
@@ -44,7 +44,7 @@ input.
 ## Public API
 
 ```python
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 model = ELA(
     input_irreps="32x0e + 4x1o",
@@ -81,7 +81,7 @@ parallel `node_dim`, `output_dim`, or scalar-model API.
 Advanced config types remain available for reproducibility:
 
 ```python
-from equivariant_attention import (
+from equivariant_linear_attention import (
     ELAConfig,
     ELAFeatures,
     OrderContext,
@@ -91,6 +91,36 @@ from equivariant_attention import (
 ```
 
 No second backbone or architecture layer is public.
+
+## Naming and source-layout contract
+
+The repository, Python distribution, and any future command-line entry point use
+the project name `equivariant-linear-attention`. Python import syntax uses the
+matching underscore form:
+
+```python
+from equivariant_linear_attention import ELA, ELABatch
+```
+
+There is one import root: `equivariant_linear_attention`. The pre-release
+`equivariant_attention` name is retired without a compatibility namespace;
+shipping two roots would conflict with the one-package-root API policy. Official
+checkpoints contain plain configuration dictionaries and `state_dict` values,
+whose parameter keys are independent of the Python module path. Pickling an
+entire model/config object is not a supported checkpoint format.
+
+Source modules follow dependency-oriented boundaries:
+
+- the package root exports only the public API;
+- data packing and `ELABatch` own external tensor normalization;
+- geometry owns prepared graphs, layouts, neighbors, and radius construction;
+- kernels own backend policy and optional optimized implementations;
+- `model` owns ELA configuration and stack/runtime orchestration;
+- `nn` owns equivariant states, multipoles, layers, fusion, and generic heads;
+- physics, inference, and migration remain consumers of those lower layers.
+
+Internal file moves must preserve package-root exports, constructor signatures,
+`state_dict` keys, numerical outputs, gradients, and equivariance contracts.
 
 ## Dependency-free data policy
 
@@ -149,15 +179,15 @@ public model choices.
 
 For `N` nodes, `E` directed candidates, and `L` layers at fixed widths and ranks:
 
-\[
+$$
 T=O\left(L(N+E)\right).
-\]
+$$
 
 Node-linear execution requires
 
-\[
+$$
 E=O(N).
-\]
+$$
 
 The exact cell-list radius path has expected `O(N+E)` work under bounded density
 and fixed cutoff, but worst-case work can remain quadratic. A refinement request

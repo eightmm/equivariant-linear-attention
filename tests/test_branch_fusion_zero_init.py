@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.branch_fusion import RMSAwareBranchFusion
-from equivariant_attention.parity_se3 import _ParityState
+from equivariant_linear_attention.nn.fusion import RMSAwareBranchFusion
+from equivariant_linear_attention.nn.parity import _ParityState
 
 
 def test_zero_initialized_router_and_balance_path_wake_up() -> None:

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.unified import (
+from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.model.runtime import (
     Unified3DConfig,
     UnifiedEquivariantAttention,
-    prepare_3d_graph,
 )
-from equivariant_attention.multipole_ops import _c2_cutoff
+from equivariant_linear_attention.nn.multipoles import _c2_cutoff
 
 
 def _complete_edge_index(num_nodes: int) -> torch.Tensor:

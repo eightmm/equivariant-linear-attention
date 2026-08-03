@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention.branch_fusion import RMSAwareBranchFusion
-from equivariant_attention.parity_se3 import _ParityState
+from equivariant_linear_attention.nn.fusion import RMSAwareBranchFusion
+from equivariant_linear_attention.nn.parity import _ParityState
 
 
 def _state(nodes: int = 5, width: int = 12, heads: int = 3) -> _ParityState:

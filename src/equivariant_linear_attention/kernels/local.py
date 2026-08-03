@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from .canonical_se3 import _safe_unit_direction
-from .multipole_ops import _normalize_st
-from .parity_se3 import (
+from ..nn.multipoles import _normalize_st, _safe_unit_direction
+from ..nn.parity import (
     _ParityState,
     _StaticGeometry,
     _compute_dtype,
@@ -13,7 +12,7 @@ from .parity_se3 import (
     _st_inner,
     _st_matvec,
 )
-from .triton_ops import (
+from .triton import (
     _trusted_csr_sum_many,
     _trusted_weighted_gather_reduce_pair,
     active_backend,

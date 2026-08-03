@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:

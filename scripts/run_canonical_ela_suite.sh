@@ -78,7 +78,7 @@ uv run --locked pytest -q \
   tests/test_api_policy.py \
   tests/test_elabatch_api.py \
   tests/test_dependency_free_radius_graph.py \
-  tests/test_triton_ops.py \
+  tests/test_kernel_triton.py \
   tests/test_branch_fusion.py \
   tests/test_branch_fusion_zero_init.py \
   tests/test_canonical_api.py \
@@ -91,7 +91,7 @@ uv run --locked pytest -q \
 if [[ "$DEVICE" == cuda* ]]; then
   uv run --locked pytest -q \
     tests/test_canonical_cuda.py \
-    tests/test_triton_ops_cuda.py \
+    tests/test_kernel_triton_cuda.py \
     2>&1 | tee "$RUN_DIR/cuda-focused.log"
 fi
 

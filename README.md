@@ -12,7 +12,7 @@ ELABatch  one graph container
 
 Every layer combines
 
-\[
+$$
 \boxed{
 \text{exact global equivariant linear attention}
 +
@@ -20,16 +20,32 @@ Every layer combines
 +
 \text{invariant global/local fusion}
 }
-\]
+$$
 
 without constructing a dense `N x N` attention matrix. The core package does not
 require PyG or DGL.
 
+Start with [installation](#install), [the minimal example](#quick-start),
+[batching](#mini-batches-without-pyg), [task outputs](#output-contract),
+[flow matching](#flow-matching-velocity-and-learned-displacement), or
+[performance](#prepared-hot-path) and [validation](#validation).
+
 ## Install
 
+Source installation requires Python 3.12+ and
+[`uv`](https://docs.astral.sh/uv/):
+
 ```bash
+git clone https://github.com/eightmm/equivariant-linear-attention.git
+cd equivariant-linear-attention
 uv sync --locked
+uv run python examples/train_without_pyg.py
 ```
+
+The repository and distribution use the hyphenated name
+`equivariant-linear-attention`; Python imports use the matching underscore form
+`equivariant_linear_attention`. The former pre-release import root
+`equivariant_attention` is not shipped.
 
 Triton is optional. PyTorch remains the default numerical backend. A compatible
 Triton runtime can be forced for contract-tested experiments and benchmarks.
@@ -42,7 +58,7 @@ channels is written as `"32x0e"`.
 ```python
 import torch
 
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 model = ELA(
     input_irreps="32x0e",
@@ -64,11 +80,15 @@ graph_prediction = output["graph"]
 ```
 
 When `edge_index` is omitted, ELA constructs exact geometric radius candidates
-from `positions` and the model cutoff.
+from `positions` and the model cutoff. These candidates are directed and include
+self edges; provide explicit topology when that is not the desired graph
+semantics.
 
 ## General equivariant inputs and outputs
 
 ```python
+from equivariant_linear_attention import ELA
+
 model = ELA(
     input_irreps="32x0e + 4x1o + 1x1e",
     output_irreps="1x0e + 2x1o",
@@ -95,9 +115,9 @@ available for structured construction.
 
 Positions remain a separate affine input because
 
-\[
+$$
 x_i \mapsto R x_i + t,
-\]
+$$
 
 whereas an ordinary `1o` feature transforms only as `v -> Rv`.
 
@@ -105,7 +125,7 @@ Build mixed inputs with the declared layout instead of concatenating blocks by
 hand:
 
 ```python
-from equivariant_attention import pack_irreps
+from equivariant_linear_attention import pack_irreps
 
 input_irreps = "8x0e + 2x1o"
 node_irreps = pack_irreps(
@@ -122,12 +142,20 @@ node_irreps = pack_irreps(
 Use receiver/sender COO when graph semantics matter:
 
 ```python
+from equivariant_linear_attention import ELA, ELABatch
+
+model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
+    num_edge_types=4,
+)
+
 batch = ELABatch(
     node_irreps=x,
     positions=pos,
     ptr=ptr,
     edge_index=edge_index,          # [2, E]
-    edge_relation_id=edge_type,     # [E], optional
+    edge_relation_id=edge_type,     # [E], values in [0, 4)
 )
 
 output = model(batch)
@@ -203,20 +231,45 @@ sample = {
 }
 ```
 
+If a sample supplies `edge_type`, construct the model with matching
+`num_edge_types` or `relation_cutoffs`. Untyped models should omit `edge_type`.
+
 ```python
+import torch
 from torch.utils.data import DataLoader
+
+from equivariant_linear_attention import ELA
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == "cuda":
+    compute_dtype = (
+        torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    )
+else:
+    compute_dtype = torch.float32
+model = ELA(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
+).to(device)
 
 loader = DataLoader(
     dataset,
     batch_size=16,
     shuffle=True,
-    pin_memory=True,
+    pin_memory=device.type == "cuda",
     collate_fn=ELA.collate,
 )
 
 for batch in loader:
-    batch = batch.to("cuda", dtype=torch.bfloat16, non_blocking=True)
-    output = model(batch)
+    # Keep model parameters, input features, and geometry in FP32. Autocast
+    # selects lower precision only for supported CUDA operators.
+    batch = batch.to(device, non_blocking=True)
+    with torch.autocast(
+        device_type=device.type,
+        dtype=compute_dtype,
+        enabled=device.type == "cuda",
+    ):
+        output = model(batch)
     loss = loss_fn(output["graph"].float(), batch.target.float())
 ```
 
@@ -240,17 +293,16 @@ coordinate_delta  alias: delta
 `graph_irreps` is the graph-wise mean. `graph_sum` is provided for extensive
 quantities such as additive total energies.
 
-For `D_out = sum(multiplicity * (2*l + 1))`, common choices are shown below;
-`K` means a positive integer multiplicity such as `3x0e`.
+For `D_out = sum(multiplicity * (2*l + 1))`, common choices are:
 
-| task | `output_irreps` | readout |
+| task | example `output_irreps` | readout |
 |---|---|---|
-| intensive graph property | `"Kx0e"` | `output["graph"]` |
-| sum readout for an extensive target | `"Kx0e"` | `output["graph_sum"]` |
-| node scalar labels | `"Kx0e"` | node `0e` block |
-| velocity or displacement | `"Kx1o"` | node `1o` block |
-| axial-vector target | `"Kx1e"` | node `1e` block |
-| symmetric-traceless tensor | `"Kx2e"` or `"Kx2o"` | node tensor block |
+| intensive graph property | `"1x0e"` | `output["graph"]` |
+| sum readout for three extensive targets | `"3x0e"` | `output["graph_sum"]` |
+| five node scalar labels | `"5x0e"` | node `0e` block |
+| velocity or displacement | `"1x1o"` | node `1o` block |
+| axial-vector target | `"1x1e"` | node `1e` block |
+| symmetric-traceless tensor | `"1x2e"` or `"1x2o"` | node tensor block |
 
 `graph_sum` selects a sum readout; global interaction means this alone does not
 prove physical size-extensivity or disconnected-component additivity.
@@ -258,6 +310,8 @@ prove physical size-extensivity or disconnected-component additivity.
 Use `model.split_output` instead of manually slicing a mixed output:
 
 ```python
+from equivariant_linear_attention import ELA, st5_to_matrix
+
 model = ELA(
     input_irreps="32x0e",
     output_irreps="2x0e + 1x1o + 1x2e",
@@ -268,6 +322,7 @@ blocks = model.split_output(output["node"])
 node_scalars = blocks["0e"][..., 0]  # [N, 2]
 polar_vector = blocks["1o"][:, 0]    # [N, 3]
 st_tensor = blocks["2e"][:, 0]       # [N, 5]
+st_matrix = st5_to_matrix(st_tensor)  # [N, 3, 3]
 ```
 
 ### Energy and forces
@@ -277,7 +332,7 @@ conservative force. When conservation is required, predict one invariant node
 energy, sum it per graph, and differentiate:
 
 ```python
-from equivariant_attention import conservative_forces
+from equivariant_linear_attention import ELA, ELABatch, conservative_forces
 
 positions = positions.detach().requires_grad_(True)
 batch = ELABatch(
@@ -313,6 +368,8 @@ A coordinate-space flow velocity is a node-wise polar vector. Declare it as
 import torch
 import torch.nn.functional as F
 
+from equivariant_linear_attention import ELA
+
 flow_model = ELA(
     input_irreps="32x0e",
     output_irreps="1x1o",
@@ -345,6 +402,10 @@ dt = 0.01
 delta_x = dt * velocity
 x_next = x_t + delta_x
 ```
+
+The compact loss above weights nodes equally. For ragged mini-batches with
+different graph sizes, prefer the graph-balanced loss in the complete example
+linked below so that large point clouds do not dominate the objective.
 
 For a non-linear interpolation schedule the target is `d x_t / d t`, not
 automatically `x1 - x0`. Source and target nodes must also have the same
@@ -418,9 +479,9 @@ node-permutation consistency instead of selecting tied nodes by storage index.
 
 Under fixed cutoff and bounded spatial density, the cell-list path has expected
 
-\[
+$$
 O(N + E)
-\]
+$$
 
 work. Worst-case behavior remains quadratic when many points occupy one cell.
 Periodic cells and minimum-image geometry are not inferred; provide an explicit
@@ -431,7 +492,7 @@ topology for those workloads.
 Optional capabilities remain fields of the same model and batch.
 
 ```python
-from equivariant_attention import OrderContext, RefinementRequest
+from equivariant_linear_attention import ELA, ELABatch, OrderContext, RefinementRequest
 
 model = ELA(
     input_irreps="32x0e",
@@ -476,14 +537,14 @@ iteratively mutate its input geometry.
 
 For conservative forces use a scalar energy:
 
-\[
+$$
 F_i = -\nabla_{x_i} E.
-\]
+$$
 
 ## Advanced configuration
 
 ```python
-from equivariant_attention import ELAConfig, ELAFeatures, SparseGeometry
+from equivariant_linear_attention import ELA, ELAConfig, ELAFeatures, SparseGeometry
 
 config = ELAConfig(
     input_irreps="32x0e + 4x1o",
@@ -505,6 +566,10 @@ config = ELAConfig(
 model = ELA(config)
 ```
 
+`relation_cutoffs=(4.0, 6.0)` declares two semantic relation types. Every batch
+for this configuration must therefore provide `edge_relation_id` values in
+`[0, 2)`. Remove `relation_cutoffs` when using an untyped automatic radius graph.
+
 Head count, local rank, hidden irreps, normalization, tensor closure, chirality,
 and execution backend are internal deterministic choices rather than public
 architecture variants.
@@ -513,24 +578,24 @@ architecture variants.
 
 For hidden state `h^l`:
 
-\[
+$$
 \bar h^l = \operatorname{EqRMSNorm}(h^l),
-\]
+$$
 
-\[
+$$
 G^l = \operatorname{ExactGlobalELA}_{l\le2}(\bar h^l),
 \qquad
 L^l = \operatorname{ExactSparseLocal}_{l\le2}(\bar h^l, x, \mathcal E).
-\]
+$$
 
 An invariant, identity-initialized router combines the two branches. At
 initialization:
 
-\[
+$$
 w_G^\tau = w_L^\tau = 1,
 \qquad
 M_i^\tau = G_i^\tau + L_i^\tau.
-\]
+$$
 
 The fused message enters parity-valid updates, low-order tensor closure, residual
 scaling, and an equivariant FFN. There is no persistent edge hidden state.
@@ -540,9 +605,9 @@ scaling, and an equivariant FFN. There is no persistent edge hidden state.
 For a prepared graph with `N` nodes, `E` directed candidates, `L` layers, and
 fixed widths/ranks:
 
-\[
+$$
 T = O\left(L(N+E)\right).
-\]
+$$
 
 Node-linear scaling additionally requires `E = O(N)`. Neighbor discovery must be
 reported separately when it is included.
@@ -550,12 +615,13 @@ reported separately when it is included.
 ## Kernel backends
 
 The PyTorch implementation is the numerical reference. Backend selection does
-not alter the model, config, checkpoint, or equations.
+not alter the model, config, checkpoint, or equations. The
+`ELA_KERNEL_BACKEND` environment variable accepts `auto` (the default), `torch`
+(force the reference), or `triton` (force Triton and fail if unsupported). To
+set it for subsequent commands, export exactly one value:
 
 ```bash
-ELA_KERNEL_BACKEND=auto    # default; PyTorch until a regime is promoted
-ELA_KERNEL_BACKEND=torch   # force reference
-ELA_KERNEL_BACKEND=triton  # fail if unsupported
+export ELA_KERNEL_BACKEND=triton
 ```
 
 The current Triton path uses degree-dynamic receiver-major CSR reductions,
@@ -567,16 +633,16 @@ the promotion threshold; the forced path is useful for contract and memory
 experiments.
 
 For static prepared shapes, `torch.compile(model.forward_prepared,
-mode="reduce-overhead")` is currently the strongest speed path. A bounded BF16
-diagnostic reached about `0.24x` eager inference time and `0.22x` eager ordinary
-forward/backward time at `N=512, k=32`. This is not a ragged-shape or
-double-backward claim; force/HVP workloads must retain the eager path unless a
-separate compiled higher-order-autograd contract passes.
+mode="reduce-overhead")` is currently the strongest measured speed path. The
+measurements, hardware-sensitive scope, and limitations are recorded in
+[`docs/KERNEL_OPTIMIZATION.md`](docs/KERNEL_OPTIMIZATION.md). This is not a
+ragged-shape or double-backward claim; force/HVP workloads must retain the eager
+path unless a separate compiled higher-order-autograd contract passes.
 
 Tests and profilers can avoid process-global environment mutation:
 
 ```python
-from equivariant_attention.triton_ops import kernel_backend
+from equivariant_linear_attention.kernels import kernel_backend
 
 with kernel_backend("triton"):
     output = model(batch)

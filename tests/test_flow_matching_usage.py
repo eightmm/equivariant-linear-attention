@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 import pytest
 
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 
 def _complete_edges(ptr: torch.Tensor) -> torch.Tensor:

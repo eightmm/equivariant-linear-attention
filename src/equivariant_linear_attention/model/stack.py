@@ -6,8 +6,8 @@ from math import isfinite, sqrt
 import torch
 from torch import nn
 
-from .irreps import IrrepLayout
-from .layered_se3 import (
+from ..irreps import IrrepLayout
+from ..nn.layers import (
     LayeredCanonicalSE3Core,
     UnifiedEquivariantLayer,
     UnifiedSE3Context,
@@ -18,7 +18,7 @@ from .layered_se3 import (
     _state_add,
     _state_subtract,
 )
-from .parity_se3 import (
+from ..nn.parity import (
     _ParityCompleteBlock,
     _ParityState,
     _bounded_scalar,
@@ -26,7 +26,7 @@ from .parity_se3 import (
     _st_square,
     _unit_ball,
 )
-from .unified import Unified3DConfig, UnifiedEquivariantAttention
+from .runtime import Unified3DConfig, UnifiedEquivariantAttention
 
 
 def _probability(name: str, value: object) -> float:

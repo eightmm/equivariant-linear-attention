@@ -6,9 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .graph_layout import PackedGraphLayout
-from .irreps import IrrepLayout
-from .multipole_ops import (
+from ..geometry.layout import PackedGraphLayout
+from ..geometry.neighbors import PackedNeighborGraph
+from ..irreps import IrrepLayout
+from .multipoles import (
     NodeMultipoleBank,
     NodeMultipoles,
     _LowOrderTensorClosure,
@@ -18,8 +19,7 @@ from .multipole_ops import (
     _safe_unit_direction,
     _st_orthonormal,
 )
-from .neighbors import PackedNeighborGraph
-from .parity_se3 import (
+from .parity import (
     ParityCompleteSE3Core,
     _ChannelMix,
     _ParityCompleteBlock,

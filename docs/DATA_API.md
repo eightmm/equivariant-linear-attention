@@ -23,7 +23,7 @@ output = model(batch)
 ## 1. Single graph
 
 ```python
-from equivariant_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELABatch
 
 model = ELA(
     input_irreps="16x0e",

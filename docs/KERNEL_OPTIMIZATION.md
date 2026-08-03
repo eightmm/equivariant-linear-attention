@@ -30,11 +30,11 @@ The current Triton backend accelerates receiver-major CSR reductions.
 
 For edge payload `x_e` and receiver row pointers:
 
-\[
+$$
 y_i
 =
 \sum_{e=\operatorname{ptr}_i}^{\operatorname{ptr}_{i+1}-1}x_e.
-\]
+$$
 
 The Triton kernel:
 
@@ -49,18 +49,17 @@ The Triton kernel:
 - falls back to differentiable PyTorch gathers for `create_graph=True` or unused
   grouped outputs.
 
-Backend policy:
+Backend policy is selected by exporting exactly one of `auto`, `torch`, or
+`triton`. For example:
 
 ```bash
-ELA_KERNEL_BACKEND=auto
-ELA_KERNEL_BACKEND=torch
-ELA_KERNEL_BACKEND=triton
+export ELA_KERNEL_BACKEND=triton
 ```
 
 The same policy can be selected task-locally without changing `os.environ`:
 
 ```python
-from equivariant_attention.triton_ops import kernel_backend
+from equivariant_linear_attention.kernels import kernel_backend
 
 with kernel_backend("triton"):
     output = model.forward_prepared(batch)
@@ -76,19 +75,19 @@ complete-stack promotion gate below.
 The canonical local operator computes positive receiver-normalized sufficient
 statistics:
 
-\[
+$$
 w_{ijr}
 =
 f_c(r_{ij})
 \exp\left[3\tanh(a_{ijr}/3)\right],
-\]
+$$
 
-\[
+$$
 S_{ir}^{f}
 =
 \frac{\sum_j w_{ijr}\rho_{ijr}^{f}z_{jr}^{f}}
 {1+\sum_j w_{ijr}}.
-\]
+$$
 
 The Triton training path keeps projections and edge-score equations in ordinary
 PyTorch autograd, then reduces five lifetime-compatible payload groups with four
@@ -104,11 +103,11 @@ This avoids both one giant concatenated `[E,F_all]` payload and the previous
 per-group edge-sized `torch.cat` copy. Its temporary memory is bounded by the
 largest already-produced group:
 
-\[
+$$
 M_{\rm payload}
 =
 O\left(E\max_k F_k\right)
-\]
+$$
 
 instead of the sum of every message family. The five semantic launches remain;
 their separate pointers preserve tensor lifetimes and autograd ownership.
@@ -145,8 +144,8 @@ Required checks include:
 Current focused tests:
 
 ```bash
-uv run pytest -q tests/test_triton_ops.py
-uv run pytest -q tests/test_triton_ops_cuda.py
+uv run pytest -q tests/test_kernel_triton.py
+uv run pytest -q tests/test_kernel_triton_cuda.py
 uv run pytest -q tests/test_triton_equivariance_cuda.py
 ```
 

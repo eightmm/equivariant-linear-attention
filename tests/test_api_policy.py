@@ -5,8 +5,8 @@ import importlib.util
 import inspect
 from pathlib import Path
 
-import equivariant_attention as ela
-from equivariant_attention import (
+import equivariant_linear_attention as ela
+from equivariant_linear_attention import (
     ELA,
     ELABatch,
     ELAConfig,
@@ -88,13 +88,20 @@ def test_optional_capabilities_stay_in_one_model_and_batch() -> None:
 
 def test_every_shipped_core_module_imports_without_optional_dependencies() -> None:
     package_dir = Path(ela.__file__).resolve().parent
-    modules = sorted(
-        path.stem
-        for path in package_dir.glob("*.py")
-        if path.name != "__init__.py"
-    )
+    modules: list[str] = []
+    for path in package_dir.rglob("*.py"):
+        relative = path.relative_to(package_dir).with_suffix("")
+        parts = relative.parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        if parts:
+            modules.append(".".join(parts))
     for module in modules:
-        importlib.import_module(f"equivariant_attention.{module}")
+        importlib.import_module(f"{ela.__name__}.{module}")
+
+
+def test_retired_package_root_is_not_importable() -> None:
+    assert importlib.util.find_spec("equivariant_attention") is None
 
 
 def test_retired_architecture_modules_are_not_shipped() -> None:
@@ -102,20 +109,39 @@ def test_retired_architecture_modules_are_not_shipped() -> None:
         "_egnn_baseline",
         "_matched_vnext_arms",
         "benchmarking",
+        "branch_fusion",
+        "canonical",
+        "canonical_se3",
         "config",
+        "data",
         "diagnostics",
+        "equivariant_linear_attention",
         "execution",
+        "graph_layout",
+        "heads",
         "high_order",
+        "interface",
+        "layered_se3",
         "local_streaming",
         "moment",
         "multiscale",
+        "multipole_ops",
         "neighbor_providers",
+        "neighbors",
+        "optimized_local",
+        "parity_se3",
         "pdbbind",
+        "pooling",
+        "radius",
         "reference_irreps",
         "reproducibility",
         "spherical",
+        "stack",
         "tensor_product_executor",
         "training",
+        "triton_ops",
+        "unified",
+        "runtime",
     }
     for module in retired:
-        assert importlib.util.find_spec(f"equivariant_attention.{module}") is None
+        assert importlib.util.find_spec(f"{ela.__name__}.{module}") is None

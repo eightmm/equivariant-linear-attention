@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-import equivariant_attention.optimized_local as optimized_local
-from equivariant_attention import ELA, ELABatch
-from equivariant_attention.triton_ops import (
+import equivariant_linear_attention.kernels.local as optimized_local
+from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention.kernels.triton import (
     _trusted_csr_sum_many,
     _trusted_weighted_gather_reduce_pair,
     active_backend,

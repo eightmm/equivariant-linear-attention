@@ -6,22 +6,18 @@ from math import isfinite, sqrt
 import torch
 from torch import nn
 
-from .branch_fusion import RMSAwareBranchFusion
-from .canonical_se3 import CanonicalMultipoleSE3Core
-from .context import (
+from ..context import (
     ELAContext,
     ELAFeatures,
     FourierOrderEncoder,
     RefinementRequest,
 )
-from .equivariant_linear_attention import (
-    EquivariantLinearAttentionConfig,
-    EquivariantLinearAttentionLayer,
-    _bounded_modulate_state,
-)
-from .heads import EquivariantVectorHead
-from .irreps import IrrepLayout
-from .layered_se3 import (
+from ..geometry.prepared import Prepared3DGraph, prepare_3d_graph
+from ..irreps import IrrepLayout
+from ..nn.core import CanonicalMultipoleSE3Core
+from ..nn.fusion import RMSAwareBranchFusion
+from ..nn.heads import EquivariantVectorHead
+from ..nn.layers import (
     LayeredCanonicalSE3Core,
     UnifiedSE3Context,
     UnifiedSE3State,
@@ -31,14 +27,19 @@ from .layered_se3 import (
     _state_add,
     _state_subtract,
 )
-from .parity_se3 import (
+from ..nn.parity import (
     _ParityCompleteBlock,
     _ParityState,
     _bounded_scalar,
     _bounded_st,
     _unit_ball,
 )
-from .unified import Prepared3DGraph, UnifiedEquivariantAttention, prepare_3d_graph
+from .runtime import UnifiedEquivariantAttention
+from .stack import (
+    EquivariantLinearAttentionConfig,
+    EquivariantLinearAttentionLayer,
+    _bounded_modulate_state,
+)
 
 
 def _positive_integer(name: str, value: object) -> int:

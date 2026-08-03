@@ -6,14 +6,15 @@ from typing import Any
 import torch
 
 from .batch import ELABatch
-from .canonical import ELA as _CanonicalELA
-from .canonical import ELAConfig, ELAFeatures, ELALayer, SparseGeometry
-from .radius import radius_graph
-from .triton_ops import (
+from .context import ELAFeatures
+from .geometry.radius import radius_graph
+from .kernels import (
     backend_policy,
     install_triton_backend,
     triton_available,
 )
+from .model.ela import ELA as _CanonicalELA
+from .model.ela import ELAConfig, ELALayer, SparseGeometry
 
 # Install once at import. Unsupported devices and dtypes continue through the
 # exact PyTorch reference without changing model configuration or checkpoints.

@@ -3,17 +3,17 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import (
+from equivariant_linear_attention import (
     IrrepLayout,
     matrix_to_st5,
     pack_irreps,
     split_irreps,
     st5_to_matrix,
 )
-from equivariant_attention.unified import (
+from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.model.runtime import (
     Unified3DConfig,
     UnifiedEquivariantAttention,
-    prepare_3d_graph,
 )
 
 

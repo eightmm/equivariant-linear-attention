@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention.triton_ops import (
+from equivariant_linear_attention.kernels.triton import (
     active_backend,
     backend_policy,
     csr_sum,
@@ -141,14 +141,14 @@ def test_csr_metadata_and_shapes_fail_closed() -> None:
 
 
 def test_backend_installation_can_be_reversed_without_losing_reference() -> None:
-    from equivariant_attention import canonical_se3, parity_se3
+    from equivariant_linear_attention.nn import core, parity
 
-    block = canonical_se3._CanonicalMultipoleBlock
+    block = core._CanonicalMultipoleBlock
     assert hasattr(block, "_ela_torch_local_message")
     try:
         uninstall_triton_backend()
         assert not hasattr(block, "_ela_torch_local_message")
-        assert parity_se3._csr_sum is not csr_sum
+        assert parity._csr_sum is not csr_sum
     finally:
         install_triton_backend()
     assert hasattr(block, "_ela_torch_local_message")

@@ -11,8 +11,8 @@ from typing import Any
 
 import torch
 
-from equivariant_attention import ELA, ELABatch
-from equivariant_attention.triton_ops import kernel_backend, triton_available
+from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention.kernels import kernel_backend, triton_available
 
 
 def _dtype(name: str) -> torch.dtype:

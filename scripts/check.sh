@@ -27,7 +27,7 @@ run_fast() {
   fi
 
   if [ -d tests ] && [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
-    uv run pytest -q --cov=equivariant_attention --cov-report=term-missing --cov-fail-under=80
+    uv run pytest -q --cov=equivariant_linear_attention --cov-report=term-missing --cov-fail-under=80
     ran=1
   fi
 

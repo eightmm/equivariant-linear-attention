@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import ELA, ELABatch
-import equivariant_attention.optimized_local as optimized_local
-from equivariant_attention.triton_ops import csr_sum_many
+from equivariant_linear_attention import ELA, ELABatch
+import equivariant_linear_attention.kernels.local as optimized_local
+from equivariant_linear_attention.kernels.triton import csr_sum_many
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:

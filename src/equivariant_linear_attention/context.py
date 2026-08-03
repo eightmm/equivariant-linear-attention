@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 import torch
 from torch import nn
 
-from .unified import Prepared3DGraph
+from .geometry.prepared import Prepared3DGraph
 
 
 _INTEGER_DTYPES = frozenset(

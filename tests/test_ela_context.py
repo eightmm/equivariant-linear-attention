@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_attention import ELA, ELABatch, OrderContext, RefinementRequest
+from equivariant_linear_attention import ELA, ELABatch, OrderContext, RefinementRequest
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:

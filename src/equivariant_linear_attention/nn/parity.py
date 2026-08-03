@@ -7,9 +7,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .graph_layout import PackedGraphLayout
-from .irreps import Irrep, IrrepLayout, split_irreps
-from .neighbors import PackedNeighborGraph
+from ..geometry.layout import PackedGraphLayout
+from ..geometry.neighbors import PackedNeighborGraph
+from ..irreps import Irrep, IrrepLayout, split_irreps
 
 
 def _compute_dtype(*values: torch.Tensor) -> torch.dtype:
@@ -302,7 +302,7 @@ def _layout_feature_gemm(
         grouped_query = layout.group_nodes(query)
         grouped_key = layout.group_nodes(key)
         grouped_value = layout.group_nodes(value)
-        grouped_output = value.new_zeros(value.shape)
+        grouped_output: torch.Tensor | None = None
         for bucket in layout.buckets:
             query_dense = bucket.gather(grouped_query)
             key_dense = bucket.gather(grouped_key)
@@ -312,8 +312,15 @@ def _layout_feature_gemm(
             value_dense = value_dense * mask.to(dtype=value_dense.dtype)
             summary = torch.einsum("bmhf,bmhv->bhfv", key_dense, value_dense)
             output_dense = torch.einsum("bmhf,bhfv->bmhv", query_dense, summary)
+            if grouped_output is None:
+                # Autocast may lower the einsum result while query/key/value
+                # remain FP32. Allocate from the computed result so the
+                # receiver buffer follows the operator's output dtype.
+                grouped_output = output_dense.new_zeros(value.shape)
             valid_index = bucket.node_index[bucket.mask].to(dtype=torch.long)
             grouped_output.index_copy_(0, valid_index, output_dense[bucket.mask])
+        if grouped_output is None:
+            raise RuntimeError("bucketed graph layout contains no buckets")
         return layout.ungroup_nodes(grouped_output)
 
     grouped_query = layout.group_nodes(query)
