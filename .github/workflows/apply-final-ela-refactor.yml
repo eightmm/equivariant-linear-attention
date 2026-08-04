@@ -24,8 +24,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          cat .agent/final.patch.gz.b64.part* \
-            | base64 --decode \
+          mapfile -t patch_parts < <(
+            git ls-tree -r --name-only HEAD .agent \
+              | grep '^\.agent/final\.patch\.gz\.b64\.part' \
+              | LC_ALL=C sort
+          )
+          test "${#patch_parts[@]}" -eq 16
+          for patch_part in "${patch_parts[@]}"; do
+            git show "HEAD:${patch_part}"
+          done > /tmp/final.patch.gz.b64
+          test "$(wc -c < /tmp/final.patch.gz.b64)" -eq 128076
+          base64 --decode /tmp/final.patch.gz.b64 \
             | gzip --decode > /tmp/final.patch
           printf '%s  %s\n' \
             '8bc43d21e0e7a4520a8404d7b0c7ef7575ab32202ec0a2cbe536c444209a3c6b' \
