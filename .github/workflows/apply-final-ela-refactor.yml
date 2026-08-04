@@ -1,16 +1,17 @@
 name: Apply final ELA refactor
 
 on:
-  push:
-    branches: [agent/ela-input-refactor]
-    paths:
-      - .agent/final-ready
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   apply:
+    if: github.event.pull_request.head.ref == 'agent/ela-input-refactor'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +27,11 @@ jobs:
           cat .agent/final.patch.gz.b64.part* \
             | base64 --decode \
             | gzip --decode > /tmp/final.patch
+          printf '%s  %s\n' \
+            '65c83d7708ad52f62dbc0e5b3ac7a9dc8a86bf9e8cbb28f1bb93a1a7e8e97b75' \
+            '/tmp/final.patch.gz' > /tmp/final.patch.gz.sha256
+          gzip --stdout /tmp/final.patch > /tmp/final.patch.gz
+          sha256sum --check /tmp/final.patch.gz.sha256
 
           git fetch origin main
           git reset --hard origin/main
