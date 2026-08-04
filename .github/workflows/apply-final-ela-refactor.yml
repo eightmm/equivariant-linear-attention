@@ -28,10 +28,9 @@ jobs:
             | base64 --decode \
             | gzip --decode > /tmp/final.patch
           printf '%s  %s\n' \
-            '65c83d7708ad52f62dbc0e5b3ac7a9dc8a86bf9e8cbb28f1bb93a1a7e8e97b75' \
-            '/tmp/final.patch.gz' > /tmp/final.patch.gz.sha256
-          gzip --stdout /tmp/final.patch > /tmp/final.patch.gz
-          sha256sum --check /tmp/final.patch.gz.sha256
+            '8bc43d21e0e7a4520a8404d7b0c7ef7575ab32202ec0a2cbe536c444209a3c6b' \
+            '/tmp/final.patch' \
+            | sha256sum --check
 
           git fetch origin main
           git reset --hard origin/main
