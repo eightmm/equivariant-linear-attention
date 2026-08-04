@@ -202,6 +202,49 @@ def _same_tensor_schema(name: str, values: Sequence[torch.Tensor]) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class _TensorProvenance:
+    identity: int
+    version: int
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    dtype: torch.dtype
+    device: torch.device
+
+    @classmethod
+    def capture(cls, value: torch.Tensor) -> _TensorProvenance | None:
+        try:
+            version = int(value._version)
+        except RuntimeError:
+            return None
+        return cls(
+            identity=id(value),
+            version=version,
+            shape=tuple(value.shape),
+            stride=tuple(value.stride()),
+            dtype=value.dtype,
+            device=value.device,
+        )
+
+    def matches(self, value: torch.Tensor) -> bool:
+        current = self.capture(value)
+        return current == self
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedProvenance:
+    source: str
+    pos: _TensorProvenance | None
+    edge_index: _TensorProvenance | None
+    batch: _TensorProvenance | None
+    edge_type: _TensorProvenance | None
+    group: _TensorProvenance | None
+
+
+def _capture_tensor(value: torch.Tensor | None) -> _TensorProvenance | None:
+    return None if value is None else _TensorProvenance.capture(value)
+
+
+@dataclass(frozen=True, slots=True)
 class ELAGraph:
     """One immutable input/output graph for :class:`ELA`.
 
@@ -226,11 +269,32 @@ class ELAGraph:
     delta: torch.Tensor | None = None
     _prepared_graph: Prepared3DGraph | None = field(
         default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _prepared_provenance: _PreparedProvenance | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _packed_template: ELABatch | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _assume_immutable_storage: bool = field(
+        default=False,
+        init=False,
         repr=False,
         compare=False,
     )
 
     def __post_init__(self) -> None:
+        if not isinstance(self._assume_immutable_storage, bool):
+            raise TypeError("_assume_immutable_storage must be boolean")
         x = _require_float_tensor("x", self.x)
         if x.ndim != 2:
             raise ValueError("x must have shape (N,D)")
@@ -280,9 +344,7 @@ class ELAGraph:
                     interaction_batch[source],
                     interaction_batch[target],
                 ):
-                    raise ValueError(
-                        "edges may not cross interaction-group boundaries"
-                    )
+                    raise ValueError("edges may not cross interaction-group boundaries")
             object.__setattr__(self, "edge_index", edge)
 
         edge_type = self.edge_type
@@ -391,8 +453,127 @@ class ELAGraph:
     def num_graphs(self) -> int:
         return 1 if self.batch is None else int(self.batch[-1].item()) + 1
 
+    def _capture_prepared_provenance(
+        self,
+        source: str,
+    ) -> _PreparedProvenance | None:
+        if not self._assume_immutable_storage:
+            # Public tensors may be exported through DLPack and changed through
+            # an alias whose version counter is independent. The safe default
+            # therefore takes exact-content validation on every cache reuse.
+            return None
+        values = (self.edge_index, self.batch, self.edge_type, self.group)
+        stamps = tuple(_capture_tensor(value) for value in values)
+        if any(
+            value is not None and stamp is None
+            for value, stamp in zip(values, stamps, strict=True)
+        ):
+            return None
+        pos = None
+        if source == "radius":
+            pos = _capture_tensor(self.pos)
+            if pos is None:
+                return None
+        return _PreparedProvenance(
+            source=source,
+            pos=pos,
+            edge_index=stamps[0],
+            batch=stamps[1],
+            edge_type=stamps[2],
+            group=stamps[3],
+        )
+
+    def assume_immutable(self) -> ELAGraph:
+        """Return graph-owned topology storage eligible for trusted cache reuse.
+
+        The returned topology-bearing tensors are fresh clones, so aliases to
+        this graph's inputs cannot change them. Callers must not mutate or
+        export aliases of the returned ``pos``, ``edge_index``, ``batch``,
+        ``edge_type``, or ``group`` tensors. Use the default graph path when
+        that lifetime contract cannot be guaranteed; it validates content
+        exactly on every reuse.
+        """
+
+        owned = replace(
+            self,
+            pos=self.pos.clone(),
+            edge_index=None if self.edge_index is None else self.edge_index.clone(),
+            batch=None if self.batch is None else self.batch.clone(),
+            edge_type=None if self.edge_type is None else self.edge_type.clone(),
+            group=None if self.group is None else self.group.clone(),
+        )
+        object.__setattr__(owned, "_assume_immutable_storage", True)
+        return owned
+
+    def _prepared_provenance_matches(self) -> bool:
+        if not self._assume_immutable_storage:
+            return False
+        prepared = self._prepared_graph
+        provenance = self._prepared_provenance
+        if prepared is None or provenance is None:
+            return False
+        if provenance.source != prepared.spec.source:
+            return False
+        fields = (
+            (self.edge_index, provenance.edge_index),
+            (self.batch, provenance.batch),
+            (self.edge_type, provenance.edge_type),
+            (self.group, provenance.group),
+        )
+        for value, stamp in fields:
+            if (value is None) != (stamp is None):
+                return False
+            if value is not None and (stamp is None or not stamp.matches(value)):
+                return False
+        if provenance.source == "radius":
+            if provenance.pos is None:
+                return False
+            if not provenance.pos.matches(self.pos):
+                # A version change is a cheap invalidation signal, not proof
+                # that a Verlet shell expired. Recheck displacement only on
+                # that slow path, then refresh the trusted stamp.
+                if not prepared.spec.can_reuse_positions(self.pos):
+                    return False
+                refreshed = self._capture_prepared_provenance("radius")
+                if refreshed is None:
+                    return False
+                object.__setattr__(self, "_prepared_provenance", refreshed)
+        return True
+
+    def _trusted_packed_template(self) -> ELABatch | None:
+        """Return the O(1) packed reuse carrier admitted by the opt-in contract."""
+
+        if not self._prepared_provenance_matches():
+            return None
+        prepared = self._prepared_graph
+        template = self._packed_template
+        if (
+            prepared is None
+            or template is None
+            or template._prepared_graph is not prepared
+            or not template._trusted_prepared
+            or template.node_irreps is not self.x
+            or template.positions is not self.pos
+            or template.condition is not self.condition
+            or template.order is not self.order
+            or template.update_mask is not self.update_mask
+            or template.target is not self.y
+            or template.sample_ids is not self.ids
+            or self.x.ndim != 2
+            or self.x.shape[0] != prepared.num_nodes
+            or self.pos.shape != (prepared.num_nodes, 3)
+            or self.x.device != prepared.device
+            or self.pos.device != prepared.device
+        ):
+            return None
+        return template
+
     def _to_packed(self) -> ELABatch:
         """Convert source/target public topology to private receiver/sender COO."""
+
+        template = self._trusted_packed_template()
+        if template is not None:
+            return template
 
         internal_edges = None
         if self.edge_index is not None:
@@ -410,27 +591,64 @@ class ELAGraph:
             target=self.y,
             sample_ids=self.ids,
         )
-        if (
-            self._prepared_graph is not None
-            and torch.equal(
-                self._prepared_graph.batch,
-                packed.interaction_batch,
-            )
-            and self._prepared_graph.spec.can_reuse_positions(self.pos)
-        ):
-            packed = packed.with_prepared_graph(self._prepared_graph)
+        if self._prepared_provenance_matches():
+            if self._prepared_graph is None:
+                raise RuntimeError("prepared provenance invariant failed")
+            packed = packed._with_prepared_graph_trusted(self._prepared_graph)
+        elif self._prepared_graph is not None:
+            # Tensors created in inference mode have no version counters, and
+            # a changed-then-restored tensor may have safe content despite a
+            # newer version. Preserve the validated slow fallback in those
+            # cases; ELA performs exact edge/relation checks before reuse.
+            prepared = self._prepared_graph
+            if torch.equal(prepared.batch, packed.interaction_batch) and (
+                prepared.spec.can_reuse_positions(self.pos)
+            ):
+                packed = packed.with_prepared_graph(prepared)
         return packed
 
-    def _with_prepared(self, prepared: Prepared3DGraph) -> ELAGraph:
+    def _with_prepared(
+        self,
+        prepared: Prepared3DGraph,
+        packed_template: ELABatch | None = None,
+    ) -> ELAGraph:
         if not isinstance(prepared, Prepared3DGraph):
             raise TypeError("prepared must be a Prepared3DGraph")
-        return replace(self, _prepared_graph=prepared)
+        if (
+            packed_template is not None
+            and packed_template._prepared_graph is not prepared
+        ):
+            raise ValueError("packed template must carry the prepared graph")
+        candidate = replace(self)
+        object.__setattr__(
+            candidate,
+            "_assume_immutable_storage",
+            self._assume_immutable_storage,
+        )
+        object.__setattr__(candidate, "_prepared_graph", prepared)
+        object.__setattr__(
+            candidate,
+            "_prepared_provenance",
+            candidate._capture_prepared_provenance(prepared.spec.source),
+        )
+        if candidate._prepared_provenance is not None and packed_template is not None:
+            object.__setattr__(candidate, "_packed_template", packed_template)
+        return candidate
 
-    def _cache_prepared(self, prepared: Prepared3DGraph) -> None:
+    def _cache_prepared(self, packed: ELABatch) -> None:
         """Attach validated private topology without changing the public graph."""
 
-        candidate = replace(self, _prepared_graph=prepared)
+        prepared = packed._prepared_graph
+        if prepared is None:
+            raise ValueError("packed cache requires a prepared graph")
+        candidate = self._with_prepared(prepared, packed)
         object.__setattr__(self, "_prepared_graph", candidate._prepared_graph)
+        object.__setattr__(
+            self,
+            "_prepared_provenance",
+            candidate._prepared_provenance,
+        )
+        object.__setattr__(self, "_packed_template", candidate._packed_template)
 
     def _with_output(
         self,
@@ -442,15 +660,27 @@ class ELAGraph:
         delta: torch.Tensor,
         prepared: Prepared3DGraph | None,
     ) -> ELAGraph:
-        return replace(
+        candidate = replace(
             self,
             x=x,
             pos=pos,
             graph_x=graph_x,
             graph_sum=graph_sum,
             delta=delta,
-            _prepared_graph=prepared,
         )
+        object.__setattr__(
+            candidate,
+            "_assume_immutable_storage",
+            self._assume_immutable_storage,
+        )
+        object.__setattr__(candidate, "_prepared_graph", prepared)
+        if prepared is not None:
+            object.__setattr__(
+                candidate,
+                "_prepared_provenance",
+                candidate._capture_prepared_provenance(prepared.spec.source),
+            )
+        return candidate
 
     def to(
         self,
@@ -472,14 +702,15 @@ class ELAGraph:
             dtype=geometry_dtype,
             non_blocking=non_blocking,
         )
+        cached = self._prepared_graph
         prepared = (
             None
-            if self._prepared_graph is None
-            else self._prepared_graph.to(target, non_blocking=non_blocking)
+            if cached is None or not self._prepared_provenance_matches()
+            else cached.to(target, non_blocking=non_blocking)
         )
         if prepared is not None and not prepared.spec.can_reuse_positions(moved_pos):
             prepared = None
-        return ELAGraph(
+        moved = ELAGraph(
             x=self.x.to(device=target, dtype=dtype, non_blocking=non_blocking),
             pos=moved_pos,
             edge_index=None
@@ -531,8 +762,13 @@ class ELAGraph:
                 dtype=geometry_dtype,
                 non_blocking=non_blocking,
             ),
-            _prepared_graph=prepared,
         )
+        object.__setattr__(
+            moved,
+            "_assume_immutable_storage",
+            self._assume_immutable_storage,
+        )
+        return moved if prepared is None else moved._with_prepared(prepared)
 
     def pin_memory(self) -> ELAGraph:
         order = self.order
@@ -543,7 +779,7 @@ class ELAGraph:
                 periods=_pin_tensor(order.periods),
                 enabled=_pin_tensor(order.enabled),
             )
-        return replace(
+        pinned = replace(
             self,
             x=_pin_tensor(self.x),
             pos=_pin_tensor(self.pos),
@@ -558,8 +794,13 @@ class ELAGraph:
             graph_x=_pin_tensor(self.graph_x),
             graph_sum=_pin_tensor(self.graph_sum),
             delta=_pin_tensor(self.delta),
-            _prepared_graph=None,
         )
+        object.__setattr__(
+            pinned,
+            "_assume_immutable_storage",
+            self._assume_immutable_storage,
+        )
+        return pinned
 
     @classmethod
     def collate(cls, samples: Sequence[ELAGraph]) -> ELAGraph:
@@ -711,11 +952,7 @@ class ELAGraph:
         identifiers = tuple(graph.ids for graph in graphs)
         ids = None
         if _presence("ids", identifiers):
-            ids = tuple(
-                value[0]
-                for value in identifiers
-                if value is not None
-            )
+            ids = tuple(value[0] for value in identifiers if value is not None)
 
         def pack_graph_field(name: str) -> torch.Tensor | None:
             raw = tuple(getattr(graph, name) for graph in graphs)

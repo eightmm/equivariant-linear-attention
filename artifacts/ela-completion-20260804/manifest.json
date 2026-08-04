@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "run_id": "ela-completion-20260804",
+  "question": "Can the canonical ELAGraph -> ELA -> ELAGraph implementation close the 2026-08-04 release, ingestion, CUDA-kernel, coordinate-update, and architecture-ablation checklist without weakening its declared symmetry, autograd, sparse-memory, and single-public-API contracts?",
+  "plan": [
+    {"id": "S1", "description": "Freeze contract, claims, baseline, and environment", "status": "completed"},
+    {"id": "S2", "description": "Implement release and end-to-end benchmark coverage", "status": "completed"},
+    {"id": "S3", "description": "Implement trusted grouped preparation and direct CSR", "status": "completed"},
+    {"id": "S4", "description": "Implement compiled, fused-local, and ragged-global performance paths", "status": "completed"},
+    {"id": "S5", "description": "Implement stagewise hidden-state-preserving coordinate updates", "status": "completed"},
+    {"id": "S6", "description": "Implement relation, CG12, and multiscale ablation lanes", "status": "completed"},
+    {"id": "S7", "description": "Run approved CUDA and real-data evidence, finalize provenance, and obtain independent review", "status": "pending"}
+  ],
+  "inputs": [
+    {
+      "path": "research-contract.md",
+      "role": "frozen decision, falsifier, CUDA threshold, and real-data screen contract",
+      "sha256": "3530f1888dff8fdde62eaed16e5bd70496e11c7007b5265d71169543e66d42cb"
+    },
+    {
+      "path": "source-manifest-pre-gpu.json",
+      "role": "exact source, test, lockfile, and execution-script byte identity",
+      "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0"
+    },
+    {
+      "external_id": "QM9/PyG cached representation",
+      "status": "deferred-user-reserved-gpu",
+      "boundary": "first 130000 rows; seed-42 110000/10000/10000 split; test indices unused"
+    },
+    {
+      "external_id": "ATOM3D-LBA ID30",
+      "release": "f93dd2d150a47c270f624620f84e07451a158705",
+      "status": "deferred-user-reserved-gpu",
+      "boundary": "allowlisted train and validation Arrow shards only; test resolver fail-closed"
+    }
+  ],
+  "code": [
+    {
+      "path": "source-manifest-pre-gpu.json",
+      "git_head": "29241e9c0ee1bafb5ae19b19a36d765cc9379916",
+      "working_tree": "dirty exact-byte manifest",
+      "combined_source_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e"
+    }
+  ],
+  "executions": [
+    {"id": "E1-accidental-cuda-focused-tests", "status": "failed", "exit_code": 1, "log": "execution-log-pre-gpu.json"},
+    {"id": "E2-fast-gate-coverage-failure", "status": "failed", "exit_code": 1, "log": "execution-log-pre-gpu.json"},
+    {"id": "E4-cpu-end-to-end-recorded", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E5-relation-mechanics-recorded", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E6-architecture-mechanics-recorded", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E7-cuda-protocol-v2", "status": "planned-protocol", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E8-frozen-source-fast-gate", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E12-cache-audit-approval-boundary-violation", "status": "excluded", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E13-post-cache-repair-fast-gate", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E14-post-repair-source-freeze-and-cuda-schema", "status": "planned-protocol", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E15-post-freeze-strict-cpu-gate", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E16-final-post-audit-cpu-gate", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E17-final-source-freeze-and-cuda-schema", "status": "planned-protocol", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E18-cross-model-pre-execution-review", "status": "completed-revise", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E19-post-runner-strict-cpu-gate", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E20-final-cpu-freeze-and-packet-dry-run", "status": "completed-deferred", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E21-terminal-receipt-freshness-hardening", "status": "completed", "exit_code": 0, "log": "execution-log-pre-gpu.json"},
+    {"id": "E22-final-cpu-gate-freeze-and-packet-dry-run", "status": "completed-deferred", "exit_code": 0, "log": "execution-log-pre-gpu.json"}
+  ],
+  "environment": {
+    "platform": "Linux x86_64",
+    "python": "3.12.12",
+    "torch": "2.12.1+cu130",
+    "cuda_runtime": "13.0",
+    "uv": "0.10.3",
+    "accelerator": "not recorded in the public CPU-only bundle; execution deferred",
+    "seed_control": "per-receipt deterministic seeds; strict deterministic algorithms for synthetic ablations",
+    "details": "compute-environment.json"
+  },
+  "artifacts": [
+    {"kind": "protocol", "path": "research-contract.md", "role": "research and acceptance contract", "sha256": "3530f1888dff8fdde62eaed16e5bd70496e11c7007b5265d71169543e66d42cb"},
+    {"kind": "claim-register", "path": "claim-register.json", "role": "stable claim definitions and inference limits", "sha256": "a6b3c8a2de145f361783bf89a793d6b453d4c639dce82d3941d67f5f3ea589a0"},
+    {"kind": "evidence-graph", "path": "evidence-graph.json", "role": "pre-GPU claim and evidence lineage", "sha256": "139f48bd6d37cab4f387d347b1b368eb8dd060bf08265dcf4e630f68f2e2d312"},
+    {"kind": "reference-use-ledger", "path": "reference-use-ledger.json", "role": "procedural reference hashes and use", "sha256": "e415f79fc324b49318791bd03ea148ede798fb7d88cf1593a98421d66abfb9d1"},
+    {"kind": "environment", "path": "compute-environment.json", "role": "sanitized CPU verification environment", "sha256": "a626164914e1752de3d8b822425425f5f8fe741a9ae158cf96a8f14ae782b46c"},
+    {"kind": "code-manifest", "path": "source-manifest-pre-gpu.json", "role": "exact source bytes", "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0"},
+    {"kind": "execution-log", "path": "execution-log-pre-gpu.json", "role": "completed, failed, superseded, and accidental attempts", "sha256": "384fcb25e7973de6859784618903ba6aefab0a66ad9bd9add4176bb02b728e10"},
+    {"kind": "verification-log", "path": "fast-gate-pre-gpu.log", "role": "strict CPU, wheel, and public-surface gate", "sha256": "5334b52c0787e25280a52a6d2dd3ce5fa35635bf3901d73a836405dc7e89ee68"},
+    {"kind": "metrics", "path": "cpu-end-to-end-benchmark-recorded.json", "role": "C2 public ingestion scope reproduction", "sha256": "f808433f7d3f2e39a3181d014704d712977d8d82da9c5f6ce42fcda52ce038f2"},
+    {"kind": "metrics", "path": "relation-transport-ablation-cpu-recorded.json", "role": "C6 relation mechanics reproduction", "sha256": "c9c2ed1b0ab06e8adb32f4f6798f533a3d454a9bc657d21c13ba7b9ba1e48072"},
+    {"kind": "metrics", "path": "architecture-lane-ablations-cpu-recorded.json", "role": "C6 CG12 and multiscale mechanics reproduction", "sha256": "44fc86dd74398c7b7d8e0223bd8ab2ea054341fb72c6864938a0c935df58b954"},
+    {"kind": "protocol", "path": "gpu-completion-plan-v2.json", "role": "machine-readable frozen CUDA profiler gates", "sha256": "3c0031243612546a454ee7ff54e86a15c0b9d67e090b11a01b820be461789c3f"},
+    {"kind": "progress-receipt", "path": "cpu-progress-receipt.json", "role": "immutable CPU completion and deferred-execution handoff", "sha256": "587adf7f12b71c282ddd973a8c7d0e5cfdcd84966c95476c43cf825c15627f91"},
+    {"kind": "protocol", "path": "gpu-job-packet.json", "role": "exact serialized CUDA and real-data commands with preregistration", "sha256": "28f2dac1d5bbf4e8616b6a9c911d706b6adb0e2c3fadb41cb365f3bd7094608c"},
+    {"kind": "protocol", "path": "result-adjudication-v1.json", "role": "frozen fail-closed interpretation and completion conditions", "sha256": "d43b14f086a2c85a4bc0eda9a7706da3d2cacefb25fa77f184fe777f23e5149f"}
+  ],
+  "claims": [
+    {"id": "C1", "text": "Source and wheel expose exactly ELA and ELAGraph and execute the public graph contract.", "evidence": ["fast-gate-pre-gpu.log", "source-manifest-pre-gpu.json", "evidence-graph.json"]},
+    {"id": "C2", "text": "The benchmark separates all four public graph-ingestion scopes.", "evidence": ["cpu-end-to-end-benchmark-recorded.json", "evidence-graph.json"]},
+    {"id": "C3", "text": "Trusted preparation and direct CSR retain their functional contracts.", "evidence": ["fast-gate-pre-gpu.log", "evidence-graph.json"]},
+    {"id": "C4", "text": "Compiled, fused-local, and ragged-global CUDA lanes have frozen numerical/resource gates; execution is deferred by explicit user instruction while the GPU is occupied.", "evidence": ["gpu-completion-plan-v2.json", "evidence-graph.json"]},
+    {"id": "C5", "text": "Stagewise coordinate updates preserve hidden state and declared symmetry/autograd contracts.", "evidence": ["fast-gate-pre-gpu.log", "evidence-graph.json"]},
+    {"id": "C6", "text": "Relation, CG12, and multiscale architecture lanes are identity-compatible and mechanically identifiable.", "evidence": ["relation-transport-ablation-cpu-recorded.json", "architecture-lane-ablations-cpu-recorded.json", "evidence-graph.json"]},
+    {"id": "C7", "text": "Integrated CUDA/real-data completion is explicitly deferred while the GPU is occupied; CPU release evidence and the exact staged execution protocol are complete.", "evidence": ["fast-gate-pre-gpu.log", "source-manifest-pre-gpu.json", "gpu-job-packet.json", "evidence-graph.json"]}
+  ],
+  "review": {
+    "status": "cpu-release-reviewed-execution-deferred",
+    "findings": [
+      {
+        "id": "preapproval-cuda-attempt",
+        "status": "resolved-and-disclosed",
+        "severity": "procedural",
+        "summary": "A reviewer accidentally ran four passing and one failing CUDA test for 6.3 seconds before approval; no training or data access occurred, the overstrict provenance-object assertion was corrected, and the run is excluded from positive evidence."
+      },
+      {
+        "id": "preapproval-cache-cuda-attempt",
+        "status": "resolved-and-disclosed",
+        "severity": "procedural",
+        "summary": "A delegated cache audit accidentally selected one passing four-node CUDA forward for 2.05 seconds; no training, dataset, or claim-bearing profiler ran, and the result is excluded from positive evidence."
+      },
+      {
+        "id": "cross-model-pre-gpu-review",
+        "status": "current-pre-execution-revise-resolved",
+        "severity": "release-gate",
+        "summary": "A current Opus review found no model/API release blocker but required separate authority phases, exact packet argv, a mechanical G1 stop, and explicit zero-margin latency disclosure. The runner additionally requires freshly rewritten terminal receipts for every queued G1-G5 job. Those protocol changes passed the final 333-test CPU gate; GPU/data execution is deferred by user instruction."
+      }
+    ]
+  }
+}

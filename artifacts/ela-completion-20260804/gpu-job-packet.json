@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "status": "deferred_gpu_in_use",
+  "created_at_utc": "2026-08-04T07:23:32Z",
+  "revised_at_utc": "2026-08-04T09:33:50Z",
+  "deferred_reason": "The user explicitly reserved the local GPU for another task; no G1-G5 command may run in the current completion pass.",
+  "source_manifest": "source-manifest-pre-gpu.json",
+  "queue": {
+    "executor": "oms tsp-queue",
+    "runner": "scripts/run_completion_packet.py",
+    "slots": 1,
+    "policy": "the phase runner validates this packet SHA-256, submits exact argv without a shell, waits serially, and never offers an all-phases mode",
+    "failure_policy": "G1 nonzero or an invalid/freshness-failed source-bound receipt mechanically prevents G2 and every data job; every G2-G5 receipt digest is captured before enqueue and must be freshly rewritten with completed status, exact command/source identity where applicable, or the next job is not submitted",
+    "estimated_total_minutes": [20, 35],
+    "target_peak_allocated_gib_lt": 16,
+    "overall_target_is_not_a_guarantee": true,
+    "timed_lane_peak_is_a_hard_gate": true
+  },
+  "authority_requested": {
+    "gpu_phase": {
+      "jobs": ["G1", "G2"],
+      "authority": "local GPU compute only",
+      "network": false,
+      "external_data": false,
+      "estimated_minutes": [5, 15]
+    },
+    "data_phase": {
+      "jobs": ["G3", "G4", "G5"],
+      "authority": "local GPU compute plus the bounded dependency and dataset access below",
+      "optional_dependencies": ["rdkit", "torch-geometric", "datasets"],
+      "network": "PyPI only if the locked optional packages are absent locally",
+      "data": [
+        "cached QM9 monolithic processed representation",
+        "allowlisted ATOM3D-LBA train and validation Arrow shards"
+      ],
+      "estimated_minutes": [9, 23]
+    },
+    "finalize_phase": {
+      "jobs": ["G6"],
+      "authority": "CPU-only receipt adjudication",
+      "network": false,
+      "external_data": false
+    },
+    "forbidden": [
+      "opening, resolving, indexing, or evaluating the ATOM3D-LBA test shard",
+      "using QM9 test indices for normalization, selection, or metrics",
+      "running ad-hoc pytest or any command not present verbatim in this packet",
+      "changing frozen numerical thresholds after observing a result"
+    ]
+  },
+  "strict_latency_disclosure": {
+    "native_grouped_over_segmented_inference_median_max": 1.0,
+    "compiled_over_eager_inference_median_max": 1.0,
+    "interpretation": "These are zero-margin promotion gates. A slower or noisy lane is retained as failed; thresholds are not relaxed or rerun post hoc. Failure is a valid scientific result, not permission for an automatic retry."
+  },
+  "jobs": [
+    {
+      "id": "G1",
+      "label": "ela-gpu-gate",
+      "kind": "mechanical_verification",
+      "metrics": "artifacts/ela-completion-20260804/gpu-gate-receipt.json",
+      "argv": [
+        "uv", "run", "--locked", "python", "scripts/run_gpu_gate.py",
+        "--source-manifest", "artifacts/ela-completion-20260804/source-manifest-pre-gpu.json",
+        "--output", "artifacts/ela-completion-20260804/gpu-gate-receipt.json"
+      ],
+      "success": "source-bound receipt has status passed and exit 0 for BF16/auto smoke and all canonical, grouped-MM, Triton, and equivariance CUDA tests",
+      "estimated_minutes": [2, 5],
+      "estimated_peak_gib": [1, 4]
+    },
+    {
+      "id": "G2",
+      "label": "ela-cuda-completion-profile",
+      "kind": "preregistered_claim",
+      "research": {
+        "question": "Do the trusted-cache, grouped-MM, direct-CSR radius, complete Triton-local, and private compiled-core CUDA lanes satisfy the frozen numerical and latency gates?",
+        "hypothesis": "All five lanes complete without fallback; every numerical gate passes; grouped-MM and compiled steady inference medians are no slower than their paired references.",
+        "prediction": "Grouped-MM and compiled ratios are at most 1.0; Triton relative L2 is at most 1e-3 and absolute error at most 5e-3; direct CSR is topology-exact; every timed lane peaks below 16 GiB allocated.",
+        "baseline": "Same-input segmented BF16 inference, explicit COO preparation, forced Torch local reductions, and eager private numerical core inside one profiler.",
+        "metric": "Per-lane gate booleans, alternating CUDA-event median latency, and maximum absolute peak allocation; exact thresholds in gpu-completion-plan-v2.json.",
+        "success": "All five lanes complete, all embedded frozen gates pass, and no compiler fallback occurs; slower or failed lanes are retained without threshold changes.",
+        "change": "Only the execution or graph-ingestion backend within each paired fixture."
+      },
+      "metrics": "artifacts/ela-completion-20260804/gpu-completion-profile.json",
+      "argv": [
+        "uv", "run", "--locked", "python", "scripts/profile_gpu_completion.py",
+        "--source-manifest", "artifacts/ela-completion-20260804/source-manifest-pre-gpu.json",
+        "--output", "artifacts/ela-completion-20260804/gpu-completion-profile.json"
+      ],
+      "estimated_minutes": [3, 10],
+      "estimated_peak_gib": [2, 15]
+    },
+    {
+      "id": "G3",
+      "label": "ela-qm9-screen",
+      "kind": "preregistered_claim",
+      "research": {
+        "question": "Do the canonical static lane controls and separate stagewise coordinate model complete a paired 100-update QM9 gap validation screen?",
+        "hypothesis": "Every arm completes exactly 100 finite updates with the declared pairing and access boundary; no decisive lane-superiority claim is expected at this budget.",
+        "prediction": "Static initial states and predictions match exactly; all validation MAE/RMSE values are finite; short-run differences are small and inconclusive.",
+        "baseline": "Full static ELA with the same features, split, topology, initialization, optimizer, and update budget.",
+        "metric": "Validation MAE in eV on the fixed first 1000 validation rows; RMSE secondary.",
+        "success": "Exact updates, finite metrics, static pairing, source/split receipts, no test-index use, and a completed separate stagewise arm; no accuracy-win threshold.",
+        "change": "Disable one private static lane or enable the separately labelled stagewise coordinate architecture."
+      },
+      "metrics": "artifacts/ela-completion-20260804/qm9-screen.json",
+      "argv": [
+        "uv", "run", "--locked", "--extra", "qm9", "python", "scripts/validate_realdata.py",
+        "qm9", "artifacts/ela-completion-20260804/qm9-screen.json",
+        "--device", "cuda", "--dtype", "float32", "--width", "64", "--depth", "3",
+        "--batch-size", "64", "--steps", "100", "--cutoff", "2.5",
+        "--learning-rate", "0.0003", "--weight-decay", "0.01", "--grad-clip", "1",
+        "--model-seed", "42", "--order-seed", "42", "--threads", "1",
+        "--data-root", "data/qm9", "--num-samples", "130000", "--train-size", "110000",
+        "--val-size", "10000", "--validation-limit", "1000", "--split-seed", "42",
+        "--arms", "full", "no-cg12", "no-multiscale", "--include-stagewise"
+      ],
+      "estimated_minutes": [2, 6],
+      "estimated_peak_gib": [1, 4]
+    },
+    {
+      "id": "G4",
+      "label": "ela-lba-overfit-screen",
+      "kind": "preregistered_claim",
+      "research": {
+        "question": "Can all four paired static ELA arms fit the same 16 bound LBA complexes for 250 updates without a wiring, numerical, or access-boundary failure?",
+        "hypothesis": "Every arm lowers normalized training loss and completes with finite train MAE/RMSE; relative arm ranking is exploratory.",
+        "prediction": "All arms improve from their identical initial prediction, while 250 updates may remain above a strict overfit threshold.",
+        "baseline": "Full static ELA with the same 140D features, relation topology, initialization, optimizer, and train-only normalization.",
+        "metric": "Train MAE in pK after 250 updates on the fixed 16 complexes; RMSE secondary.",
+        "success": "Exact updates, finite metrics, identical static initialization, lower normalized MSE on the same full 16-complex set, and train-only data access; no generalization or superiority claim.",
+        "change": "Disable relation conditioning, CG12 closure, or multiscale local transport one lane at a time."
+      },
+      "metrics": "artifacts/ela-completion-20260804/lba-overfit-screen.json",
+      "argv": [
+        "uv", "run", "--locked", "--extra", "pdbbind", "python", "scripts/validate_realdata.py",
+        "lba-overfit", "artifacts/ela-completion-20260804/lba-overfit-screen.json",
+        "--device", "cuda", "--dtype", "float32", "--width", "64", "--depth", "3",
+        "--batch-size", "2", "--steps", "250", "--cutoff", "6",
+        "--learning-rate", "0.001", "--weight-decay", "0", "--grad-clip", "1",
+        "--model-seed", "20260723", "--order-seed", "20260723", "--threads", "1",
+        "--data-root", "data/atom3d_lba", "--arms", "full", "no-relation", "no-cg12", "no-multiscale"
+      ],
+      "estimated_minutes": [3, 7],
+      "estimated_peak_gib": [1, 4]
+    },
+    {
+      "id": "G5",
+      "label": "ela-lba-id30-screen",
+      "kind": "preregistered_claim",
+      "research": {
+        "question": "Do all four paired static ELA arms complete a 220-update official ID30 train/validation architecture screen under the frozen no-test boundary?",
+        "hypothesis": "Every arm completes with finite validation RMSE/MAE and identical static initialization; no decisive lane-superiority claim is expected at this budget.",
+        "prediction": "Validation differences are observable but inconclusive after 220 updates; no arm is assumed to win.",
+        "baseline": "Full static ELA with the same 140D features, relation topology, train/validation rows, initialization, optimizer, and train-only normalization.",
+        "metric": "Validation RMSE in pK on all allowlisted ID30 validation rows; MAE secondary.",
+        "success": "Exact updates, finite metrics, static pairing, separate train/validation identity and topology hashes, exact 3507/466 rows and 32302952 directed edges, and an unopened test shard; no accuracy-win threshold.",
+        "change": "Disable relation conditioning, CG12 closure, or multiscale local transport one lane at a time."
+      },
+      "metrics": "artifacts/ela-completion-20260804/lba-id30-screen.json",
+      "argv": [
+        "uv", "run", "--locked", "--extra", "pdbbind", "python", "scripts/validate_realdata.py",
+        "lba-id30", "artifacts/ela-completion-20260804/lba-id30-screen.json",
+        "--device", "cuda", "--dtype", "float32", "--width", "64", "--depth", "3",
+        "--batch-size", "16", "--steps", "220", "--cutoff", "6",
+        "--learning-rate", "0.0003", "--weight-decay", "0.01", "--grad-clip", "1",
+        "--model-seed", "42", "--order-seed", "42", "--threads", "1",
+        "--data-root", "data/atom3d_lba", "--train-limit", "0", "--validation-limit", "0",
+        "--arms", "full", "no-relation", "no-cg12", "no-multiscale"
+      ],
+      "estimated_minutes": [4, 10],
+      "estimated_peak_gib": [2, 8]
+    },
+    {
+      "id": "G6",
+      "label": "ela-completion-adjudication",
+      "kind": "mechanical_postprocess",
+      "argv": [
+        "uv", "run", "--locked", "python", "scripts/adjudicate_completion.py",
+        "artifacts/ela-completion-20260804",
+        "artifacts/ela-completion-20260804/completion-adjudication.json",
+        "--expected-source-manifest-combined-sha256", "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
+        "--expected-realdata-source-sha256", "8b43c0be117e87f0e14335f5bb826544c5bf111365f5af2760a464e323f4595f"
+      ],
+      "success": "Fail-closed result status is passed; any missing, non-finite, slower-gated, topology, access, pairing, update-count, or stagewise-activation evidence exits 2.",
+      "estimated_minutes": [0, 1],
+      "estimated_peak_gib": [0, 1]
+    }
+  ]
+}

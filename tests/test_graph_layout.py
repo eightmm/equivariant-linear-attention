@@ -237,8 +237,8 @@ def test_cost_selector_covers_direct_padded_bucket_and_fallback() -> None:
     assert direct.select_lane(backend="auto", **common) == "direct"
     assert padded.select_lane(backend="auto", **common) == "padded_bmm"
     assert bucketed.select_lane(backend="auto", **common) == "bucket_bmm"
-    assert extreme.select_lane(backend="auto", **common) == "outer_scatter"
-    assert extreme.select_lane(backend="feature_gemm", **common) == "outer_scatter"
+    assert extreme.select_lane(backend="auto", **common) == "ragged_gemm"
+    assert extreme.select_lane(backend="feature_gemm", **common) == "ragged_gemm"
     assert direct.select_lane(backend="outer_scatter", **common) == "outer_scatter"
 
 

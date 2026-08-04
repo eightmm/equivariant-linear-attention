@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C1",
+      "text": "The source tree and an isolated installed wheel expose exactly ELA and ELAGraph and execute the documented public graph contract.",
+      "permitted_inference": "Release/API completeness for this recorded source revision; not downstream model quality.",
+      "status": "supported",
+      "required_support": 2,
+      "required_evidence": ["full CPU gate", "isolated wheel smoke"],
+      "dependencies": [],
+      "falsifier": "An import failure, wheel failure, extra root public symbol, or public execution-path mismatch.",
+      "uncertainty": "Platform-specific packaging outside the locked Linux environment is not tested.",
+      "next_action": "Pass the strict full CPU gate and record the wheel receipt."
+    },
+    {
+      "id": "C2",
+      "text": "The benchmark separates cold automatic radius construction, explicit-immutable packed-template reuse, explicit COO ingestion, and moving-coordinate execution including exact interstage rebuild counts.",
+      "permitted_inference": "Measurement-scope completeness and observed latency/memory for the recorded fixtures only.",
+      "status": "suggestive",
+      "required_support": 2,
+      "required_evidence": ["CPU end-to-end receipt", "CUDA end-to-end receipt"],
+      "dependencies": ["C1"],
+      "falsifier": "A lane omits public graph ingestion, mislabels included setup, or reports a rebuild count different from depth minus one.",
+      "uncertainty": "Short local benchmarks do not establish cross-hardware speed rankings.",
+      "next_action": "Record the CPU benchmark and run the approved CUDA profiler."
+    },
+    {
+      "id": "C3",
+      "text": "Trusted graph-major preparation and direct receiver-major CSR preserve exact topology while avoiding redundant validation or post-discovery COO repacking under their documented trust boundary.",
+      "permitted_inference": "Functional topology/cache correctness for covered dense, cell, batched, empty, capped, tied, mutation, and permutation cases.",
+      "status": "suggestive",
+      "required_support": 2,
+      "required_evidence": ["CPU topology/cache tests", "CUDA cache/radius profile"],
+      "dependencies": ["C1"],
+      "falsifier": "Topology/order mismatch, cross-graph edge, stale-cache reuse after mutation, or a hidden post-discovery COO repack.",
+      "uncertainty": "The cell backend retains one E-sized receiver-grouping sort and may not be faster at every graph size.",
+      "next_action": "Pass CPU topology tests and profile the CUDA public radius/direct-CSR path."
+    },
+    {
+      "id": "C4",
+      "text": "The private numerical core supports bounded compiled inference, complete local custom-autograd fusion, and ragged BF16 grouped-MM inference while retaining documented eager or segmented fallbacks and numerical agreement.",
+      "permitted_inference": "Backend capability and resource measurements on the recorded CUDA device; promotion only for lanes that pass their preregistered numerical and latency gates.",
+      "status": "planned",
+      "required_support": 3,
+      "required_evidence": ["CPU fallback/autograd tests", "CUDA numerical tests", "CUDA alternating profiler"],
+      "dependencies": ["C1", "C3"],
+      "falsifier": "Incorrect output/gradient, unsupported advertised dispatch, silent compile fallback, or failure of the preregistered resource gate.",
+      "uncertainty": "Compiler and Triton performance are shape-, dtype-, driver-, and hardware-dependent; double backward stays eager where documented.",
+      "next_action": "Deferred by explicit user instruction while the GPU is occupied. Resume only after a future separate GPU-phase authorization; never move thresholds post hoc."
+    },
+    {
+      "id": "C5",
+      "text": "update_positions=True performs stagewise hidden-state-preserving coordinate updates and refreshes invalid geometry between stages while preserving translation, O(3), permutation, masking, and autograd contracts.",
+      "permitted_inference": "Mechanics and symmetry correctness for the implemented l<=2 architecture; not force accuracy or folding quality.",
+      "status": "suggestive",
+      "required_support": 2,
+      "required_evidence": ["CPU symmetry/autograd tests", "CUDA public-model smoke"],
+      "dependencies": ["C1", "C3"],
+      "falsifier": "Hidden state is re-embedded, a layer is called more than once per stage, topology is stale, or a declared symmetry/autograd test fails.",
+      "uncertainty": "A bounded functionality screen cannot establish task benefit of learned coordinate motion.",
+      "next_action": "Pass CPU stagewise tests and include the stagewise arm in one approved real-data screen."
+    },
+    {
+      "id": "C6",
+      "text": "Relation-conditioned transport, explicit Cartesian 1x2 Clebsch-Gordan closure, and same-CSR multi-scale local transport are functional, identity-compatible architecture lanes with paired ablation harnesses.",
+      "permitted_inference": "Synthetic mechanism identifiability plus exploratory one-seed real-data attribution; not general architecture superiority.",
+      "status": "suggestive",
+      "required_support": 3,
+      "required_evidence": ["relation mechanics ablation", "CG12/multiscale mechanics ablation", "paired QM9/LBA validation screens"],
+      "dependencies": ["C1"],
+      "falsifier": "Initial states/schemas are unpaired, a disabled lane changes identity output, a lane cannot learn its isolated synthetic target, or real-data receipts mix more than the named change.",
+      "uncertainty": "Synthetic tasks prove wiring only; short real-data screens are noisy, sequential, and not converged.",
+      "next_action": "Record the synthetic ablations and run preregistered bounded QM9/LBA arms."
+    },
+    {
+      "id": "C7",
+      "text": "The integrated implementation, documentation, evidence bundle, and review complete without an unresolved blocking finding.",
+      "permitted_inference": "Repository completion for this exact diff and recorded environment.",
+      "status": "planned",
+      "required_support": 3,
+      "required_evidence": ["strict fast gate", "GPU gate", "independent passed review receipt"],
+      "dependencies": ["C1", "C2", "C3", "C4", "C5", "C6"],
+      "falsifier": "A required gate fails, provenance validation fails, documentation overstates evidence, or a blocking review finding remains open.",
+      "uncertainty": "No claim is made for untested operating systems, future dependency versions, or external production workloads.",
+      "next_action": "CPU release evidence is complete. CUDA and real-data closure remains deferred by explicit user instruction until the GPU is available."
+    }
+  ]
+}

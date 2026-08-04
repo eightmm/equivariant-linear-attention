@@ -12,7 +12,7 @@ from equivariant_linear_attention.model.stack import (
     _GroupedRMSLinear,
     _NormGatedIrrepActivation,
 )
-from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.geometry.prepared import prepare_3d_graph
 from equivariant_linear_attention.nn.parity import _ParityState
 
 

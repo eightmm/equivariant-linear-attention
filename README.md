@@ -108,6 +108,24 @@ The collator concatenates nodes, offsets edges, creates `batch`, and carries
 `edge_type`, conditions, update masks, targets, and sample IDs without dummy
 padded nodes.
 
+For repeated execution with static topology, an explicit immutable-storage
+contract enables the E-independent prepared-cache path:
+
+```python
+static_graph = graph.to("cuda").assume_immutable()
+with torch.inference_mode():
+    model(static_graph)       # prepares and attaches private CSR metadata
+    out = model(static_graph) # reuses it without scanning every edge
+```
+
+`assume_immutable()` clones `pos`, `edge_index`, `batch`, `edge_type`, and
+`group` before opting in. Do not mutate those returned tensors or export mutable
+aliases of them. Ordinary `ELAGraph` execution remains the safe default and
+revalidates cached topology content exactly, including storage that may be
+changed through NumPy or DLPack aliases. Seal the graph before entering
+`torch.inference_mode()`; inference tensors do not expose mutation counters, so
+sealing inside that context safely falls back to exact validation.
+
 ## Coordinate updates
 
 Coordinate mutation is selected once when the model is declared:
@@ -127,9 +145,12 @@ step = out.delta
 
 With `update_positions=False`, `out.pos` equals the input positions and
 `out.delta` is zero. With `update_positions=True`, ELA predicts a polar-vector
-step, centers selected updates per graph, bounds the graph-wise maximum step,
-and rebuilds automatic radius topology when necessary. `graph.update_mask`
-selects movable nodes; unselected nodes receive exactly zero displacement.
+step after every layer, carries the hidden state forward, and lets the next
+layer consume the updated geometry. Selected updates are centered per graph;
+the sum of all stage steps is bounded by `max_coordinate_step`. Automatic
+radius topology is rebuilt between stages when its preparation provenance no
+longer permits reuse. `graph.update_mask` selects movable nodes; unselected
+nodes receive exactly zero displacement.
 
 This built-in coordinate update is for learned geometry refinement. To predict a
 flow-matching velocity without mutating coordinates, keep
@@ -244,12 +265,29 @@ subsequent models. Radius topology records cutoff, neighbor policy, relation
 schema, and reference positions, and is rebuilt rather than silently reused
 when stale.
 
-PyTorch is the canonical backend. `torch.compile(model)` is recommended only
-for a separately validated static-shape graph workload. Triton remains an explicit
-memory-oriented experimental backend and is never selected automatically.
+PyTorch is the canonical backend. Compile ELA through the inference helper so
+public validation, cache lookup, topology discovery, pooling, and output
+wrapping remain eager while only the private numerical core is compiled:
+
+```python
+from equivariant_linear_attention.inference import prepare_for_inference
+
+inference_model = prepare_for_inference(model, device="cuda", compile_model=True)
+with torch.inference_mode():
+    out = inference_model(graph)
+```
+
+Compilation is an optimization attempt, not a numerical requirement: recognized
+Dynamo/Inductor lowering failures warn once and permanently fall back to the
+exact eager core. Other runtime errors remain visible. Validate latency on the
+intended shapes and hardware.
+Triton remains an explicit memory-oriented experimental backend and is never
+selected automatically.
 
 See [performance](docs/PERFORMANCE.md), [advanced configuration](docs/ADVANCED.md),
-[task recipes](docs/TASKS.md), and [the architecture contract](docs/CANONICAL_ELA.md).
+[task recipes](docs/TASKS.md), [real-data validation](docs/REALDATA_VALIDATION.md),
+[the architecture contract](docs/CANONICAL_ELA.md), and the
+[evidence-scoped completion checklist](docs/COMPLETION_STATUS.md).
 
 ## Validation
 

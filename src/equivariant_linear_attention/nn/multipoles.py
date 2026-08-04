@@ -103,6 +103,59 @@ def _st_jordan_product(
     return _matrix_to_st(traceless)
 
 
+def _vector_tensor_l1_l2(
+    vector: torch.Tensor,
+    tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cartesian ``l=1,2`` projections of ``l=1 (x) l=2``.
+
+    ``T v`` is the unique degree-one component. With ``[v]_x w = v x w``,
+    the commutator ``[v]_x T - T [v]_x`` is symmetric and traceless, hence
+    the unique degree-two component up to scalar normalization. Computing
+    both together avoids rebuilding the tensor matrix in the closure hot path.
+    """
+    tensor_matrix = _st_to_matrix(tensor)
+    l1 = torch.einsum("...ab,...b->...a", tensor_matrix, vector)
+    x, y, z = vector.unbind(dim=-1)
+    zero = torch.zeros_like(x)
+    cross_matrix = torch.stack(
+        [
+            torch.stack([zero, -z, y], dim=-1),
+            torch.stack([z, zero, -x], dim=-1),
+            torch.stack([-y, x, zero], dim=-1),
+        ],
+        dim=-2,
+    )
+    product = cross_matrix @ tensor_matrix - tensor_matrix @ cross_matrix
+    # The expression is analytically symmetric and traceless. Explicitly
+    # projecting suppresses round-off drift in reduced precision.
+    symmetric = 0.5 * (product + product.transpose(-1, -2))
+    trace_third = symmetric.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / 3.0
+    identity = torch.eye(
+        3,
+        dtype=symmetric.dtype,
+        device=symmetric.device,
+    )
+    traceless = symmetric - trace_third[..., None, None] * identity
+    return l1, _matrix_to_st(traceless)
+
+
+def _vector_tensor_l1(
+    vector: torch.Tensor,
+    tensor: torch.Tensor,
+) -> torch.Tensor:
+    """Degree-one projection of ``l=1 (x) l=2`` with product parity."""
+    return _vector_tensor_l1_l2(vector, tensor)[0]
+
+
+def _vector_tensor_l2(
+    vector: torch.Tensor,
+    tensor: torch.Tensor,
+) -> torch.Tensor:
+    """Degree-two projection of ``l=1 (x) l=2`` with product parity."""
+    return _vector_tensor_l1_l2(vector, tensor)[1]
+
+
 def _st_orthonormal(value: torch.Tensor) -> torch.Tensor:
     """Map the compact ST5 coordinates to an orthonormal Frobenius basis."""
     xx, yy, xy, xz, yz = value.unbind(dim=-1)
@@ -276,7 +329,13 @@ class _ParitySectorNorm(nn.Module):
 
 
 class _LowOrderTensorClosure(nn.Module):
-    """Low-rank Cartesian realization of all l<=2 output sectors."""
+    """Low-rank Cartesian realization of all retained ``l<=2`` products.
+
+    In addition to the ``1 (x) 1`` and ``2 (x) 2`` products, the canonical
+    path retains the ``l=1`` and ``l=2`` components of ``1 (x) 2``. The
+    degree-three component is deliberately omitted by the project's
+    ``l<=2`` representation contract.
+    """
 
     def __init__(
         self,
@@ -313,6 +372,28 @@ class _LowOrderTensorClosure(nn.Module):
         self.axial_out = _ChannelMix(rank, num_heads, zero_init=True)
         self.even_tensor_out = _ChannelMix(rank, num_heads, zero_init=True)
         self.odd_tensor_out = _ChannelMix(rank, num_heads, zero_init=True)
+
+        # Separate zero-initialized projections make the new CG lane
+        # identity-safe and independently measurable without changing the
+        # public ELA constructor. `_set_l1_l2_enabled` is intentionally a
+        # private experiment hook rather than an architecture variant.
+        self.l1_l2_polar_out = _ChannelMix(rank, num_heads, zero_init=True)
+        self.l1_l2_axial_out = _ChannelMix(rank, num_heads, zero_init=True)
+        self.l1_l2_even_tensor_out = _ChannelMix(
+            rank,
+            num_heads,
+            zero_init=True,
+        )
+        self.l1_l2_odd_tensor_out = _ChannelMix(
+            rank,
+            num_heads,
+            zero_init=True,
+        )
+        self._l1_l2_enabled = True
+
+    def _set_l1_l2_enabled(self, enabled: bool) -> None:
+        """Privately toggle the CG lane for paired architecture ablations."""
+        self._l1_l2_enabled = bool(enabled)
 
     def forward(
         self,
@@ -383,14 +464,86 @@ class _LowOrderTensorClosure(nn.Module):
             + _st_jordan_product(even_left, odd_left)
         )
 
+        if self._l1_l2_enabled:
+            polar_even_lr = _vector_tensor_l1_l2(polar_left, even_right)
+            polar_even_rl = _vector_tensor_l1_l2(polar_right, even_left)
+            axial_odd_lr = _vector_tensor_l1_l2(axial_left, odd_right)
+            axial_odd_rl = _vector_tensor_l1_l2(axial_right, odd_left)
+            axial_even_lr = _vector_tensor_l1_l2(axial_left, even_right)
+            axial_even_rl = _vector_tensor_l1_l2(axial_right, even_left)
+            polar_odd_lr = _vector_tensor_l1_l2(polar_left, odd_right)
+            polar_odd_rl = _vector_tensor_l1_l2(polar_right, odd_left)
+
+            # 1 (x) 2 -> 1. A direct tensor-vector contraction carries the
+            # product parity: (1o,2e) and (1e,2o) feed 1o, while (1e,2e)
+            # and (1o,2o) feed 1e.
+            l1_l2_polar = (
+                polar_even_lr[0]
+                + polar_even_rl[0]
+                + axial_odd_lr[0]
+                + axial_odd_rl[0]
+            )
+            l1_l2_axial = (
+                axial_even_lr[0]
+                + axial_even_rl[0]
+                + polar_odd_lr[0]
+                + polar_odd_rl[0]
+            )
+
+            # 1 (x) 2 -> 2. The Levi-Civita projection swaps the natural
+            # Cartesian parity: polar-even and axial-odd feed 2o;
+            # axial-even and polar-odd feed 2e.
+            l1_l2_even_tensor = (
+                axial_even_lr[1]
+                + axial_even_rl[1]
+                + polar_odd_lr[1]
+                + polar_odd_rl[1]
+            )
+            l1_l2_odd_tensor = (
+                polar_even_lr[1]
+                + polar_even_rl[1]
+                + axial_odd_lr[1]
+                + axial_odd_rl[1]
+            )
+        else:
+            l1_l2_polar = torch.zeros_like(polar)
+            l1_l2_axial = torch.zeros_like(axial)
+            l1_l2_even_tensor = torch.zeros_like(even_tensor)
+            l1_l2_odd_tensor = torch.zeros_like(odd_tensor)
+
         return _ParityState(
             even_scalar=self.even_scalar_out(even_scalar),
             odd_scalar=self.odd_scalar_out(odd_scalar),
-            polar_vector=self.polar_out(polar),
-            axial_vector=self.axial_out(axial),
-            even_tensor=self.even_tensor_out(even_tensor),
-            odd_tensor=self.odd_tensor_out(odd_tensor),
+            polar_vector=(
+                self.polar_out(polar) + self.l1_l2_polar_out(l1_l2_polar)
+            ),
+            axial_vector=(
+                self.axial_out(axial) + self.l1_l2_axial_out(l1_l2_axial)
+            ),
+            even_tensor=(
+                self.even_tensor_out(even_tensor)
+                + self.l1_l2_even_tensor_out(l1_l2_even_tensor)
+            ),
+            odd_tensor=(
+                self.odd_tensor_out(odd_tensor)
+                + self.l1_l2_odd_tensor_out(l1_l2_odd_tensor)
+            ),
         )
+
+
+def _set_l1_l2_closure_enabled(module: nn.Module, enabled: bool) -> int:
+    """Toggle every private CG12 lane below ``module`` and return its count.
+
+    This is deliberately absent from the package root and model constructor.
+    It exists only so paired internal runs can ablate the new lane without
+    changing parameter schemas or any other canonical computation.
+    """
+    count = 0
+    for child in module.modules():
+        if isinstance(child, _LowOrderTensorClosure):
+            child._set_l1_l2_enabled(enabled)
+            count += 1
+    return count
 
 
 __all__ = [

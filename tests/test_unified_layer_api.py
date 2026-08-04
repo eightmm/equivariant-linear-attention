@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.geometry.prepared import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
     _BaseStackConfig,
     _ELARuntime,
@@ -126,12 +126,8 @@ def test_dit_condition_is_neutral_at_initialization_and_trainable() -> None:
     condition_a = torch.randn(1, 5, dtype=torch.float64)
     condition_b = torch.randn(1, 5, dtype=torch.float64)
 
-    output_a = model(features, positions, graph, condition=condition_a)[
-        "node_irreps"
-    ]
-    output_b = model(features, positions, graph, condition=condition_b)[
-        "node_irreps"
-    ]
+    output_a = model(features, positions, graph, condition=condition_a)["node_irreps"]
+    output_b = model(features, positions, graph, condition=condition_b)["node_irreps"]
     torch.testing.assert_close(output_a, output_b, atol=0.0, rtol=0.0)
 
     output_a.square().mean().backward()
@@ -223,10 +219,13 @@ def test_coordinate_update_is_se3_equivariant_and_bounded() -> None:
         atol=3e-8,
         rtol=3e-8,
     )
-    assert torch.linalg.vector_norm(
-        reference["coordinate_delta"],
-        dim=-1,
-    ).max() <= config.num_layers * config.max_coordinate_step + 1e-10
+    assert (
+        torch.linalg.vector_norm(
+            reference["coordinate_delta"],
+            dim=-1,
+        ).max()
+        <= config.num_layers * config.max_coordinate_step + 1e-10
+    )
 
 
 def test_condition_and_coordinate_contract_is_explicit() -> None:
@@ -236,9 +235,7 @@ def test_condition_and_coordinate_contract_is_explicit() -> None:
         coordinate_updates=True,
     )
     contract = config.canonical_contract()
-    assert contract["layer_api"] == (
-        "attention_residual_tensor_closure_ffn_residual"
-    )
+    assert contract["layer_api"] == ("attention_residual_tensor_closure_ffn_residual")
     assert contract["condition_irrep"] == "0e"
     assert contract["coordinate_output"] == "bounded_polar_residual"
     assert contract["coordinate_topology"] == (

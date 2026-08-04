@@ -4,8 +4,12 @@ import torch
 
 from .batch import ELABatch
 from .context import ELAContext, ELAFeatures
-from .geometry.prepared import PreparationSpec
-from .geometry.radius import radius_graph
+from .geometry.neighbors import build_receiver_csr
+from .geometry.prepared import (
+    PreparationSpec,
+    _prepare_radius_3d_graph,
+    _prepare_trusted_3d_graph,
+)
 from .graph import ELAGraph
 from .kernels import backend_policy, triton_available
 from .model.ela import ELAConfig, SparseGeometry, _ELAEngine
@@ -71,7 +75,9 @@ class ELA(_ELAEngine):
                 condition_dim=condition_dim,
                 order_dim=order_dim,
             ),
-            coordinate_updates=1 if update_positions else 0,
+            # The public switch selects the canonical stagewise mode: update
+            # once at every layer boundary while carrying the hidden state.
+            coordinate_updates=depth if update_positions else 0,
             max_coordinate_step=max_coordinate_step,
         )
         super().__init__(config)
@@ -112,6 +118,7 @@ class ELA(_ELAEngine):
             "edge_types": self.config.geometry.num_edge_relations,
             "update_positions": self.updates_positions,
             "coordinate_updates": self.config.coordinate_updates,
+            "coordinate_update_layers": self.config.coordinate_update_layers,
             "max_coordinate_step": self.config.max_coordinate_step,
             "num_parameters": sum(parameter.numel() for parameter in self.parameters()),
             "kernel_backend_policy": backend_policy(),
@@ -125,8 +132,6 @@ class ELA(_ELAEngine):
         if graph is None:
             return False
         source = "explicit" if batch.edge_index is not None else "radius"
-        if not torch.equal(graph.batch, batch.interaction_batch):
-            return False
         if not graph.spec.matches(
             source=source,
             cutoff=None if source == "explicit" else self.config.geometry.cutoff,
@@ -135,6 +140,12 @@ class ELA(_ELAEngine):
             num_edge_relations=self.config.geometry.num_edge_relations,
             skin=0.0 if source == "explicit" else self.config.geometry.skin,
         ):
+            return False
+        if batch._trusted_prepared:
+            # ELAGraph admitted this cache only under its explicit immutable
+            # topology-storage promise and matching version/schema provenance.
+            return True
+        if not torch.equal(graph.batch, batch.interaction_batch):
             return False
         if not graph.spec.can_reuse_positions(batch.positions):
             return False
@@ -154,9 +165,8 @@ class ELA(_ELAEngine):
                 dtype=torch.long
             )
             if raw_relation is None:
-                return (
-                    self.config.geometry.num_edge_relations == 1
-                    and not bool(original_relation.any().item())
+                return self.config.geometry.num_edge_relations == 1 and not bool(
+                    original_relation.any().item()
                 )
             if not torch.equal(
                 original_relation,
@@ -179,6 +189,12 @@ class ELA(_ELAEngine):
         if batch.is_prepared:
             batch = batch.without_prepared_graph()
 
+        graph_counts = None
+        if batch.interaction_group is None:
+            if batch.ptr is None:
+                raise RuntimeError("packed graph pointer normalization failed")
+            graph_counts = (batch.ptr[1:] - batch.ptr[:-1]).to(dtype=torch.long)
+
         candidate_edges = batch.edge_index
         relation = batch.edge_relation_id
         relation_count = self.config.geometry.num_edge_relations
@@ -190,21 +206,18 @@ class ELA(_ELAEngine):
                     "multiple edge types require explicit edges; "
                     "radius geometry cannot infer semantic relations"
                 )
-            spec = PreparationSpec.radius(
+            prepared = _prepare_radius_3d_graph(
                 batch.positions,
+                batch.interaction_batch,
                 cutoff=self.config.geometry.cutoff,
                 max_neighbors=self.config.geometry.max_neighbors,
                 include_self=False,
                 num_edge_relations=relation_count,
                 skin=self.config.geometry.skin,
+                graph_counts=graph_counts,
+                prefer_int32=prefer_int32,
             )
-            candidate_edges = radius_graph(
-                batch.positions,
-                cutoff=float(spec.candidate_cutoff),
-                batch=batch.interaction_batch,
-                max_neighbors=self.config.geometry.max_neighbors,
-                include_self=False,
-            )
+            return batch._with_prepared_graph_trusted(prepared)
         else:
             spec = PreparationSpec.explicit(num_edge_relations=relation_count)
 
@@ -218,23 +231,36 @@ class ELA(_ELAEngine):
             raise ValueError("edge_type is required when edge_types > 1")
         if relation is not None:
             if relation_count == 0:
-                raise ValueError(
-                    "edge_type was supplied but edge_types=0 on the model"
-                )
+                raise ValueError("edge_type was supplied but edge_types=0 on the model")
             if relation.numel() and (
                 int(relation.min().item()) < 0
                 or int(relation.max().item()) >= relation_count
             ):
                 raise ValueError(f"edge_type values must be in [0, {relation_count})")
 
-        prepared = self.config.geometry.prepare(
-            batch.interaction_batch,
-            candidate_edges,
-            edge_relation_id=relation,
-            prefer_int32=prefer_int32,
-            spec=spec,
-        )
-        return batch.with_prepared_graph(prepared)
+        if graph_counts is None:
+            prepared = self.config.geometry.prepare(
+                batch.interaction_batch,
+                candidate_edges,
+                edge_relation_id=relation,
+                prefer_int32=prefer_int32,
+                spec=spec,
+            )
+        else:
+            neighbors = build_receiver_csr(
+                candidate_edges,
+                num_nodes=batch.num_nodes,
+                edge_relation_id=relation,
+                prefer_int32=prefer_int32,
+                build_ell=False,
+            )
+            prepared = _prepare_trusted_3d_graph(
+                batch.interaction_batch,
+                neighbors,
+                graph_counts=graph_counts,
+                spec=spec,
+            )
+        return batch._with_prepared_graph_trusted(prepared)
 
     def _prepare_graph(self, graph: ELAGraph) -> ELAGraph:
         """Prepare topology while preserving the one public graph type."""
@@ -244,20 +270,24 @@ class ELA(_ELAEngine):
         packed = self._prepare_packed(graph._to_packed())
         if packed._prepared_graph is None:
             raise RuntimeError("graph preparation failed")
-        return graph._with_prepared(packed._prepared_graph)
+        return graph._with_prepared(packed._prepared_graph, packed)
 
     @torch.compiler.disable
     def _pack_and_prepare(self, graph: ELAGraph) -> ELABatch:
         """Keep public validation and topology discovery outside compiled math."""
 
+        if graph.update_mask is not None and not self.updates_positions:
+            raise ValueError(
+                "update_mask was supplied but update_positions=False on the model"
+            )
         packed = self._prepare_packed(graph._to_packed())
         if packed._prepared_graph is None:
             raise RuntimeError("graph preparation failed")
-        graph._cache_prepared(packed._prepared_graph)
+        graph._cache_prepared(packed)
         return packed
 
-    def _execute_packed(self, batch: ELABatch) -> dict[str, torch.Tensor]:
-        """Numerical hot path for one already validated packed graph."""
+    def _execute_numerical(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        """Unchecked numerical core for one boundary-validated packed graph."""
 
         if batch._prepared_graph is None:
             raise RuntimeError("packed graph preparation invariant was violated")
@@ -274,14 +304,35 @@ class ELA(_ELAEngine):
                 condition=context.condition[batch.batch],
                 order=context.order,
             )
-        raw = _ELAEngine.forward(
-            self,
-            batch.node_irreps,
-            batch.positions,
-            batch._prepared_graph,
-            context=context,
-            update_mask=batch.update_mask,
-        )
+        if self.updates_positions:
+            raw = self._forward_engine(
+                batch.node_irreps,
+                batch.positions,
+                batch._prepared_graph,
+                context=context,
+                update_mask=batch.update_mask,
+            )
+        else:
+            condition = self._encode_context(
+                context,
+                batch._prepared_graph,
+                dtype=batch.node_irreps.dtype,
+            )
+            raw = self._static_forward_unchecked(
+                batch.node_irreps,
+                batch.positions,
+                batch._prepared_graph,
+                condition=condition,
+            )
+        return raw
+
+    def _finalize_packed(
+        self,
+        batch: ELABatch,
+        raw: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        """Pool and normalize numerical outputs outside the compiled core."""
+
         node = raw["node_irreps"]
         graph_sum = node.new_zeros((batch.num_graphs, node.shape[-1]))
         graph_sum.index_add_(0, batch.batch, node)
@@ -299,6 +350,13 @@ class ELA(_ELAEngine):
             "positions": final_positions,
             "coordinate_delta": delta,
         }
+
+    def _execute_packed(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        """Numerical hot path for one already validated packed graph."""
+
+        if batch._prepared_graph is None:
+            raise RuntimeError("packed graph preparation invariant was violated")
+        return self._finalize_packed(batch, self._execute_numerical(batch))
 
     def _forward_prepared(self, batch: ELABatch) -> dict[str, torch.Tensor]:
         """Checked private packed path used by kernel tests and benchmarks."""

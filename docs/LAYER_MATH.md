@@ -334,25 +334,34 @@ m_jh = PhiK_jh^T Q_gh,
 S_gh = sum_j PhiK_jh tensor ([v_jh,1] / m_jh).
 ```
 
-`feature_gemm` evaluates these equations as graph-major matrix products.
-Unlike the compatibility numerator it never materializes a per-node
-`N x H x F x V` outer. Storage is `O(NHF + GHFV + NHV)` at fixed feature
-rank. A bounded-padding layout is used for ordinary batches; highly ragged
-batches are grouped once, sliced by graph offsets, concatenated once, and
-returned to node order with one inverse permutation. They execute the same two
-GEMMs without `G` full-batch scans or a repeated full-size `index_copy` chain.
+`feature_gemm` evaluates these equations as graph-major matrix products. A
+bounded-padding layout is used for ordinary batches. Highly ragged BF16 CUDA
+inference uses two native `grouped_mm` calls over concatenated graph/head token
+segments: first `K^T V`, then `Q S`. It pads only feature widths and at most
+eight ignored alignment rows, never a `G x max(N_g)` node dimension or a
+per-node `N x H x F x V` outer. Storage is
+`O(NHF + GHFV + NHV)` at fixed feature rank.
+
+Training, CPU, FP32, and unsupported devices retain an exact higher-order
+autograd fallback. That fallback tiles the feature axis, forms only
+`N x H x tile x V` at a time, reduces by graph with `index_add`, and then
+contracts the matching query tile. It removes per-graph Python loops and node
+padding, but is a tiled segmented outer reduction rather than a GEMM kernel;
+its saved training tensors still scale with `NHFV` across all tiles.
 
 `PackedGraphLayout` freezes graph counts, one grouped-node permutation and
 inverse, dense masks/padding, and optional degree-like size buckets. The
 deterministic `auto` selector maps one/similar-size/bucketable/ragged batches
-to direct GEMM, padded BMM, bucketed BMM, or ragged grouped GEMM. Small work or
-an extreme size ratio can fall back to outer/scatter. Feature and augmented
-value widths are zero-padded to a device/dtype-dependent multiple, which
-cannot change any dot product. When this layout is passed to the model, the
-forward does not sort, call `.item()`/`.tolist()`, or rebuild graph metadata.
-If it is omitted, layout construction remains caller-visible overhead and may
-synchronize; the selector constants are heuristics, not a measured
-target-GPU optimum.
+to direct GEMM, padded BMM, bucketed BMM, or the ragged execution described
+above. Explicit `outer_scatter` or small auto-selected work can use the tiled
+segmented fallback. Extreme-skew feature-GEMM layouts use the same padding-free
+ragged lane instead of allocating a dense or bucket-padded node dimension.
+Feature and augmented value widths are zero-padded to a device/dtype-dependent
+multiple, which cannot change any dot product. When this layout is passed to
+the model, the forward does not sort, call `.item()`/`.tolist()`, or rebuild
+graph metadata. If it is omitted, layout construction remains caller-visible
+overhead and may synchronize; the selector constants are heuristics, not a
+measured target-GPU optimum.
 
 ## Homogeneous sparse low-rank residual
 

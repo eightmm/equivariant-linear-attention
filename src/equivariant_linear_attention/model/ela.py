@@ -7,8 +7,12 @@ import torch
 from torch import nn
 
 from ..context import ELAContext, ELAFeatures, FourierOrderEncoder
-from ..geometry.prepared import PreparationSpec, Prepared3DGraph, prepare_3d_graph
-from ..geometry.radius import radius_graph
+from ..geometry.prepared import (
+    PreparationSpec,
+    Prepared3DGraph,
+    _prepare_radius_3d_graph,
+    prepare_3d_graph,
+)
 from ..irreps import IrrepLayout, split_irreps
 from ..nn.heads import EquivariantVectorHead
 from ..nn.layers import (
@@ -145,6 +149,11 @@ class ELAConfig:
             raise TypeError("coordinate_updates must be an integer")
         if self.coordinate_updates < 0:
             raise ValueError("coordinate_updates must be nonnegative")
+        if self.coordinate_updates > self.depth:
+            raise ValueError(
+                "coordinate_updates cannot exceed depth: updates occur at "
+                "distinct layer boundaries"
+            )
         _positive_real("max_coordinate_step", self.max_coordinate_step)
         self.to_advanced_config()
 
@@ -207,6 +216,21 @@ class ELAConfig:
     @property
     def condition_dim(self) -> int:
         return self.features.total_condition_dim(self.width)
+
+    @property
+    def coordinate_update_layers(self) -> tuple[int, ...]:
+        """One-based layer boundaries that perform coordinate updates.
+
+        Advanced configurations may request fewer coordinate updates than
+        layers.  Those updates are spread deterministically through the stack
+        and always include the final layer.  The public ``update_positions``
+        switch requests ``depth`` updates, hence one update per layer.
+        """
+
+        updates = self.coordinate_updates
+        if updates == 0:
+            return ()
+        return tuple(step * self.depth // updates for step in range(1, updates + 1))
 
     @property
     def residual_dropout(self) -> float:
@@ -275,6 +299,7 @@ class ELAConfig:
             "message_fusion": "fixed_exact_global_plus_local_sum",
             "optional_features": self.features.contract(self.width),
             "coordinate_updates": self.coordinate_updates,
+            "coordinate_update_layers": self.coordinate_update_layers,
             "max_coordinate_step": self.max_coordinate_step,
             "implicit_spatial": "not_in_canonical_architecture",
             "attention_residuals": "not_in_canonical_architecture",
@@ -337,29 +362,17 @@ class ELALayer(EquivariantLinearAttentionLayer):
             context.multipoles,
         )
         closure_delta = _ParityState(
-            even_scalar=self.closure_scalar_scale.to(
-                dtype=state.even_scalar.dtype
-            )
+            even_scalar=self.closure_scalar_scale.to(dtype=state.even_scalar.dtype)
             * closure.even_scalar,
-            odd_scalar=self.closure_odd_scale.to(
-                dtype=state.odd_scalar.dtype
-            )
+            odd_scalar=self.closure_odd_scale.to(dtype=state.odd_scalar.dtype)
             * _bounded_scalar(closure.odd_scalar, self.eps),
-            polar_vector=self.closure_polar_scale.to(
-                dtype=state.polar_vector.dtype
-            )
+            polar_vector=self.closure_polar_scale.to(dtype=state.polar_vector.dtype)
             * _unit_ball(closure.polar_vector, self.eps),
-            axial_vector=self.closure_axial_scale.to(
-                dtype=state.axial_vector.dtype
-            )
+            axial_vector=self.closure_axial_scale.to(dtype=state.axial_vector.dtype)
             * _unit_ball(closure.axial_vector, self.eps),
-            even_tensor=self.closure_even_tensor_scale.to(
-                dtype=state.even_tensor.dtype
-            )
+            even_tensor=self.closure_even_tensor_scale.to(dtype=state.even_tensor.dtype)
             * _bounded_st(closure.even_tensor, self.eps),
-            odd_tensor=self.closure_odd_tensor_scale.to(
-                dtype=state.odd_tensor.dtype
-            )
+            odd_tensor=self.closure_odd_tensor_scale.to(dtype=state.odd_tensor.dtype)
             * _bounded_st(closure.odd_tensor, self.eps),
         )
         if modulation is not None:
@@ -502,7 +515,7 @@ class _ELAEngine(nn.Module):
     def split_output(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
         return split_irreps(self.output_irreps, value)
 
-    def prepare_context(
+    def _prepare_context(
         self,
         pos: torch.Tensor,
         graph: Prepared3DGraph,
@@ -516,7 +529,7 @@ class _ELAEngine(nn.Module):
             graph.neighbors,
         )
 
-    def embed_input(
+    def _embed_input(
         self,
         node_irreps: torch.Tensor,
         pos: torch.Tensor,
@@ -531,7 +544,7 @@ class _ELAEngine(nn.Module):
         )
         return self.core.embed_input(node_irreps, context), context
 
-    def project_state(self, state: _ELAHiddenState) -> torch.Tensor:
+    def _project_state(self, state: _ELAHiddenState) -> torch.Tensor:
         return self.core.project_state(state)
 
     def _core_forward_features(
@@ -570,6 +583,39 @@ class _ELAEngine(nn.Module):
             condition=condition,
         )
 
+    def _static_forward_unchecked(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        condition: torch.Tensor | None,
+    ) -> dict[str, torch.Tensor]:
+        """Tensor hot path after the public boundary validated the graph.
+
+        This is intentionally private: callers must first establish the full
+        ``ELAGraph -> ELABatch -> Prepared3DGraph`` contract.  Keeping those
+        checks out of this method lets ``prepare_for_inference`` compile only
+        stable numerical work rather than tracing cache/provenance branches.
+        """
+
+        if self.config.coordinate_updates:
+            raise RuntimeError("static numerical core cannot update positions")
+        layer_context = self.core.prepare_context(
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+        )
+        state = self.core.embed_input(node_irreps, layer_context)
+        for layer in self.layers:
+            state = layer(state, layer_context, condition).state
+        return {
+            "node_irreps": self._project_state(state),
+            "positions": pos,
+            "coordinate_delta": torch.zeros_like(pos),
+        }
+
     @staticmethod
     def _validate_finite(name: str, value: torch.Tensor) -> None:
         if not value.is_floating_point():
@@ -607,7 +653,7 @@ class _ELAEngine(nn.Module):
             "condition leading dimension must be one, the node count, or the graph count"
         )
 
-    def encode_context(
+    def _encode_context(
         self,
         context: ELAContext | None,
         graph: Prepared3DGraph,
@@ -731,6 +777,8 @@ class _ELAEngine(nn.Module):
         state: _ELAHiddenState,
         graph: Prepared3DGraph,
         update_mask: torch.Tensor | None,
+        *,
+        max_step: float | None = None,
     ) -> torch.Tensor:
         if self.coordinate_head is None or self.coordinate_gate is None:
             raise RuntimeError("coordinate updates are not enabled on this model")
@@ -748,7 +796,11 @@ class _ELAEngine(nn.Module):
             raw,
             graph.batch,
             selected,
-            max_step=float(self.config.max_coordinate_step),
+            max_step=(
+                float(self.config.max_coordinate_step)
+                if max_step is None
+                else float(max_step)
+            ),
         )
 
     def _refresh_coordinate_graph(
@@ -764,36 +816,21 @@ class _ELAEngine(nn.Module):
             raise ValueError(
                 "automatic radius updates cannot infer multiple semantic relations"
             )
-        spec = PreparationSpec.radius(
+        graph_counts = (
+            graph.graph_layout.graph_counts if graph.graph_layout.is_grouped else None
+        )
+        return _prepare_radius_3d_graph(
             positions,
+            graph.batch,
             cutoff=self.config.geometry.cutoff,
             max_neighbors=graph.spec.max_neighbors,
             include_self=False,
             num_edge_relations=relation_count,
             skin=self.config.geometry.skin,
-        )
-        edge_index = radius_graph(
-            positions,
-            cutoff=float(spec.candidate_cutoff),
-            batch=graph.batch,
-            max_neighbors=spec.max_neighbors,
-            include_self=False,
-        )
-        relation = None
-        if relation_count == 1:
-            relation = torch.zeros(
-                edge_index.shape[1],
-                device=edge_index.device,
-                dtype=torch.long,
-            )
-        return prepare_3d_graph(
-            graph.batch,
-            edge_index,
-            edge_relation_id=relation,
-            spec=spec,
+            graph_counts=graph_counts,
         )
 
-    def forward_features(
+    def _forward_features(
         self,
         node_irreps: torch.Tensor,
         pos: torch.Tensor,
@@ -801,11 +838,20 @@ class _ELAEngine(nn.Module):
         *,
         context: ELAContext | None = None,
     ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor]:
-        condition = self.encode_context(
+        condition = self._encode_context(
             context,
             graph,
             dtype=node_irreps.dtype,
         )
+        if self.config.coordinate_updates > 0:
+            state, positions, total_delta, _ = self._stagewise_forward_features(
+                node_irreps,
+                pos,
+                graph,
+                condition=condition,
+                update_mask=None,
+            )
+            return state, positions, total_delta
         return self._core_forward_features(
             node_irreps,
             pos,
@@ -813,7 +859,72 @@ class _ELAEngine(nn.Module):
             condition=condition,
         )
 
-    def forward(
+    def _stagewise_forward_features(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        condition: torch.Tensor | None,
+        update_mask: torch.Tensor | None,
+    ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor, Prepared3DGraph]:
+        """Run each canonical layer once while carrying state across geometry updates."""
+
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        self.core._validate_inputs(
+            node_irreps,
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+            node_role_id=None,
+        )
+        current_positions = pos
+        current_graph = graph
+        layer_context = self.core.prepare_context(
+            current_positions,
+            current_graph.batch,
+            current_graph.graph_layout,
+            current_graph.neighbors,
+        )
+        state = self.core.embed_input(node_irreps, layer_context)
+        total_delta = torch.zeros_like(pos)
+        update_layers = frozenset(self.config.coordinate_update_layers)
+        stage_max_step = float(self.config.max_coordinate_step) / len(update_layers)
+
+        for layer_number, layer in enumerate(self.layers, start=1):
+            layer_output = layer(state, layer_context, condition)
+            state = layer_output.state
+            if layer_number not in update_layers:
+                continue
+
+            delta = self._coordinate_delta(
+                state,
+                current_graph,
+                update_mask,
+                max_step=stage_max_step,
+            ).to(dtype=current_positions.dtype)
+            current_positions = current_positions + delta
+            total_delta = total_delta + delta
+
+            # A final displacement affects the returned geometry but no later
+            # layer consumes it, so rebuilding there would be pure overhead.
+            if layer_number == self.config.depth:
+                continue
+            current_graph = self._refresh_coordinate_graph(
+                current_positions,
+                current_graph,
+            )
+            layer_context = self.core.prepare_context(
+                current_positions,
+                current_graph.batch,
+                current_graph.graph_layout,
+                current_graph.neighbors,
+            )
+
+        return state, current_positions, total_delta, current_graph
+
+    def _forward_engine(
         self,
         node_irreps: torch.Tensor,
         pos: torch.Tensor,
@@ -827,7 +938,7 @@ class _ELAEngine(nn.Module):
                 raise ValueError(
                     "update_mask was supplied but update_positions=False on the model"
                 )
-            condition = self.encode_context(
+            condition = self._encode_context(
                 context,
                 graph,
                 dtype=node_irreps.dtype,
@@ -839,49 +950,38 @@ class _ELAEngine(nn.Module):
                 condition=condition,
             )
 
-        current_positions = pos
-        current_graph = graph
-        total_delta = torch.zeros_like(pos)
-        for _ in range(self.config.coordinate_updates):
-            condition = self.encode_context(
-                context,
-                current_graph,
-                dtype=node_irreps.dtype,
-            )
-            state, _, _ = self._core_forward_features(
-                node_irreps,
-                current_positions,
-                current_graph,
-                condition=condition,
-            )
-            delta = self._coordinate_delta(
-                state,
-                current_graph,
-                update_mask,
-            ).to(dtype=current_positions.dtype)
-            current_positions = current_positions + delta
-            total_delta = total_delta + delta
-            current_graph = self._refresh_coordinate_graph(
-                current_positions,
-                current_graph,
-            )
-
-        condition = self.encode_context(
+        condition = self._encode_context(
             context,
-            current_graph,
+            graph,
             dtype=node_irreps.dtype,
         )
-        output = dict(
-            self._core_forward(
+        state, current_positions, total_delta, current_graph = (
+            self._stagewise_forward_features(
                 node_irreps,
-                current_positions,
-                current_graph,
+                pos,
+                graph,
                 condition=condition,
+                update_mask=update_mask,
             )
         )
-        output["positions"] = current_positions
-        output["coordinate_delta"] = total_delta
-        return output
+        node_output = self._project_state(state)
+        graph_sum = node_output.new_zeros(
+            (current_graph.graph_layout.num_graphs, node_output.shape[-1])
+        )
+        graph_sum.index_add_(
+            0,
+            current_graph.batch.to(dtype=torch.long),
+            node_output,
+        )
+        graph_output = graph_sum / current_graph.graph_layout.graph_counts.to(
+            dtype=node_output.dtype
+        ).clamp_min(1.0).unsqueeze(-1)
+        return {
+            "node_irreps": node_output,
+            "graph_irreps": graph_output,
+            "positions": current_positions,
+            "coordinate_delta": total_delta,
+        }
 
     def extra_repr(self) -> str:
         return (

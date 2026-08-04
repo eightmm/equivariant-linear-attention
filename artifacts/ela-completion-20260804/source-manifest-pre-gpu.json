@@ -1,0 +1,486 @@
+{
+  "schema_version": 1,
+  "algorithm": "sorted-path-size-sha256-v1",
+  "git": {
+    "head": "29241e9c0ee1bafb5ae19b19a36d765cc9379916",
+    "branch": "main",
+    "dirty": true
+  },
+  "scope": {
+    "recursive": [
+      "src/**/*.py",
+      "tests/**/*.py"
+    ],
+    "exact": [
+      "PROJECT.md",
+      "pyproject.toml",
+      "uv.lock",
+      "scripts/ablate_architecture_lanes.py",
+      "scripts/ablate_relation_transport.py",
+      "scripts/benchmark_ela.py",
+      "scripts/adjudicate_completion.py",
+      "scripts/capture_source_manifest.py",
+      "scripts/check.sh",
+      "scripts/ml_smoke.py",
+      "scripts/profile_gpu_completion.py",
+      "scripts/run_completion_packet.py",
+      "scripts/run_gpu_gate.py",
+      "scripts/validate_realdata.py",
+      "scripts/wheel_smoke.sh"
+    ]
+  },
+  "file_count": 90,
+  "combined_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
+  "files": [
+    {
+      "path": "PROJECT.md",
+      "size_bytes": 4889,
+      "sha256": "5f3745beec8d9ada9c8e2983b7facf7a94c12b1398623a022ec7878c005f175c"
+    },
+    {
+      "path": "pyproject.toml",
+      "size_bytes": 664,
+      "sha256": "a94e093d1945582bd31a0beff1f8e8c45547450ff001ff5831b8c021d737bcad"
+    },
+    {
+      "path": "scripts/ablate_architecture_lanes.py",
+      "size_bytes": 17639,
+      "sha256": "8a59e1aced6826a2e6243d23c9c64bd63c1c06bf75039bdde0561b24430f7e29"
+    },
+    {
+      "path": "scripts/ablate_relation_transport.py",
+      "size_bytes": 14715,
+      "sha256": "08c902f5fce29025faa1d175279478f54840b5f8a5aeba1e235254de73de00df"
+    },
+    {
+      "path": "scripts/adjudicate_completion.py",
+      "size_bytes": 59935,
+      "sha256": "fdb3625b0ceb5b2d3c1692db79db831e95002e1c3ae7993ca7f4b884b02aa53a"
+    },
+    {
+      "path": "scripts/benchmark_ela.py",
+      "size_bytes": 20803,
+      "sha256": "62c6288d0634dc8b7ee9864dc790402725adf43d09f3f0c21fe22b552cada98f"
+    },
+    {
+      "path": "scripts/capture_source_manifest.py",
+      "size_bytes": 3332,
+      "sha256": "a54e67887620ad9368ddb7d195c91b51e7a164278c9c50a80abeed168f8b48dc"
+    },
+    {
+      "path": "scripts/check.sh",
+      "size_bytes": 4286,
+      "sha256": "5804a3559e7916a4847d60067116f8f35f9fc7e92fc0354140219be80e5cccc3"
+    },
+    {
+      "path": "scripts/ml_smoke.py",
+      "size_bytes": 6117,
+      "sha256": "cd6f50106bb721e5b1e933ee1968221564d81c405f7225d643a714734857a2fd"
+    },
+    {
+      "path": "scripts/profile_gpu_completion.py",
+      "size_bytes": 69139,
+      "sha256": "021cbb8e4d9e658728153363c49612dba9b89ecec7e72deed6663fbf8811ec9a"
+    },
+    {
+      "path": "scripts/run_completion_packet.py",
+      "size_bytes": 14809,
+      "sha256": "44509d90fff144bb509b01fb167b50d2d9fc5570e0ce120a85df6986742b0b9e"
+    },
+    {
+      "path": "scripts/run_gpu_gate.py",
+      "size_bytes": 5460,
+      "sha256": "c1b5299e4a020a7b4c841794729f57610816df549426ee74a5f02b5e4b053cd0"
+    },
+    {
+      "path": "scripts/validate_realdata.py",
+      "size_bytes": 55512,
+      "sha256": "8e01c14275e90200d216b02fdd0bc89f96863e51abc7644699329beef3bbc6d1"
+    },
+    {
+      "path": "scripts/wheel_smoke.sh",
+      "size_bytes": 2467,
+      "sha256": "486fd62a070460ce99272b621d3e5bdf1c84161cbec25d4586cb63eca3b43eab"
+    },
+    {
+      "path": "src/equivariant_linear_attention/__init__.py",
+      "size_bytes": 139,
+      "sha256": "fd021fc796b74de53ebe7083f2e1bf5394ef1c0b79dcbf3cc1d01d482ecd128e"
+    },
+    {
+      "path": "src/equivariant_linear_attention/advanced.py",
+      "size_bytes": 1063,
+      "sha256": "f7f8b696ad013ea770da1d8261aaeb2f21f172b6b60abc24a360bbeb66acc5bc"
+    },
+    {
+      "path": "src/equivariant_linear_attention/api.py",
+      "size_bytes": 15947,
+      "sha256": "3e3f83ef56d662a4a79d991a6c4cdca2b9a7ac472ff4a1b9e9e4e027ddaf956e"
+    },
+    {
+      "path": "src/equivariant_linear_attention/batch.py",
+      "size_bytes": 17276,
+      "sha256": "b360790208943058c8056c620c0f91cff206e5af7416308204b307f54a39a813"
+    },
+    {
+      "path": "src/equivariant_linear_attention/context.py",
+      "size_bytes": 11404,
+      "sha256": "164b47b20c2a829f2c583e4e42d17912d7fa5ee510005eaa0717bf2c0b065f64"
+    },
+    {
+      "path": "src/equivariant_linear_attention/geometry/__init__.py",
+      "size_bytes": 79,
+      "sha256": "4cc3bd50f4abfb2ff9f4dfd32d29f9f2b0f6045d5ae798c8cc8199be8810494d"
+    },
+    {
+      "path": "src/equivariant_linear_attention/geometry/layout.py",
+      "size_bytes": 34533,
+      "sha256": "e0f93e6bb50a455c295f77c476769fdfc4b46eb59a593645e09c7e88e0813c5a"
+    },
+    {
+      "path": "src/equivariant_linear_attention/geometry/neighbors.py",
+      "size_bytes": 37588,
+      "sha256": "38d8c090a3610794b0f595d96f38ee9fa9b3484a811c4883ba5db4e3cdeebfdb"
+    },
+    {
+      "path": "src/equivariant_linear_attention/geometry/prepared.py",
+      "size_bytes": 13974,
+      "sha256": "51b948f446e4bc9c21041c86272bfb385027dcb46bfafadbfe52a3249c682d86"
+    },
+    {
+      "path": "src/equivariant_linear_attention/geometry/radius.py",
+      "size_bytes": 28358,
+      "sha256": "1772da60647decb766df04ddc19bbdbdaa275d5db774e2a31ade36898b34d7de"
+    },
+    {
+      "path": "src/equivariant_linear_attention/graph.py",
+      "size_bytes": 37966,
+      "sha256": "82bc5625e6cafc12b7ce57a149bd5e73acc88276165d3234b9ce80bdbf5f055d"
+    },
+    {
+      "path": "src/equivariant_linear_attention/inference.py",
+      "size_bytes": 6655,
+      "sha256": "56c290e3ae7057f2f0dfdf05dab1e880f347b08e051ddecf5b08fa2babea7c94"
+    },
+    {
+      "path": "src/equivariant_linear_attention/irreps.py",
+      "size_bytes": 18735,
+      "sha256": "a6142b965219b161c763603b977c76adbc44da8c88864de9bea1e0256d4dce09"
+    },
+    {
+      "path": "src/equivariant_linear_attention/kernels/__init__.py",
+      "size_bytes": 341,
+      "sha256": "d692def60c119def0cf14372d2a525305ec2188d758077ac71e787d2ad3bcb55"
+    },
+    {
+      "path": "src/equivariant_linear_attention/kernels/local.py",
+      "size_bytes": 12274,
+      "sha256": "1d36d72834480b96ed9ae1df67a85aea610a41c4fd0d004882050d8205a016a9"
+    },
+    {
+      "path": "src/equivariant_linear_attention/kernels/triton.py",
+      "size_bytes": 77098,
+      "sha256": "dd9a068be9e5623631e54bc1fe310dc8f423b5a2e591040c69cbdffa313d3056"
+    },
+    {
+      "path": "src/equivariant_linear_attention/migration.py",
+      "size_bytes": 6803,
+      "sha256": "34958514dca13f46f347878996b1e6f5057da87c3e127ccba38c76b9c3f691eb"
+    },
+    {
+      "path": "src/equivariant_linear_attention/model/__init__.py",
+      "size_bytes": 65,
+      "sha256": "aa97b8bc4f37971baef357ba28153bc3e66bfa9b6d6d53932302e93b087eaffc"
+    },
+    {
+      "path": "src/equivariant_linear_attention/model/ela.py",
+      "size_bytes": 35939,
+      "sha256": "e50bf9c7f773ee2c2d291f2a801a81378f374aba208c93eec6754e5c5787d7ed"
+    },
+    {
+      "path": "src/equivariant_linear_attention/model/runtime.py",
+      "size_bytes": 13137,
+      "sha256": "74cedccd01abf9e420d015150e5ca932c54a899e9b02943d2ea44d331a09bcd3"
+    },
+    {
+      "path": "src/equivariant_linear_attention/model/stack.py",
+      "size_bytes": 29112,
+      "sha256": "1b8d1387f202749f679169a732c46ec31a24aa43efd95062c2fbdb110a55b1d0"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/__init__.py",
+      "size_bytes": 58,
+      "sha256": "4238642c98d1280fe31991cab43c9968317a2bc146415f6c1d6632d78d585866"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/core.py",
+      "size_bytes": 41641,
+      "sha256": "76dbf2aeaca4ad2469f3798d4e35cd49a8ccbe29453e69ef4bde543fbd2f9758"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/heads.py",
+      "size_bytes": 10669,
+      "sha256": "c077500556f0f5f436a7978ec92f9172032a7caeb1bdec091229b0590761975a"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/layers.py",
+      "size_bytes": 28387,
+      "sha256": "1d5e27ae2355211233b1eb61273443d5b24b75a1c2b69e090cd9b4048adc8803"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/multipoles.py",
+      "size_bytes": 19245,
+      "sha256": "b08d05970d6d9c0dab45a86eb0ecba2c6e0bbc36458444f7a3006c06ef8ead8f"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/parity.py",
+      "size_bytes": 63724,
+      "sha256": "52d789fcb703fdddd9aa69f7f2c134007ca2f9a80c667ac3019046d7fac67c63"
+    },
+    {
+      "path": "src/equivariant_linear_attention/nn/pooling.py",
+      "size_bytes": 6829,
+      "sha256": "93fa6e06a474942d03283d01b9cb840ebae61aa6552da6fa9ca7da67efa64c8d"
+    },
+    {
+      "path": "src/equivariant_linear_attention/physics.py",
+      "size_bytes": 5058,
+      "sha256": "6f53c26e7c84695bc72a83282ac594f8163fa57bfc1cc084d549636659bfe2c3"
+    },
+    {
+      "path": "tests/test_api_policy.py",
+      "size_bytes": 4597,
+      "sha256": "3318c7f384d36db44b26655c7e1798a6cef981ccec6a5f71560cb0209338f4eb"
+    },
+    {
+      "path": "tests/test_api_validation.py",
+      "size_bytes": 8298,
+      "sha256": "5246ebace143032a9df4ba08928e274cb13423832da5c65361ff0e4cc8c23e1f"
+    },
+    {
+      "path": "tests/test_architecture_hardening.py",
+      "size_bytes": 4811,
+      "sha256": "e53168828e1b60840418a9cd19573fc1bda8976a4d6e4e1cec32a81dc6875f7d"
+    },
+    {
+      "path": "tests/test_architecture_lane_ablations.py",
+      "size_bytes": 2606,
+      "sha256": "1fd02259176073f2d244666b761dc83a0980f6115da85e40c3013c4a594a0cad"
+    },
+    {
+      "path": "tests/test_benchmark_ela.py",
+      "size_bytes": 2938,
+      "sha256": "090317fca428dfb12ca44e88c69116e450c196b7d5ff9d536a7b0bb2dafc778f"
+    },
+    {
+      "path": "tests/test_canonical_api.py",
+      "size_bytes": 3195,
+      "sha256": "d9d7ec552d542748bda5427fc26f58710e97e94466ae486c45c253fa7cdd4e2f"
+    },
+    {
+      "path": "tests/test_canonical_cuda.py",
+      "size_bytes": 4353,
+      "sha256": "42ddaedb48069c29117711459704888ea5b1f7a4115ff88511b2a9823012aad3"
+    },
+    {
+      "path": "tests/test_canonical_double_backward.py",
+      "size_bytes": 1510,
+      "sha256": "56b98947b083bda41cce262f029aa7c0eab86dcb81e01f71d95f480e8bc31890"
+    },
+    {
+      "path": "tests/test_canonical_equivariance.py",
+      "size_bytes": 11356,
+      "sha256": "043a621393825b9bc34f314b2b32b073133be4839894d71dab073277db960595"
+    },
+    {
+      "path": "tests/test_canonical_migration.py",
+      "size_bytes": 7488,
+      "sha256": "69399763db3d41cb0aedff584362f833c954592724062c20703bed2e21937044"
+    },
+    {
+      "path": "tests/test_completion_adjudicator.py",
+      "size_bytes": 28080,
+      "sha256": "eb0ef4cf6a4dbe08693714c668ae32d6d52fc41fbd9e0db22ad050f4927722ff"
+    },
+    {
+      "path": "tests/test_completion_packet_runner.py",
+      "size_bytes": 10868,
+      "sha256": "0e9a0c3c77498bfa6c315dbd1077530080298a6b627a58c65c85d0ac3864d837"
+    },
+    {
+      "path": "tests/test_dependency_free_radius_graph.py",
+      "size_bytes": 5776,
+      "sha256": "60c989ae1a4c448d429e51672b32849c9346e6c7527eeb4e98cbc27e1434c336"
+    },
+    {
+      "path": "tests/test_ela_context.py",
+      "size_bytes": 7993,
+      "sha256": "af3f5ae844baf48dde2435bcf6a5ae1d70aaa3f0b2cc18cdd2188bf4e17cf09c"
+    },
+    {
+      "path": "tests/test_elagraph_api.py",
+      "size_bytes": 6219,
+      "sha256": "e2848ba804f849ac796f114d5a6507545c7df35eb18f95fa643a0d7e955cb9b6"
+    },
+    {
+      "path": "tests/test_equivariant_linear_attention.py",
+      "size_bytes": 10238,
+      "sha256": "d5a97da02ebdb4761038ff61fe93bb3a69dfb755b88222f24415451d40e38457"
+    },
+    {
+      "path": "tests/test_fast_preparation.py",
+      "size_bytes": 16601,
+      "sha256": "829bde1a7c4a7d8a40fba6feff7066908a42297105fdc9c6a7321cf6fc97a2f2"
+    },
+    {
+      "path": "tests/test_flow_matching_usage.py",
+      "size_bytes": 5766,
+      "sha256": "e98606029a974dc717766077ed2fcbbafd9a920a4d75b5edd50373b02e7ceeb2"
+    },
+    {
+      "path": "tests/test_generic_3d_primitives.py",
+      "size_bytes": 15506,
+      "sha256": "1ba829e9440a36b872a12c9ddb5568bfd1d34e1e453843c244dd55a921918e2c"
+    },
+    {
+      "path": "tests/test_global_ragged.py",
+      "size_bytes": 7547,
+      "sha256": "b59b5df9dd8544c60c916e8de67e73c6ca7ea68321669c1be2f1464abb6df2a1"
+    },
+    {
+      "path": "tests/test_gpu_completion.py",
+      "size_bytes": 6173,
+      "sha256": "2aa6c49c58c50162ca9c9e21742e5ab6744dcdff2d4169858132e997f0807889"
+    },
+    {
+      "path": "tests/test_gpu_gate_receipt.py",
+      "size_bytes": 2730,
+      "sha256": "9b98007ea7fec54fa20131a5ed43e2c291d8ab1edbe81dfa79a53da5842fbaa5"
+    },
+    {
+      "path": "tests/test_graph_layout.py",
+      "size_bytes": 9729,
+      "sha256": "47747c7c8bbe36e96337c521d82d73de77374f676038aabb6c1545b313e9f312"
+    },
+    {
+      "path": "tests/test_inference.py",
+      "size_bytes": 10025,
+      "sha256": "0e3a8ba1a75089497a1d2cb7aeb32a5a19e3151c30738c847a6f1034651b33ce"
+    },
+    {
+      "path": "tests/test_irrep_layout.py",
+      "size_bytes": 4999,
+      "sha256": "59d30407bce4a3b3dcbdebfb421c3d1de5d382039d255fb5a63b920e904d96d3"
+    },
+    {
+      "path": "tests/test_kernel_local.py",
+      "size_bytes": 5948,
+      "sha256": "c4cd537a660d638ea2c1df0a85bc006f022d3d3bbd38b73f62f66822ae26e777"
+    },
+    {
+      "path": "tests/test_kernel_triton.py",
+      "size_bytes": 16138,
+      "sha256": "9186f87839275e387b70d8f7caf51605df253aa4f134fb3134434a60c47965d9"
+    },
+    {
+      "path": "tests/test_kernel_triton_cuda.py",
+      "size_bytes": 19130,
+      "sha256": "c738ebe50a8d042b54c84015c436fae1abc89aa19154255b6d7292f901a8a914"
+    },
+    {
+      "path": "tests/test_markdown_docs.py",
+      "size_bytes": 4944,
+      "sha256": "3d542fc64e75a096ffb7298bbbe12a16c4a3da63e7284d4615127b9a9b5e4d39"
+    },
+    {
+      "path": "tests/test_multiscale_local.py",
+      "size_bytes": 6921,
+      "sha256": "bf47a13c889d690a8c20a09116c8bd27a16d59a122ee6f862dc1d9e84e892d58"
+    },
+    {
+      "path": "tests/test_packed_neighbors.py",
+      "size_bytes": 16216,
+      "sha256": "2a7a879734f6c43ba10fb3c5faaa0a08075a0decc984f2401e92bfa298a37255"
+    },
+    {
+      "path": "tests/test_preparation_provenance.py",
+      "size_bytes": 5099,
+      "sha256": "bb86a13a113d7a43ed22cf30a251eab9d39ef0749d0f54bb5806e2d6273cb7ec"
+    },
+    {
+      "path": "tests/test_profile_gpu_completion.py",
+      "size_bytes": 8438,
+      "sha256": "e318fa02d19d36e429bf01d9d4816c0b8fb10db054859849dfbf550009d99157"
+    },
+    {
+      "path": "tests/test_realdata_validation.py",
+      "size_bytes": 11203,
+      "sha256": "97f27cc1ee783afb4b049e4ccc57fda68fcfeaa3733b66ddd59f19a31b4ba032"
+    },
+    {
+      "path": "tests/test_relation_transport_ablation.py",
+      "size_bytes": 2141,
+      "sha256": "85013138e38a33430c08cad9611cf11a00067b33bbe362e0476193bf49ffbada"
+    },
+    {
+      "path": "tests/test_st5_metrics.py",
+      "size_bytes": 2650,
+      "sha256": "203e1921638dfecff9aef567a6ac54713952730fc4dc621d193962b34c0feded"
+    },
+    {
+      "path": "tests/test_stagewise_coordinate_updates.py",
+      "size_bytes": 7095,
+      "sha256": "5f91b078eb4444252d5048fc51ba140fa25ba6a9427d63d7e7d06c330357c5d2"
+    },
+    {
+      "path": "tests/test_triton_equivariance_cuda.py",
+      "size_bytes": 13852,
+      "sha256": "13fedd8ca85ccb9a2b449c1020e683be4e63c7f84802a086ba1131aab8855278"
+    },
+    {
+      "path": "tests/test_unified.py",
+      "size_bytes": 8805,
+      "sha256": "b4cad7cb1b2efd03515f3201032a627056512189ae4fe26b557c0a0cd555b9d1"
+    },
+    {
+      "path": "tests/test_unified_chiral_bridge.py",
+      "size_bytes": 2229,
+      "sha256": "37c2285709c6b5f5f349091e5c0ab038e3839b108f698a1dc8f5f8ff41c32088"
+    },
+    {
+      "path": "tests/test_unified_input_irreps.py",
+      "size_bytes": 5799,
+      "sha256": "4209864b4f030938a2af735b947222266c425d7a7c56f2108bd0409127e6d8b6"
+    },
+    {
+      "path": "tests/test_unified_layer_api.py",
+      "size_bytes": 7654,
+      "sha256": "a49185905f4fce1db4ea3ecb1ccf74d834f7b3f7f004fb996b6eeac4f5d0f3a3"
+    },
+    {
+      "path": "tests/test_unified_multipole_precision.py",
+      "size_bytes": 3346,
+      "sha256": "6f6dc204572db83c28b2644d748775530c06d190a2160595489f2c37d2be8750"
+    },
+    {
+      "path": "tests/test_unified_multipole_profiles.py",
+      "size_bytes": 2205,
+      "sha256": "3af96269c72ab4aabbc4d8963d94689ddacfaafd4d9f2067c18e36513276df3c"
+    },
+    {
+      "path": "tests/test_unified_multipoles.py",
+      "size_bytes": 8251,
+      "sha256": "b8a3bfcab4e8f245a7e568ee4cc7ebef53d24d079ceb132d7b3dcfe09a92105e"
+    },
+    {
+      "path": "tests/test_unified_tensor_closure.py",
+      "size_bytes": 14344,
+      "sha256": "81688ff06e252f2d155c87e3dd8891950f30a2aa77cf69037acc08b7efe2a971"
+    },
+    {
+      "path": "uv.lock",
+      "size_bytes": 377502,
+      "sha256": "5658d0e6641ed037763459de40b4a485dd298ff7e52f8c38b4b2ba31b7060edd"
+    }
+  ]
+}

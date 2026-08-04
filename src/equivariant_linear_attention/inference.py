@@ -1,7 +1,31 @@
 from __future__ import annotations
 
+import warnings
+
 import torch
 from torch import nn
+
+try:  # PyTorch keeps these exception types in internal compiler namespaces.
+    from torch._dynamo.exc import BackendCompilerFailed
+    from torch._inductor.exc import InductorError
+except ImportError:  # pragma: no cover - future PyTorch compatibility guard
+    _COMPILER_FAILURES: tuple[type[BaseException], ...] = ()
+else:
+    _COMPILER_FAILURES = (BackendCompilerFailed, InductorError)
+
+
+_MODEL_METADATA = (
+    "attention_kind",
+    "symmetry",
+    "config",
+    "input_irreps",
+    "hidden_irreps",
+    "hidden_irrep_layout",
+    "workspace_irreps",
+    "output_irreps",
+    "output_irrep_layout",
+    "tensor_product_plan",
+)
 
 
 def prepare_for_inference(
@@ -35,11 +59,83 @@ def prepare_for_inference(
     for param in model.parameters():
         param.requires_grad_(False)
 
+    if compile_model:
+        if _supports_prepared_core(model):
+            if bool(getattr(model, "updates_positions", False)):
+                warnings.warn(
+                    "stagewise coordinate updates keep topology rebuilding eager; "
+                    "compile_model was skipped for this model",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                # ELA deliberately keeps Python graph validation, radius
+                # discovery, cache lookup, pooling, and public output
+                # construction outside Dynamo. Only stable tensor math enters
+                # the compiled callable.
+                execute = torch.compile(
+                    model._execute_numerical,  # type: ignore[attr-defined]
+                    mode=compile_mode,
+                )
+                model = _CompiledCoreInferenceModule(model, execute)
+        else:
+            model = torch.compile(model, mode=compile_mode)
     if automatic and target_device.type == "cuda":
         model = _AutocastInferenceModule(model, autocast_dtype(target_device))
-    if compile_model:
-        model = torch.compile(model, mode=compile_mode)
     return model
+
+
+def _supports_prepared_core(model: nn.Module) -> bool:
+    return all(
+        callable(getattr(model, name, None))
+        for name in (
+            "_pack_and_prepare",
+            "_execute_numerical",
+            "_finalize_packed",
+            "_wrap_output",
+        )
+    )
+
+
+def _copy_model_metadata(target: nn.Module, source: nn.Module) -> None:
+    for name in _MODEL_METADATA:
+        if hasattr(source, name):
+            setattr(target, name, getattr(source, name))
+
+
+class _CompiledCoreInferenceModule(nn.Module):
+    """Compile ELA's numerical core while leaving public graph work eager."""
+
+    def __init__(self, model: nn.Module, execute: object) -> None:
+        super().__init__()
+        if not _supports_prepared_core(model):
+            raise TypeError("compiled-core inference requires ELA's prepared interface")
+        if not callable(execute):
+            raise TypeError("compiled packed executor must be callable")
+        self.model = model
+        # ``torch.compile`` returns a callable that closes over ``model``.  It
+        # must not be registered as another child module because doing so would
+        # duplicate the model's state-dict path.
+        object.__setattr__(self, "_execute", execute)
+        _copy_model_metadata(self, model)
+        self.eval()
+
+    def forward(self, graph: object) -> object:
+        packed = self.model._pack_and_prepare(graph)  # type: ignore[attr-defined]
+        try:
+            raw = self._execute(packed)
+        except _COMPILER_FAILURES as error:
+            warnings.warn(
+                "compiled ELA core failed on this backend; falling back to "
+                f"the exact eager core ({type(error).__name__})",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            execute = self.model._execute_numerical  # type: ignore[attr-defined]
+            object.__setattr__(self, "_execute", execute)
+            raw = execute(packed)
+        output = self.model._finalize_packed(packed, raw)  # type: ignore[attr-defined]
+        return self.model._wrap_output(graph, packed, output)  # type: ignore[attr-defined]
 
 
 class _AutocastInferenceModule(nn.Module):
@@ -48,20 +144,7 @@ class _AutocastInferenceModule(nn.Module):
         self.model = model
         self.dtype = dtype
         self.device_type = next(model.parameters()).device.type
-        for name in (
-            "attention_kind",
-            "symmetry",
-            "config",
-            "input_irreps",
-            "hidden_irreps",
-            "hidden_irrep_layout",
-            "workspace_irreps",
-            "output_irreps",
-            "output_irrep_layout",
-            "tensor_product_plan",
-        ):
-            if hasattr(model, name):
-                setattr(self, name, getattr(model, name))
+        _copy_model_metadata(self, model)
         self.eval()
 
     def forward(self, *args: torch.Tensor, **kwargs: torch.Tensor) -> object:

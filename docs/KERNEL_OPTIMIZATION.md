@@ -18,12 +18,27 @@ graph-layout planning. Those private helpers are not a second public API and may
 change without compatibility guarantees. End-to-end ingestion is reported
 separately whenever it is measured.
 
-Normal compiled usage remains:
+ELA compilation uses the inference helper:
 
 ```python
-compiled = torch.compile(model, mode="reduce-overhead")
-out = compiled(graph)
+from equivariant_linear_attention.inference import prepare_for_inference
+
+compiled = prepare_for_inference(
+    model,
+    device="cuda",
+    compile_model=True,
+    compile_mode="reduce-overhead",
+)
+with torch.inference_mode():
+    out = compiled(graph)
 ```
+
+The helper deliberately compiles only the prepared numerical core. Public
+validation, cache lookup, radius construction, pooling, and `ELAGraph` wrapping
+stay eager. Recognized Dynamo/Inductor lowering failures emit a warning and
+permanently return to the exact eager core; unrelated runtime errors remain
+visible.
+Direct `torch.compile(model)` is not the documented ELA path.
 
 ## 2. Implemented backend
 
@@ -88,8 +103,8 @@ S_{ir}^{f} =
 $$
 
 The Triton training path keeps projections and edge-score equations in ordinary
-PyTorch autograd, then reduces five lifetime-compatible payload groups with four
-two-pointer kernels and one three-pointer kernel:
+PyTorch autograd, then reduces five lifetime-compatible groups with one compact
+mass reduction and four specialized fused kernels:
 
 1. mass and squared mass;
 2. scalar and pseudoscalar values;
@@ -97,27 +112,40 @@ two-pointer kernels and one three-pointer kernel:
 4. even and odd symmetric-traceless tensors;
 5. three direction moments used for chirality.
 
-This avoids both one giant concatenated `[E,F_all]` payload and the previous
-per-group edge-sized `torch.cat` copy. Its temporary memory is bounded by the
-largest already-produced group:
+The four value kernels perform sender gather, invariant/radial weighting, edge
+carrier construction, and receiver reduction internally. This avoids one giant
+concatenated `[E,F_all]` payload, the previous per-group `torch.cat`, and all
+expanded `[E,R,C]` value payloads. Their custom autograd wrappers save compact
+node/edge inputs and recompute exact differentiable gathers/scatters in backward,
+retaining first and double backward.
+
+Forward transport and saved activation memory are bounded by compact score/gate
+inputs and node/output carriers:
 
 $$
-M_{\text{payload}} =
-O\left(E\max_k F_k\right)
+M_{\text{transport}} =
+O(ER + NRC)
 $$
 
-instead of the sum of every message family. The five semantic launches remain;
-their separate pointers preserve tensor lifetimes and autograd ownership.
+at fixed carrier width `C`, rather than by every expanded `E x R x C` message
+family. First-order backward deliberately rematerializes differentiable
+edge-carrier products and can therefore have an `O(ERC)` transient. The CUDA
+training profiler measures that actual forward/backward peak; the smaller bound
+must not be quoted as a whole-training memory guarantee. The five semantic
+launches remain; their separate pointers preserve tensor lifetimes and autograd
+ownership.
 
-When gradients are disabled, groups 2 and 3 use a wider fused boundary:
+Training and inference share the same fused boundary:
 
 ```text
 sender gather x invariant weight x radial gate -> receiver CSR sum
 ```
 
-This avoids materializing the scalar, pseudoscalar, polar, and axial edge
-payloads. Every Cartesian component receives the same invariant scalar weight,
-so the fusion changes execution only, not the represented irrep or parity.
+For the tensor lane, the kernel additionally constructs the symmetric-traceless
+edge-direction carrier; for the three chiral moments it applies the sender
+direction gate and edge vector internally. Every Cartesian component receives
+the same invariant scalar coefficient, so fusion changes execution only, not
+the represented irrep or parity.
 
 ## 4. Correctness contract
 
@@ -233,17 +261,40 @@ The dependency-free radius builder uses:
 Under bounded density and fixed cutoff, cell-list work is expected to scale as
 `O(N+E)`. Worst-case work remains quadratic when many nodes occupy one cell.
 
+Graph-major collation forwards its already validated graph counts into batched
+radius discovery and private CSR construction, avoiding a second batch scan and
+post-discovery COO repack. The current cell-list discovery still performs one
+stable `E`-sized receiver grouping before CSR offsets are formed; direct CSR
+moves/removes packaging work but does not yet remove that discovery sort. The
+27-cell traversal also contains host-controlled branches, so GPU latency is an
+empirical benchmark question rather than an asymptotic speed claim.
+
 The current builder is not periodic. Periodic and triclinic systems should supply
 explicit candidates until minimum-image cell-list support is implemented and
 validated.
 
-## 7. Remaining high-value optimization
+## 7. Ragged global grouped GEMM
+
+Highly ragged BF16 CUDA inference packs graph/head token segments once and uses
+native grouped matrix multiplication for both `K^T V` summaries and `Q S`
+application. It does not pad a node dimension or materialize node-wise outer
+products. CPU, FP32, training, and higher-order gradients use the exact tiled
+segmented fallback; that fallback is not described as a GEMM and retains
+ordinary PyTorch double backward.
+
+Balancing masses and the final normalized division stay in FP32. Only the two
+grouped matrix products run in BF16, either for BF16 inputs or inside CUDA BF16
+autocast. Native dispatch additionally requires inference/no-gradient operands;
+ordinary training never enters this lane.
+
+## 8. Remaining high-value optimization
 
 The current Triton path removes graph-wide degree padding and payload
-concatenation, and fuses four inference value families. It still materializes
-edge-level scores, gates, tensor payloads, and directional moments in PyTorch.
-The next high-value step is to extend weighted gather-reduce to the tensor and
-directional groups, then add a deterministic reverse-CSR training backward.
+concatenation and fuses every local value family in training and inference. It
+still materializes edge-level scores and gates in PyTorch, while its custom
+backward recomputes edge gathers/scatters with ordinary PyTorch operations. The
+next high-value step is a deterministic reverse-CSR training backward followed
+by score/gate fusion, contingent on measured complete-stack benefit.
 
 A production fused operator should combine:
 

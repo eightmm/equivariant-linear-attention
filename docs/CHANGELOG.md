@@ -27,10 +27,17 @@
 - [architecture] add per-copy equivariant normalization, pseudoscalar-aware
   global routing, fixed radial shells, unit-direction local angular features,
   relation-conditioned transport, and second-moment chiral carriers;
+- [architecture] make coordinate refinement stagewise: each selected layer
+  boundary updates geometry while preserving the hidden state, and the public
+  switch selects every layer boundary;
 - [irreps] add physically correct compact symmetric-traceless tensor metrics.
 
 ### Performance
 
 - [performance] keep PyTorch as the automatic backend;
 - [performance] retain Triton as an explicit contract-tested backend;
-- [performance] make neighbor policy part of reproducible geometry configuration.
+- [performance] make neighbor policy part of reproducible geometry configuration;
+- [validation] add a source-bound, exact-argv completion runner with separate
+  GPU, data, and CPU-finalization authority phases and a hard G1 stop gate;
+- [validation] defer current CUDA and real-data receipts while the workstation
+  GPU is occupied, without converting CPU evidence into a speed claim.

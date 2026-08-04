@@ -55,8 +55,12 @@ def test_description_matches_the_single_contract() -> None:
     assert description["model"] == "ELA"
     assert description["graph"] == "ELAGraph"
     assert description["public_contract"] == "ELAGraph -> ELA -> ELAGraph"
+    assert description["internal_graph_ir"] == "packed receiver-major CSR"
     assert description["edge_types"] == 2
     assert description["update_positions"] is True
+    assert description["coordinate_updates"] == 1
+    assert description["coordinate_update_layers"] == (1,)
+    assert isinstance(description["num_parameters"], int)
     assert "input_irreps='3x0e'" in repr(model)
     assert "ELAGraph" in inspect.getdoc(ELA)
 
@@ -74,6 +78,34 @@ def test_model_accepts_exactly_one_public_input_type() -> None:
             model(invalid)  # type: ignore[arg-type]
 
 
+def test_public_surface_hides_prepared_graph_execution_and_cache_trust() -> None:
+    graph_parameters = inspect.signature(ELAGraph).parameters
+    for name in (
+        "_prepared_graph",
+        "_prepared_provenance",
+        "_packed_template",
+        "_assume_immutable_storage",
+    ):
+        assert name not in graph_parameters
+
+    model = ELA("3x0e", width=16, depth=1)
+    for name in (
+        "prepare_context",
+        "embed_input",
+        "project_state",
+        "encode_context",
+        "forward_features",
+    ):
+        assert not hasattr(model, name)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        ELAGraph(
+            torch.randn(3, 3),
+            torch.randn(3, 3),
+            _assume_immutable_storage=True,
+        )  # type: ignore[call-arg]
+
+
 def test_typed_edges_fail_closed() -> None:
     untyped = ELA("3x0e", width=16, depth=1)
     with pytest.raises(ValueError, match="edge_types=0"):
@@ -88,6 +120,30 @@ def test_typed_edges_fail_closed() -> None:
     assert isinstance(output, ELAGraph)
 
 
+def test_private_prepared_boundaries_fail_closed() -> None:
+    model = ELA("3x0e", width=16, depth=1)
+    graph = _graph()
+    unpacked = graph._to_packed()
+
+    with pytest.raises(TypeError, match="internal preparation expects ELABatch"):
+        model._prepare_packed(graph)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="_prepare_graph expects an ELAGraph"):
+        model._prepare_graph(unpacked)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="preparation invariant"):
+        model._execute_numerical(unpacked)
+    with pytest.raises(RuntimeError, match="preparation invariant"):
+        model._execute_packed(unpacked)
+    with pytest.raises(TypeError, match="_forward_prepared expects"):
+        model._forward_prepared(graph)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="not prepared"):
+        model._forward_prepared(unpacked)
+
+    prepared = model._prepare_packed(unpacked)
+    incompatible = ELA("3x0e", width=16, depth=1, edge_types=1)
+    with pytest.raises(ValueError, match="stale or incompatible"):
+        incompatible._forward_prepared(prepared)
+
+
 def test_update_mask_is_only_valid_for_coordinate_updating_models() -> None:
     mask = torch.tensor([True, False, True])
     graph = ELAGraph(torch.randn(3, 3), torch.randn(3, 3), update_mask=mask)
@@ -100,7 +156,9 @@ def test_update_mask_is_only_valid_for_coordinate_updating_models() -> None:
         update_positions=True,
     )(graph)
     assert output.delta is not None
-    torch.testing.assert_close(output.delta[~mask], torch.zeros_like(output.delta[~mask]))
+    torch.testing.assert_close(
+        output.delta[~mask], torch.zeros_like(output.delta[~mask])
+    )
 
 
 def test_graph_rejects_invalid_optional_runtime_inputs_early() -> None:

@@ -113,6 +113,32 @@ def test_missing_new_canonical_field_keeps_target_initialization() -> None:
     )
 
 
+def test_missing_cg12_projection_fields_keep_zero_initialization() -> None:
+    advanced = _advanced()
+    source_model = ELA.from_config(canonical_config_from_advanced(advanced))
+    target = ELA.from_config(canonical_config_from_advanced(advanced))
+    source = dict(source_model.state_dict())
+    suffixes = (
+        ".l1_l2_polar_out.weight",
+        ".l1_l2_axial_out.weight",
+        ".l1_l2_even_tensor_out.weight",
+        ".l1_l2_odd_tensor_out.weight",
+    )
+    removed = tuple(sorted(key for key in source if key.endswith(suffixes)))
+    for key in removed:
+        del source[key]
+
+    receipt = load_advanced_ela_state(target, source)
+
+    assert receipt.missing_keys == removed
+    assert receipt.canonical_initialized is True
+    for key in removed:
+        torch.testing.assert_close(
+            target.state_dict()[key],
+            torch.zeros_like(target.state_dict()[key]),
+        )
+
+
 def test_migration_rejects_historical_per_layer_coordinate_update() -> None:
     advanced = _advanced(coordinate_updates=True)
     with pytest.raises(ValueError, match="update_positions=True"):

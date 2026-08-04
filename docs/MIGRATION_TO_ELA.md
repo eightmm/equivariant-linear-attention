@@ -98,9 +98,13 @@ config = ELAConfig(
 model = ELA.from_config(config)
 ```
 
-Historical per-layer coordinate-update checkpoints cannot always be mapped
-exactly because the canonical model owns bounded outer updates. Load the ordinary
-ELA weights and retrain or calibrate the new coordinate head.
+`coordinate_updates=K` chooses K distinct, deterministic layer boundaries
+spread across the stack, always including the final layer; K cannot exceed the
+model depth. The hidden state is carried across every boundary instead of
+re-embedding the original node features. The public `update_positions=True`
+mode chooses K equal to the depth. Historical outer-loop coordinate-update
+checkpoints cannot be mapped exactly; load the ordinary ELA weights and retrain
+or calibrate the coordinate head.
 
 ## Advanced constructor conversion
 

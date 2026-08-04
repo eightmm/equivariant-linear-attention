@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from equivariant_linear_attention.kernels import triton as triton_kernels
 from equivariant_linear_attention.kernels.triton import (
     active_backend,
     backend_policy,
@@ -10,6 +11,114 @@ from equivariant_linear_attention.kernels.triton import (
     csr_sum_many,
     kernel_backend,
 )
+
+
+def _weighted_pair_reference(
+    weight: torch.Tensor,
+    radial_gate: torch.Tensor,
+    source0: torch.Tensor,
+    source1: torch.Tensor,
+    sender: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    gate_lanes: tuple[int, int],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    payloads = tuple(
+        weight.unsqueeze(-1)
+        * radial_gate[..., lane, None]
+        * source.index_select(0, sender).reshape(
+            sender.shape[0], source.shape[1], -1
+        )
+        for source, lane in zip(
+            (source0, source1),
+            gate_lanes,
+            strict=True,
+        )
+    )
+    receiver = torch.repeat_interleave(
+        torch.arange(row_ptr.numel() - 1, device=row_ptr.device),
+        row_ptr[1:] - row_ptr[:-1],
+        output_size=sender.shape[0],
+    )
+    return tuple(
+        payload.new_zeros((row_ptr.numel() - 1, *payload.shape[1:]))
+        .index_add(0, receiver, payload)
+        .reshape(row_ptr.numel() - 1, *source.shape[1:])
+        for payload, source in zip(payloads, (source0, source1), strict=True)
+    )  # type: ignore[return-value]
+
+
+def _edge_reduce_reference(
+    payloads: tuple[torch.Tensor, ...],
+    row_ptr: torch.Tensor,
+) -> tuple[torch.Tensor, ...]:
+    receiver = torch.repeat_interleave(
+        torch.arange(row_ptr.numel() - 1, device=row_ptr.device),
+        row_ptr[1:] - row_ptr[:-1],
+        output_size=payloads[0].shape[0],
+    )
+    return tuple(
+        payload.new_zeros((row_ptr.numel() - 1, *payload.shape[1:])).index_add(
+            0, receiver, payload
+        )
+        for payload in payloads
+    )
+
+
+def _direction_to_st_reference(direction: torch.Tensor) -> torch.Tensor:
+    x, y, z = direction.unbind(dim=-1)
+    trace_third = (x.square() + y.square() + z.square()) / 3.0
+    return torch.stack(
+        (x.square() - trace_third, y.square() - trace_third, x * y, x * z, y * z),
+        dim=-1,
+    )
+
+
+def _tensor_pair_reference(
+    weight: torch.Tensor,
+    radial_gate: torch.Tensor,
+    even_source: torch.Tensor,
+    odd_source: torch.Tensor,
+    direction: torch.Tensor,
+    sender: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    gate_lanes: tuple[int, int],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    direction_tensor = _direction_to_st_reference(direction).unsqueeze(1)
+    return _edge_reduce_reference(
+        (
+            weight.unsqueeze(-1)
+            * radial_gate[..., gate_lanes[0], None]
+            * (even_source.index_select(0, sender) + direction_tensor),
+            weight.unsqueeze(-1)
+            * radial_gate[..., gate_lanes[1], None]
+            * odd_source.index_select(0, sender),
+        ),
+        row_ptr,
+    )  # type: ignore[return-value]
+
+
+def _direction_triple_reference(
+    weight: torch.Tensor,
+    radial_gate: torch.Tensor,
+    direction_gate: torch.Tensor,
+    direction: torch.Tensor,
+    sender: torch.Tensor,
+    row_ptr: torch.Tensor,
+    *,
+    gate_lanes: tuple[int, int, int],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _edge_reduce_reference(
+        tuple(
+            weight.unsqueeze(-1)
+            * radial_gate[..., lane, None]
+            * direction_gate.index_select(0, sender)[:, moment].unsqueeze(-1)
+            * direction.unsqueeze(1)
+            for moment, lane in enumerate(gate_lanes)
+        ),
+        row_ptr,
+    )  # type: ignore[return-value]
 
 
 def _fixture(dtype: torch.dtype = torch.float64) -> tuple[torch.Tensor, torch.Tensor]:
@@ -50,6 +159,204 @@ def test_csr_sum_many_uses_one_packed_contract() -> None:
     expected_scalar = torch.segment_reduce(scalar, reduce="sum", offsets=row_ptr)
     torch.testing.assert_close(actual_vector, expected_vector)
     torch.testing.assert_close(actual_scalar, expected_scalar)
+
+
+def test_weighted_pair_custom_backward_matches_materialized_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the fused autograd contract without requiring a CUDA worker."""
+
+    monkeypatch.setattr(
+        triton_kernels,
+        "_launch_weighted_gather_reduce_pair",
+        _weighted_pair_reference,
+    )
+    row_ptr = torch.tensor([0, 2, 5, 6], dtype=torch.long)
+    receiver = torch.repeat_interleave(
+        torch.arange(3),
+        row_ptr[1:] - row_ptr[:-1],
+    )
+    sender = torch.tensor([1, 2, 0, 1, 2, 0], dtype=torch.long)
+    shapes = ((6, 2), (6, 2, 9), (3, 2, 3), (3, 2))
+    fused_inputs = tuple(
+        torch.randn(shape, dtype=torch.float64, requires_grad=True)
+        for shape in shapes
+    )
+    reference_inputs = tuple(
+        value.detach().clone().requires_grad_(True) for value in fused_inputs
+    )
+
+    fused = triton_kernels._TritonWeightedGatherReducePair.apply(
+        *fused_inputs,
+        sender,
+        row_ptr,
+        receiver,
+        2,
+        5,
+    )
+    reference = _weighted_pair_reference(
+        *reference_inputs,
+        sender,
+        row_ptr,
+        gate_lanes=(2, 5),
+    )
+    for actual, expected in zip(fused, reference, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_loss = sum(value.square().sum() for value in fused)
+    reference_loss = sum(value.square().sum() for value in reference)
+    fused_first = torch.autograd.grad(
+        fused_loss,
+        fused_inputs,
+        create_graph=True,
+    )
+    reference_first = torch.autograd.grad(
+        reference_loss,
+        reference_inputs,
+        create_graph=True,
+    )
+    for actual, expected in zip(fused_first, reference_first, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_second = torch.autograd.grad(
+        sum(value.square().sum() for value in fused_first),
+        fused_inputs,
+    )
+    reference_second = torch.autograd.grad(
+        sum(value.square().sum() for value in reference_first),
+        reference_inputs,
+    )
+    for actual, expected in zip(fused_second, reference_second, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+
+def test_tensor_pair_custom_backward_matches_materialized_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover the fused ST edge term and its double-backward contract on CPU."""
+
+    monkeypatch.setattr(
+        triton_kernels,
+        "_launch_local_tensor_reduce_pair",
+        _tensor_pair_reference,
+    )
+    row_ptr = torch.tensor([0, 2, 5, 6], dtype=torch.long)
+    receiver = torch.repeat_interleave(torch.arange(3), row_ptr[1:] - row_ptr[:-1])
+    sender = torch.tensor([1, 2, 0, 1, 2, 0], dtype=torch.long)
+    shapes = ((6, 2), (6, 2, 9), (3, 2, 5), (3, 2, 5), (6, 3))
+    fused_inputs = tuple(
+        torch.randn(shape, dtype=torch.float64, requires_grad=True)
+        for shape in shapes
+    )
+    reference_inputs = tuple(
+        value.detach().clone().requires_grad_(True) for value in fused_inputs
+    )
+
+    fused = triton_kernels._TritonLocalTensorReducePair.apply(
+        *fused_inputs,
+        sender,
+        row_ptr,
+        receiver,
+        4,
+        5,
+    )
+    reference = _tensor_pair_reference(
+        *reference_inputs,
+        sender,
+        row_ptr,
+        gate_lanes=(4, 5),
+    )
+    for actual, expected in zip(fused, reference, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_first = torch.autograd.grad(
+        sum(value.square().sum() for value in fused),
+        fused_inputs,
+        create_graph=True,
+    )
+    reference_first = torch.autograd.grad(
+        sum(value.square().sum() for value in reference),
+        reference_inputs,
+        create_graph=True,
+    )
+    for actual, expected in zip(fused_first, reference_first, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_second = torch.autograd.grad(
+        sum(value.square().sum() for value in fused_first),
+        fused_inputs,
+    )
+    reference_second = torch.autograd.grad(
+        sum(value.square().sum() for value in reference_first),
+        reference_inputs,
+    )
+    for actual, expected in zip(fused_second, reference_second, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+
+def test_direction_triple_custom_backward_matches_materialized_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover all three chiral moment reductions and double backward on CPU."""
+
+    monkeypatch.setattr(
+        triton_kernels,
+        "_launch_direction_reduce_triple",
+        _direction_triple_reference,
+    )
+    row_ptr = torch.tensor([0, 2, 5, 6], dtype=torch.long)
+    receiver = torch.repeat_interleave(torch.arange(3), row_ptr[1:] - row_ptr[:-1])
+    sender = torch.tensor([1, 2, 0, 1, 2, 0], dtype=torch.long)
+    shapes = ((6, 2), (6, 2, 9), (3, 3, 2), (6, 3))
+    fused_inputs = tuple(
+        torch.randn(shape, dtype=torch.float64, requires_grad=True)
+        for shape in shapes
+    )
+    reference_inputs = tuple(
+        value.detach().clone().requires_grad_(True) for value in fused_inputs
+    )
+
+    fused = triton_kernels._TritonDirectionReduceTriple.apply(
+        *fused_inputs,
+        sender,
+        row_ptr,
+        receiver,
+        6,
+        7,
+        8,
+    )
+    reference = _direction_triple_reference(
+        *reference_inputs,
+        sender,
+        row_ptr,
+        gate_lanes=(6, 7, 8),
+    )
+    for actual, expected in zip(fused, reference, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_first = torch.autograd.grad(
+        sum(value.square().sum() for value in fused),
+        fused_inputs,
+        create_graph=True,
+    )
+    reference_first = torch.autograd.grad(
+        sum(value.square().sum() for value in reference),
+        reference_inputs,
+        create_graph=True,
+    )
+    for actual, expected in zip(fused_first, reference_first, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+    fused_second = torch.autograd.grad(
+        sum(value.square().sum() for value in fused_first),
+        fused_inputs,
+    )
+    reference_second = torch.autograd.grad(
+        sum(value.square().sum() for value in reference_first),
+        reference_inputs,
+    )
+    for actual, expected in zip(fused_second, reference_second, strict=True):
+        torch.testing.assert_close(actual, expected)
 
 
 def test_csr_sum_supports_inference_tensors_without_version_counters() -> None:

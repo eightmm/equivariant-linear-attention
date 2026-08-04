@@ -1,0 +1,193 @@
+{
+  "schema_version": 4,
+  "experiment": "ela_kernel_backend",
+  "device": "cpu",
+  "dtype": "float64",
+  "model_dtype": "float64",
+  "csr_payload_dtype": "float64",
+  "input_irreps": "32x0e",
+  "output_irreps": "1x0e",
+  "input_dim": 32,
+  "nodes": 256,
+  "edges": 2048,
+  "degree": 8,
+  "width": 32,
+  "depth": 2,
+  "prepared_graph": true,
+  "neighbor_discovery_included": false,
+  "warmup": 2,
+  "repeats": 5,
+  "backend_ordering": "alternating",
+  "cold_compile_included": false,
+  "timing_modes": [
+    "wall"
+  ],
+  "triton_runtime_available": true,
+  "triton_profiled": false,
+  "equivalence_max_abs": null,
+  "profiles": {
+    "torch": {
+      "inference": {
+        "median_ms": 33.60762901138514,
+        "p50_ms": 33.60762901138514,
+        "p90_ms": 62.6520962046925,
+        "p95_ms": 69.82296060305089,
+        "p99_ms": 75.5596521217376,
+        "min_ms": 27.490075008245185,
+        "max_ms": 76.99382500140928,
+        "samples_ms": [
+          41.13950300961733,
+          76.99382500140928,
+          33.60762901138514,
+          27.490075008245185,
+          27.93733199359849
+        ]
+      },
+      "inference_peak_allocated_bytes": null,
+      "forward_backward": {
+        "median_ms": 121.14521599141881,
+        "p50_ms": 121.14521599141881,
+        "p90_ms": 141.16800900665112,
+        "p95_ms": 147.43607500568032,
+        "p99_ms": 152.4505278049037,
+        "min_ms": 93.27244802261703,
+        "max_ms": 153.70414100470953,
+        "samples_ms": [
+          93.27244802261703,
+          121.14521599141881,
+          153.70414100470953,
+          122.3638110095635,
+          102.79305002768524
+        ]
+      },
+      "forward_backward_peak_allocated_bytes": null
+    }
+  },
+  "end_to_end": {
+    "nodes": 128,
+    "explicit_edges": 1024,
+    "explicit_degree": 8,
+    "cutoff": 2.0,
+    "graph_ingestion_included": true,
+    "neighbor_discovery_included": true,
+    "neighbor_discovery_lanes": [
+      "cold_automatic_radius",
+      "moving_coordinate_execution"
+    ],
+    "execution": "forward_inference",
+    "peak_memory_metric": "unavailable_on_cpu",
+    "profiles": {
+      "cold_automatic_radius": {
+        "topology_source": "automatic_radius",
+        "prepared_cache_reused": false,
+        "neighbor_discovery_included": true,
+        "coordinate_rebuild_included": false,
+        "elagraph_construction_included": true,
+        "graph_ingestion_included": true,
+        "public_execution_path": "ELAGraph -> ELA -> ELAGraph",
+        "timing": {
+          "median_ms": 19.545007991837338,
+          "p50_ms": 19.545007991837338,
+          "p90_ms": 20.011509797768667,
+          "p95_ms": 20.044786389917135,
+          "p99_ms": 20.07140766363591,
+          "min_ms": 14.708128990605474,
+          "max_ms": 20.078062982065603,
+          "samples_ms": [
+            19.545007991837338,
+            20.078062982065603,
+            19.911680021323264,
+            14.708128990605474,
+            15.410029998747632
+          ]
+        },
+        "peak_allocated_bytes": null
+      },
+      "prepared_cache_reuse": {
+        "topology_source": "explicit_edge_index_cache",
+        "prepared_cache_reused": true,
+        "packed_template_reused": true,
+        "immutable_storage_assumed": true,
+        "content_revalidation_included": false,
+        "neighbor_discovery_included": false,
+        "coordinate_rebuild_included": false,
+        "elagraph_construction_included": false,
+        "excluded_setup": "one untimed explicit COO-to-CSR preparation and immutable seal",
+        "graph_ingestion_included": true,
+        "public_execution_path": "ELAGraph -> ELA -> ELAGraph",
+        "timing": {
+          "median_ms": 17.967596009839326,
+          "p50_ms": 17.967596009839326,
+          "p90_ms": 20.39514819625765,
+          "p95_ms": 20.516070595476776,
+          "p99_ms": 20.612808514852077,
+          "min_ms": 14.573368011042476,
+          "max_ms": 20.636992994695902,
+          "samples_ms": [
+            20.032380998600274,
+            20.636992994695902,
+            17.967596009839326,
+            14.573368011042476,
+            16.79189899004996
+          ]
+        },
+        "peak_allocated_bytes": null
+      },
+      "cold_explicit_topology": {
+        "topology_source": "explicit_edge_index",
+        "prepared_cache_reused": false,
+        "neighbor_discovery_included": false,
+        "coordinate_rebuild_included": false,
+        "elagraph_construction_included": true,
+        "coo_to_csr_included": true,
+        "graph_ingestion_included": true,
+        "public_execution_path": "ELAGraph -> ELA -> ELAGraph",
+        "timing": {
+          "median_ms": 15.463876014109701,
+          "p50_ms": 15.463876014109701,
+          "p90_ms": 21.26176820602268,
+          "p95_ms": 21.292081609135494,
+          "p99_ms": 21.316332331625745,
+          "min_ms": 15.094697999302298,
+          "max_ms": 21.322395012248307,
+          "samples_ms": [
+            21.17082799668424,
+            21.322395012248307,
+            15.45680800336413,
+            15.094697999302298,
+            15.463876014109701
+          ]
+        },
+        "peak_allocated_bytes": null
+      },
+      "moving_coordinate_execution": {
+        "topology_source": "automatic_radius",
+        "prepared_cache_reused": false,
+        "neighbor_discovery_included": true,
+        "coordinate_rebuild_included": true,
+        "coordinate_rebuilds_per_call": 1,
+        "elagraph_construction_included": true,
+        "update_positions": true,
+        "graph_ingestion_included": true,
+        "public_execution_path": "ELAGraph -> ELA -> ELAGraph",
+        "timing": {
+          "median_ms": 15.53470702492632,
+          "p50_ms": 15.53470702492632,
+          "p90_ms": 21.149464405607432,
+          "p95_ms": 21.161837206454948,
+          "p99_ms": 21.17173544713296,
+          "min_ms": 14.971332013374195,
+          "max_ms": 21.174210007302463,
+          "samples_ms": [
+            21.174210007302463,
+            21.112346003064886,
+            15.53470702492632,
+            14.971332013374195,
+            15.374481008620933
+          ]
+        },
+        "peak_allocated_bytes": null
+      }
+    }
+  }
+}

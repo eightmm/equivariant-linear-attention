@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention.geometry import Prepared3DGraph, prepare_3d_graph
+from equivariant_linear_attention.geometry.prepared import (
+    Prepared3DGraph,
+    prepare_3d_graph,
+)
 from equivariant_linear_attention.model.runtime import (
     _BaseStackConfig,
     _ELARuntime,

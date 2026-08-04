@@ -120,6 +120,11 @@ class ELABatch:
         repr=False,
         compare=False,
     )
+    _trusted_prepared: bool = field(
+        default=False,
+        repr=False,
+        compare=False,
+    )
     _batch: torch.Tensor = field(init=False, repr=False, compare=False)
     _interaction_batch: torch.Tensor = field(
         init=False,
@@ -128,6 +133,10 @@ class ELABatch:
     )
 
     def __post_init__(self) -> None:
+        if not isinstance(self._trusted_prepared, bool):
+            raise TypeError("_trusted_prepared must be boolean")
+        if self._trusted_prepared and self._prepared_graph is None:
+            raise ValueError("trusted preparation requires a prepared graph")
         node = self.node_irreps
         pos = self.positions
         if not isinstance(node, torch.Tensor) or node.ndim != 2:
@@ -231,7 +240,10 @@ class ELABatch:
         if prepared is not None:
             if prepared.num_nodes != node.shape[0] or prepared.device != node.device:
                 raise ValueError("prepared graph does not match the packed graph")
-            if not torch.equal(prepared.batch, interaction_batch):
+            if not self._trusted_prepared and not torch.equal(
+                prepared.batch,
+                interaction_batch,
+            ):
                 raise ValueError("prepared graph membership does not match")
 
     @property
@@ -315,16 +327,28 @@ class ELABatch:
             raise TypeError("graph must be a Prepared3DGraph")
         if not graph.spec.can_reuse_positions(self.positions):
             raise ValueError("prepared radius topology does not match positions")
-        return replace(self, _prepared_graph=graph)
+        return replace(self, _prepared_graph=graph, _trusted_prepared=False)
+
+    def _with_prepared_graph_trusted(self, graph: Prepared3DGraph) -> ELABatch:
+        """Attach internally built or version-checked preparation metadata."""
+
+        if not isinstance(graph, Prepared3DGraph):
+            raise TypeError("graph must be a Prepared3DGraph")
+        return replace(self, _prepared_graph=graph, _trusted_prepared=True)
 
     def without_prepared_graph(self) -> ELABatch:
-        return replace(self, _prepared_graph=None)
+        return replace(self, _prepared_graph=None, _trusted_prepared=False)
 
     def with_positions(self, positions: torch.Tensor) -> ELABatch:
         graph = self._prepared_graph
         if graph is not None and not graph.spec.can_reuse_positions(positions):
             graph = None
-        return replace(self, positions=positions, _prepared_graph=graph)
+        return replace(
+            self,
+            positions=positions,
+            _prepared_graph=graph,
+            _trusted_prepared=False,
+        )
 
     def to(
         self,
@@ -388,6 +412,7 @@ class ELABatch:
             ),
             sample_ids=self.sample_ids,
             _prepared_graph=prepared,
+            _trusted_prepared=False,
         )
 
     def pin_memory(self) -> ELABatch:
@@ -412,6 +437,7 @@ class ELABatch:
             update_mask=_pin_tensor(self.update_mask),
             target=_pin_tensor(self.target),
             _prepared_graph=None,
+            _trusted_prepared=False,
         )
 
 

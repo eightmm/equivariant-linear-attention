@@ -5,11 +5,18 @@ from math import isfinite
 
 import torch
 
+from .neighbors import (
+    PackedNeighborGraph,
+    _build_receiver_csr_from_major,
+    build_receiver_csr,
+)
+
 _INTEGER_DTYPES = frozenset(
     {torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8}
 )
 _CELL_OFFSETS = tuple(product((-1, 0, 1), repeat=3))
 _INT64_SAFE = (1 << 62) - 1
+_BATCHED_DENSE_PAIR_BUDGET = 1 << 20
 
 
 def _validate_positive_int(name: str, value: int | None) -> None:
@@ -112,6 +119,18 @@ def _limit_neighbors(
     return receiver[keep], sender[keep]
 
 
+def _receiver_major_edges(
+    receiver: torch.Tensor,
+    sender: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Stably group a discovered cell-list stream by receiver once."""
+
+    if receiver.numel() < 2:
+        return receiver, sender
+    order = torch.argsort(receiver, stable=True)
+    return receiver[order], sender[order]
+
+
 def _dense_edges(
     positions: torch.Tensor,
     *,
@@ -153,6 +172,59 @@ def _dense_edges(
     )
 
 
+def _batched_dense_edges(
+    positions: torch.Tensor,
+    graph_ptr: torch.Tensor,
+    *,
+    padded_nodes: int,
+    cutoff_squared: float,
+    include_self: bool,
+    max_neighbors: int | None,
+    receiver_major: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Vectorize exact dense discovery across many small grouped graphs."""
+
+    counts = graph_ptr[1:] - graph_ptr[:-1]
+    starts = graph_ptr[:-1]
+    local = torch.arange(padded_nodes, device=positions.device)
+    present = local.unsqueeze(0) < counts.unsqueeze(1)
+    global_index = starts.unsqueeze(1) + local.unsqueeze(0)
+    safe_index = torch.where(present, global_index, torch.zeros_like(global_index))
+    work = positions.detach().to(
+        dtype=torch.float64 if positions.dtype == torch.float64 else torch.float32
+    )
+    padded = work[safe_index]
+    distance_squared = (
+        padded[:, :, None, :] - padded[:, None, :, :]
+    ).square().sum(dim=-1)
+    valid = (
+        present[:, :, None]
+        & present[:, None, :]
+        & (distance_squared < cutoff_squared)
+    )
+    if not include_self:
+        diagonal = torch.eye(
+            padded_nodes,
+            device=positions.device,
+            dtype=torch.bool,
+        ).unsqueeze(0)
+        valid = valid & ~diagonal
+    graph, receiver_local, sender_local = valid.nonzero(as_tuple=True)
+    receiver = starts[graph] + receiver_local
+    sender = starts[graph] + sender_local
+    if max_neighbors is not None:
+        receiver, sender = _limit_neighbors(
+            receiver,
+            sender,
+            distance_squared[graph, receiver_local, sender_local],
+            nodes=positions.shape[0],
+            max_neighbors=max_neighbors,
+        )
+    if receiver_major and max_neighbors is None:
+        receiver, sender = _receiver_major_edges(receiver, sender)
+    return receiver, sender
+
+
 def _encode_cells(
     shifted: torch.Tensor,
     span_y: int,
@@ -172,6 +244,7 @@ def _cell_edges(
     include_self: bool,
     max_neighbors: int | None,
     dense_chunk_size: int,
+    receiver_major: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     nodes = positions.shape[0]
     if nodes == 0:
@@ -279,13 +352,16 @@ def _cell_edges(
     receiver = torch.cat(receiver_parts)
     sender = torch.cat(sender_parts)
     distance_squared = torch.cat(distance_parts)
-    return _limit_neighbors(
+    receiver, sender = _limit_neighbors(
         receiver,
         sender,
         distance_squared,
         nodes=nodes,
         max_neighbors=max_neighbors,
     )
+    if receiver_major and max_neighbors is None:
+        receiver, sender = _receiver_major_edges(receiver, sender)
+    return receiver, sender
 
 
 def _batched_cell_edges(
@@ -297,6 +373,7 @@ def _batched_cell_edges(
     cutoff_squared: float,
     include_self: bool,
     max_neighbors: int | None,
+    receiver_major: bool,
 ) -> tuple[torch.Tensor, torch.Tensor] | None:
     """Exact multi-graph cell list without a Python loop over graphs."""
 
@@ -420,26 +497,31 @@ def _batched_cell_edges(
     receiver = torch.cat(receiver_parts)
     sender = torch.cat(sender_parts)
     distance_squared = torch.cat(distance_parts)
-    return _limit_neighbors(
+    receiver, sender = _limit_neighbors(
         receiver,
         sender,
         distance_squared,
         nodes=nodes,
         max_neighbors=max_neighbors,
     )
+    if receiver_major and max_neighbors is None:
+        receiver, sender = _receiver_major_edges(receiver, sender)
+    return receiver, sender
 
 
-def radius_graph(
+def _radius_edges(
     positions: torch.Tensor,
     *,
     cutoff: float,
     ptr: torch.Tensor | None = None,
     batch: torch.Tensor | None = None,
+    _trusted_graph_counts: torch.Tensor | None = None,
     max_neighbors: int | None = None,
     include_self: bool = False,
     dense_threshold: int = 256,
     chunk_size: int = 1024,
-) -> torch.Tensor:
+    receiver_major: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Build exact radius candidates without PyG.
 
     Small graphs use a chunked dense reference. Larger graphs use a cell list
@@ -464,6 +546,8 @@ def radius_graph(
     _validate_positive_int("dense_threshold", dense_threshold)
     _validate_positive_int("chunk_size", chunk_size)
 
+    if _trusted_graph_counts is not None and (ptr is not None or batch is not None):
+        raise ValueError("trusted graph counts replace ptr and batch")
     if ptr is not None and batch is not None:
         raise ValueError("supply ptr or batch, not both")
     if batch is not None:
@@ -484,7 +568,7 @@ def radius_graph(
                 raise ValueError("batch graph IDs must be contiguous from zero")
         if bool((batch_long[1:] < batch_long[:-1]).any().item()):
             order = torch.argsort(batch_long, stable=True)
-            sorted_edges = radius_graph(
+            sorted_receiver, sorted_sender = _radius_edges(
                 positions[order],
                 cutoff=cutoff,
                 batch=batch_long[order],
@@ -492,14 +576,41 @@ def radius_graph(
                 include_self=include_self,
                 dense_threshold=dense_threshold,
                 chunk_size=chunk_size,
+                receiver_major=receiver_major,
             )
-            return order[sorted_edges]
-    graph_ptr = _normalize_ptr(positions, ptr=ptr, batch=batch)
+            return order[sorted_receiver], order[sorted_sender]
+    if _trusted_graph_counts is None:
+        graph_ptr = _normalize_ptr(positions, ptr=ptr, batch=batch)
+    else:
+        # The counts come only from ELABatch's already validated ptr.  Keeping
+        # this private lane tensor-only avoids re-reading grouped membership
+        # and synchronizing a CUDA boolean merely to rediscover the same fact.
+        graph_ptr = torch.cat(
+            (
+                _trusted_graph_counts.new_zeros((1,)),
+                _trusted_graph_counts.cumsum(0),
+            )
+        ).to(dtype=torch.long)
 
     cutoff_squared = cutoff_value * cutoff_value
     num_graphs = graph_ptr.numel() - 1
     if num_graphs > 1:
         counts = graph_ptr[1:] - graph_ptr[:-1]
+        padded_nodes = int(counts.max().item())
+        padded_pair_count = num_graphs * padded_nodes * padded_nodes
+        if (
+            padded_nodes <= dense_threshold
+            and padded_pair_count <= _BATCHED_DENSE_PAIR_BUDGET
+        ):
+            return _batched_dense_edges(
+                positions,
+                graph_ptr,
+                padded_nodes=padded_nodes,
+                cutoff_squared=cutoff_squared,
+                include_self=include_self,
+                max_neighbors=max_neighbors,
+                receiver_major=receiver_major,
+            )
         batch_index = torch.repeat_interleave(
             torch.arange(num_graphs, device=positions.device),
             counts,
@@ -513,10 +624,10 @@ def radius_graph(
             cutoff_squared=cutoff_squared,
             include_self=include_self,
             max_neighbors=max_neighbors,
+            receiver_major=receiver_major,
         )
         if batched is not None:
-            receiver, sender = batched
-            return torch.stack([receiver, sender])
+            return batched
 
     receivers: list[torch.Tensor] = []
     senders: list[torch.Tensor] = []
@@ -549,12 +660,107 @@ def radius_graph(
                 include_self=include_self,
                 max_neighbors=max_neighbors,
                 dense_chunk_size=chunk_size,
+                receiver_major=receiver_major,
             )
         receivers.append(receiver + start)
         senders.append(sender + start)
     if not receivers:
-        return torch.empty((2, 0), device=positions.device, dtype=torch.long)
-    return torch.stack([torch.cat(receivers), torch.cat(senders)])
+        empty = torch.empty(0, device=positions.device, dtype=torch.long)
+        return empty, empty
+    return torch.cat(receivers), torch.cat(senders)
+
+
+def radius_graph(
+    positions: torch.Tensor,
+    *,
+    cutoff: float,
+    ptr: torch.Tensor | None = None,
+    batch: torch.Tensor | None = None,
+    max_neighbors: int | None = None,
+    include_self: bool = False,
+    dense_threshold: int = 256,
+    chunk_size: int = 1024,
+) -> torch.Tensor:
+    """Build exact directed receiver/sender COO radius candidates."""
+
+    receiver, sender = _radius_edges(
+        positions,
+        cutoff=cutoff,
+        ptr=ptr,
+        batch=batch,
+        max_neighbors=max_neighbors,
+        include_self=include_self,
+        dense_threshold=dense_threshold,
+        chunk_size=chunk_size,
+        receiver_major=False,
+    )
+    return torch.stack((receiver, sender))
+
+
+def _radius_graph_csr(
+    positions: torch.Tensor,
+    *,
+    cutoff: float,
+    ptr: torch.Tensor | None = None,
+    batch: torch.Tensor | None = None,
+    max_neighbors: int | None = None,
+    include_self: bool = False,
+    dense_threshold: int = 256,
+    chunk_size: int = 1024,
+    num_edge_relations: int = 0,
+    prefer_int32: bool = True,
+    _trusted_graph_counts: torch.Tensor | None = None,
+) -> PackedNeighborGraph:
+    """Build private receiver CSR directly from automatic radius discovery.
+
+    Graph-major inputs leave every discovery backend receiver-major, so CSR
+    offsets are formed without another receiver sort.  Interleaved membership
+    remains supported through the validated COO packer because mapping grouped
+    nodes back to their original node order necessarily destroys that order.
+    """
+
+    if (
+        isinstance(num_edge_relations, bool)
+        or not isinstance(num_edge_relations, int)
+        or num_edge_relations not in {0, 1}
+    ):
+        raise ValueError("automatic radius CSR supports zero or one edge relation")
+    receiver, sender = _radius_edges(
+        positions,
+        cutoff=cutoff,
+        ptr=ptr,
+        batch=batch,
+        _trusted_graph_counts=_trusted_graph_counts,
+        max_neighbors=max_neighbors,
+        include_self=include_self,
+        dense_threshold=dense_threshold,
+        chunk_size=chunk_size,
+        receiver_major=True,
+    )
+    relation = None
+    if num_edge_relations == 1:
+        relation = torch.zeros_like(receiver)
+    is_grouped = _trusted_graph_counts is not None or batch is None or bool(
+        batch.numel() < 2
+        or (batch.to(dtype=torch.long)[1:] >= batch.to(dtype=torch.long)[:-1])
+        .all()
+        .item()
+    )
+    if not is_grouped:
+        return build_receiver_csr(
+            torch.stack((receiver, sender)),
+            num_nodes=positions.shape[0],
+            edge_relation_id=relation,
+            prefer_int32=prefer_int32,
+            build_ell=False,
+        )
+    return _build_receiver_csr_from_major(
+        receiver,
+        sender,
+        num_nodes=positions.shape[0],
+        edge_relation_id=relation,
+        prefer_int32=prefer_int32,
+    )
 
 
 __all__ = ["radius_graph"]

@@ -17,7 +17,7 @@ from .irreps import (
     st5_norm,
     st5_to_matrix,
 )
-from .model.ela import ELAConfig, ELALayer, SparseGeometry
+from .model.ela import ELAConfig, SparseGeometry
 from .physics import DirectVectorForceHead, ScalarEnergyHead, conservative_forces
 
 __all__ = [
@@ -26,7 +26,6 @@ __all__ = [
     "ELAConfig",
     "ELAContext",
     "ELAFeatures",
-    "ELALayer",
     "FourierOrderEncoder",
     "Irrep",
     "IrrepBlock",

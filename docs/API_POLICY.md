@@ -91,8 +91,10 @@ out = model(graph)
 ```
 
 `update_positions=False` returns `out.pos == graph.pos` and a zero `out.delta`.
-`update_positions=True` performs the configured bounded equivariant update and
-returns the final coordinates in the same `ELAGraph`.
+`update_positions=True` performs one hidden-state-preserving coordinate update
+at every layer boundary and returns the final coordinates in the same
+`ELAGraph`. The cumulative displacement remains bounded by
+`max_coordinate_step`.
 
 There is no public refinement request, rebuilder callback, or separate refiner
 object.

@@ -339,20 +339,46 @@ def test_triton_weighted_gather_reduce_pair_matches_edge_reference(
         torch.testing.assert_close(candidate, reference, atol=3e-5, rtol=3e-5)
 
 
-def test_full_triton_inference_uses_weighted_gather_reduce(
+def test_full_triton_inference_uses_all_fused_local_reductions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = optimized_local._trusted_weighted_gather_reduce_pair
-    observed_lanes: list[tuple[int, int]] = []
+    original_pair = optimized_local._trusted_weighted_gather_reduce_pair
+    original_tensor = optimized_local._trusted_local_tensor_reduce_pair
+    original_direction = optimized_local._trusted_direction_reduce_triple
+    observed_pair_lanes: list[tuple[int, int]] = []
+    observed_tensor_lanes: list[tuple[int, int]] = []
+    observed_direction_lanes: list[tuple[int, int, int]] = []
 
-    def observe(*args: object, gate_lanes: tuple[int, int], **kwargs: object):
-        observed_lanes.append(gate_lanes)
-        return original(*args, gate_lanes=gate_lanes, **kwargs)
+    def observe_pair(*args: object, gate_lanes: tuple[int, int], **kwargs: object):
+        observed_pair_lanes.append(gate_lanes)
+        return original_pair(*args, gate_lanes=gate_lanes, **kwargs)
+
+    def observe_tensor(*args: object, gate_lanes: tuple[int, int], **kwargs: object):
+        observed_tensor_lanes.append(gate_lanes)
+        return original_tensor(*args, gate_lanes=gate_lanes, **kwargs)
+
+    def observe_direction(
+        *args: object,
+        gate_lanes: tuple[int, int, int],
+        **kwargs: object,
+    ):
+        observed_direction_lanes.append(gate_lanes)
+        return original_direction(*args, gate_lanes=gate_lanes, **kwargs)
 
     monkeypatch.setattr(
         optimized_local,
         "_trusted_weighted_gather_reduce_pair",
-        observe,
+        observe_pair,
+    )
+    monkeypatch.setattr(
+        optimized_local,
+        "_trusted_local_tensor_reduce_pair",
+        observe_tensor,
+    )
+    monkeypatch.setattr(
+        optimized_local,
+        "_trusted_direction_reduce_triple",
+        observe_direction,
     )
     device = torch.device("cuda")
     model = ELA(
@@ -371,7 +397,9 @@ def test_full_triton_inference_uses_weighted_gather_reduce(
     with torch.inference_mode(), kernel_backend("triton"):
         model._forward_prepared(prepared)
 
-    assert observed_lanes == [(0, 1), (2, 3)]
+    assert observed_pair_lanes == [(0, 1), (2, 3)]
+    assert observed_tensor_lanes == [(4, 5)]
+    assert observed_direction_lanes == [(6, 7, 8)]
 
 
 def _activate_local_outputs(model: ELA) -> None:

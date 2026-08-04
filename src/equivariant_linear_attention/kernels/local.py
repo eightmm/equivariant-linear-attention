@@ -8,11 +8,12 @@ from ..nn.parity import (
     _StaticGeometry,
     _compute_dtype,
     _st_cross,
-    _st_from_vector,
     _st_inner,
     _st_matvec,
 )
 from .triton import (
+    _trusted_direction_reduce_triple,
+    _trusted_local_tensor_reduce_pair,
     _trusted_csr_sum_many,
     _trusted_weighted_gather_reduce_pair,
     active_backend,
@@ -75,9 +76,9 @@ def dispatch_local_message(
         dtype=work_dtype
     )
 
-    edge_direction = direction[:, None, :].to(dtype=work_dtype)
+    work_direction = direction.to(dtype=work_dtype)
     unit_direction = _safe_unit_direction(
-        direction.to(dtype=work_dtype),
+        work_direction,
         geometry.squared_distance.to(dtype=work_dtype),
         self.eps,
     )[:, None, :]
@@ -134,6 +135,10 @@ def dispatch_local_message(
         radial_score = radial_score * relation_scale
         tensor_radial_score = tensor_radial_score * relation_scale
 
+    multiscale_score, multiscale_value_scale = (
+        self._local_multiscale_modulation(geometry, dtype=work_dtype)
+    )
+
     tensor_mix = self.local_tensor_mix.to(dtype=work_dtype)
     tensor_score = (
         tensor_radial_score
@@ -159,6 +164,7 @@ def dispatch_local_message(
         * receiver_axial_axis
         * sender_axial_axis
         + tensor_score
+        + multiscale_score
     )
     if self.relation_score_bias is not None:
         if relation_id is None:
@@ -216,85 +222,62 @@ def dispatch_local_message(
                 self.relation_value_gate.to(dtype=work_dtype)[relation_id]
             )
         )
+    radial_gate = radial_gate * multiscale_value_scale
     weight = raw_weight
-    direction_payload = edge_direction
 
-    if torch.is_grad_enabled():
-        # Training keeps the differentiable reference payload equations.
-        scalar_rank, odd_rank = _trusted_csr_sum_many(
-            (
-                weight.unsqueeze(-1)
-                * radial_gate[..., 0, None]
-                * scalar_value[sender],
-                weight * radial_gate[..., 1] * odd_value[sender],
-            ),
-            geometry.row_ptr,
-            policy="triton",
-            receiver=receiver,
-        )
-        polar_rank, axial_rank = _trusted_csr_sum_many(
-            (
-                weight.unsqueeze(-1)
-                * radial_gate[..., 2, None]
-                * polar_value[sender],
-                weight.unsqueeze(-1)
-                * radial_gate[..., 3, None]
-                * axial_value[sender],
-            ),
-            geometry.row_ptr,
-            policy="triton",
-            receiver=receiver,
-        )
-    else:
-        # Inference fuses sender gather, scalar weighting, and receiver sum so
-        # the four largest edge payloads are never materialized.
-        scalar_rank, odd_rank = _trusted_weighted_gather_reduce_pair(
-            weight,
-            radial_gate,
-            scalar_value,
-            odd_value,
-            sender,
-            geometry.row_ptr,
-            gate_lanes=(0, 1),
-            policy="triton",
-        )
-        polar_rank, axial_rank = _trusted_weighted_gather_reduce_pair(
-            weight,
-            radial_gate,
-            polar_value,
-            axial_value,
-            sender,
-            geometry.row_ptr,
-            gate_lanes=(2, 3),
-            policy="triton",
-        )
-
-    # Group 4: symmetric-traceless tensor values.
-    direction_tensor = _st_from_vector(direction_payload)
-    even_tensor_rank, odd_tensor_rank = _trusted_csr_sum_many(
-        (
-            weight.unsqueeze(-1)
-            * radial_gate[..., 4, None]
-            * (even_tensor_value[sender] + direction_tensor),
-            weight.unsqueeze(-1) * radial_gate[..., 5, None] * odd_tensor_value[sender],
-        ),
+    # Training and inference share the same fused forward.  The training
+    # custom-autograd lane stores compact inputs and reconstructs exact
+    # gathers/scatters in backward instead of retaining four [E,R,C] payloads.
+    scalar_rank, odd_rank = _trusted_weighted_gather_reduce_pair(
+        weight,
+        radial_gate,
+        scalar_value,
+        odd_value,
+        sender,
         geometry.row_ptr,
+        gate_lanes=(0, 1),
+        policy="triton",
+        receiver=receiver,
+    )
+    polar_rank, axial_rank = _trusted_weighted_gather_reduce_pair(
+        weight,
+        radial_gate,
+        polar_value,
+        axial_value,
+        sender,
+        geometry.row_ptr,
+        gate_lanes=(2, 3),
         policy="triton",
         receiver=receiver,
     )
 
-    # Group 5: three directional moments used for chirality.
-    first_direction, second_direction, third_direction = _trusted_csr_sum_many(
-        tuple(
-            weight.unsqueeze(-1)
-            * radial_gate[..., 6 + index, None]
-            * direction_gate[sender, index].unsqueeze(-1)
-            * direction_payload
-            for index in range(3)
-        ),
+    # Groups 4-5 stay fused in both inference and training.  In particular,
+    # the edge ST carrier and the three directional moment payloads are formed
+    # inside the Triton kernels instead of as [E, R, C] PyTorch tensors.
+    even_tensor_rank, odd_tensor_rank = _trusted_local_tensor_reduce_pair(
+        weight,
+        radial_gate,
+        even_tensor_value,
+        odd_tensor_value,
+        work_direction,
+        sender,
         geometry.row_ptr,
+        gate_lanes=(4, 5),
         policy="triton",
         receiver=receiver,
+    )
+    first_direction, second_direction, third_direction = (
+        _trusted_direction_reduce_triple(
+            weight,
+            radial_gate,
+            direction_gate,
+            work_direction,
+            sender,
+            geometry.row_ptr,
+            gate_lanes=(6, 7, 8),
+            policy="triton",
+            receiver=receiver,
+        )
     )
 
     # Normalize in work precision after the compact reductions.

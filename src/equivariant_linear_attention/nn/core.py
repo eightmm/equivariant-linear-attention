@@ -119,6 +119,18 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             if num_edge_relations
             else None
         )
+        # Two nested, smooth radial envelopes share the already prepared
+        # receiver-major edge set.  Their score/value mixing is residual and
+        # zero initialized, so enabling the canonical multiscale lane is an
+        # exact identity for historical weights until the new parameters
+        # learn away from zero.
+        self.local_scale_score_mix = nn.Parameter(
+            torch.zeros(2, local_rank)
+        )
+        self.local_scale_value_mix = nn.Parameter(
+            torch.zeros(2, local_rank, 9)
+        )
+        self._multiscale_local_enabled = True
         self.second_moment_chiral_mix = nn.Parameter(
             torch.zeros(local_rank)
         )
@@ -168,6 +180,56 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             torch.full((num_heads, 1), scale)
         )
         del self.ffn_scale
+
+    def _set_multiscale_local_enabled(self, enabled: bool) -> None:
+        """Privately toggle the multiscale residual for controlled ablations."""
+
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a bool")
+        self._multiscale_local_enabled = enabled
+
+    def _local_multiscale_modulation(
+        self,
+        geometry: _StaticGeometry,
+        *,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return identity-safe score and value modulation for every edge.
+
+        ``geometry.cutoff_argument`` is squared distance divided by the
+        relation-aware cutoff squared. The broad envelope uses the full cutoff
+        and the short envelope uses half that length (four times the squared
+        argument). Both remain invariant and no extra edge set or dense pair
+        tensor is constructed.
+        """
+
+        edges = geometry.cutoff.shape[0]
+        if not self._multiscale_local_enabled:
+            return (
+                geometry.cutoff.new_zeros((edges, self.local_rank), dtype=dtype),
+                geometry.cutoff.new_ones(
+                    (edges, self.local_rank, 9),
+                    dtype=dtype,
+                ),
+            )
+        argument = geometry.cutoff_argument.to(dtype=dtype)
+        broad = _c2_cutoff(argument)
+        short = _c2_cutoff(4.0 * argument)
+        envelopes = torch.stack((broad, short), dim=-1)
+        score_delta = torch.einsum(
+            "es,sr->er",
+            envelopes,
+            self.local_scale_score_mix.to(dtype=dtype),
+        )
+        value_log_scale = torch.einsum(
+            "es,srk->erk",
+            envelopes,
+            self.local_scale_value_mix.to(dtype=dtype),
+        )
+        # A bounded log-scale keeps every value gate positive and limits one
+        # experimental lane from overwhelming the normalized local transport.
+        value_scale = torch.exp(torch.tanh(value_log_scale))
+        return score_delta, value_scale
 
     def forward(
         self,
@@ -564,6 +626,10 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             radial_score = radial_score * relation_scale
             tensor_radial_score = tensor_radial_score * relation_scale
 
+        multiscale_score, multiscale_value_scale = (
+            self._local_multiscale_modulation(geometry, dtype=dtype)
+        )
+
         tensor_mix = self.local_tensor_mix.to(dtype=dtype)
         tensor_score = (
             tensor_radial_score
@@ -593,6 +659,7 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             * receiver_axial_axis
             * sender_axial_axis
             + tensor_score
+            + multiscale_score
         )
         if self.relation_score_bias is not None:
             if relation_id is None:
@@ -636,6 +703,7 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
                     self.relation_value_gate.to(dtype=dtype)[relation_id]
                 )
             )
+        radial_gate = radial_gate * multiscale_value_scale
 
         def reduce_rank(value: torch.Tensor) -> torch.Tensor:
             return _csr_sum(value, geometry.row_ptr)
@@ -1034,6 +1102,7 @@ class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
             sender=sender,
             direction=direction,
             squared_distance=squared_distance,
+            cutoff_argument=cutoff_argument,
             rbf=rbf,
             cutoff=smooth,
             row_ptr=neighbors.row_ptr,

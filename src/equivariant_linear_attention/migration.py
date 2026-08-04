@@ -132,6 +132,12 @@ def load_advanced_ela_state(
         ".raw_global_radial_alignment",
         ".relation_radial_scale",
         ".relation_value_gate",
+        ".local_scale_score_mix",
+        ".local_scale_value_mix",
+        ".l1_l2_polar_out.weight",
+        ".l1_l2_axial_out.weight",
+        ".l1_l2_even_tensor_out.weight",
+        ".l1_l2_odd_tensor_out.weight",
         ".second_moment_chiral_mix",
     )
     unexpected = tuple(sorted(provided_keys - target_keys))

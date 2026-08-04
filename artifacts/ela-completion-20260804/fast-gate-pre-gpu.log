@@ -1,0 +1,58 @@
+Building wheel (uv build backend)...
+Successfully built /tmp/tmp.NZ6BF9LmwH/wheels/equivariant_linear_attention-0.1.0-py3-none-any.whl
+Using CPython 3.12.12 interpreter at: .venv/bin/python3
+Creating virtual environment at: /tmp/tmp.NZ6BF9LmwH/venv
+Activate with: source /tmp/tmp.NZ6BF9LmwH/venv/bin/activate
+Using Python 3.12.12 environment at: /tmp/tmp.NZ6BF9LmwH/venv
+Resolved 1 package in 0.86ms
+Prepared 1 package in 2ms
+Installed 1 package in 0.35ms
+ + equivariant-linear-attention==0.1.0 (from file:///tmp/tmp.NZ6BF9LmwH/wheels/equivariant_linear_attention-0.1.0-py3-none-any.whl)
+wheel smoke: ok
+All checks passed!
+.........................sss............................................ [ 19%]
+........................................................................ [ 39%]
+........sssss................................................s.......... [ 59%]
+...............sssssssssssssss.......................................... [ 79%]
+................................sss.......................s............. [ 99%]
+.                                                                        [100%]
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.12-final-0 _______________
+
+Name                                                     Stmts   Miss   Cover   Missing
+---------------------------------------------------------------------------------------
+src/equivariant_linear_attention/__init__.py                 3      0 100.00%
+src/equivariant_linear_attention/advanced.py                 5      0 100.00%
+src/equivariant_linear_attention/api.py                    167     13  92.22%   57, 133, 149, 151, 154, 168, 195, 203, 205, 225, 272, 285, 303
+src/equivariant_linear_attention/batch.py                  222     68  69.37%   17-19, 29-31, 40, 42, 45, 47, 49, 53, 74, 76, 78, 80, 83, 95, 137, 139, 143, 145, 147, 149, 151, 162, 164, 166, 169, 171, 173, 192, 194, 200, 205, 213, 217, 219, 225, 227, 233, 235, 237, 242, 247, 268, 273, 287, 307, 327, 329, 336, 343-346, 361-378, 419-427
+src/equivariant_linear_attention/context.py                157     43  72.61%   34, 36, 78, 81-84, 101, 116, 124-125, 159, 161, 173, 191, 194, 199, 201, 203, 205-213, 215-224, 227, 229, 231, 240-250, 256
+src/equivariant_linear_attention/geometry/__init__.py        1      0 100.00%
+src/equivariant_linear_attention/geometry/layout.py        405     73  81.98%   40, 66, 68, 78, 231, 244, 304, 383, 388, 392, 410, 412-413, 416, 418, 420, 422, 425, 427, 433, 439, 444, 446, 448, 450, 462, 470, 473, 478, 484, 486, 488, 493, 498, 500, 503, 506, 515, 517, 519, 521, 526, 531, 559, 563, 570, 579, 584, 586, 588, 590, 602, 660-667, 730, 787, 789, 803, 805, 807, 810, 884, 896, 927-933
+src/equivariant_linear_attention/geometry/neighbors.py     398    100  74.87%   58, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 89-90, 96, 105, 108, 110, 114, 118, 122, 126, 129, 131, 133, 135, 137, 139, 143, 145, 147, 153, 165, 193, 200, 204, 208, 215, 219, 221, 223, 226, 231, 233, 235, 237, 239, 241, 243, 245, 247, 274, 276, 279, 281, 283, 285, 287, 289, 292, 294, 299, 301, 398, 412-416, 438, 494, 503, 505, 507, 511, 517, 611, 613, 615, 617, 620, 622, 624, 626, 678, 680, 771, 789, 791, 793, 795, 797, 854, 867, 909, 911, 913, 950, 952, 962, 970
+src/equivariant_linear_attention/geometry/prepared.py      183     42  77.05%   44, 46, 52, 58, 60, 63, 68, 70, 76, 79, 88, 120, 134, 152, 158, 160, 175-176, 201, 203, 205, 207, 209, 211, 214, 216, 218, 220, 222-225, 270, 273-275, 294, 296, 298, 300, 302, 336
+src/equivariant_linear_attention/geometry/radius.py        358     44  87.71%   26, 31, 33, 36, 38, 40, 46, 58, 68, 70, 73, 75, 77, 129, 161-162, 216, 251-252, 262, 321, 350-351, 382-383, 411, 439, 466, 495-496, 535, 537, 539, 541, 544, 550, 552, 555, 557, 560, 568, 668-669, 727
+src/equivariant_linear_attention/graph.py                  510     92  81.96%   25, 37, 41, 54, 56-57, 59, 61, 78, 82, 107, 109, 111, 117, 131, 135, 137, 140, 145, 147, 149, 158, 167-169, 199, 201, 297, 300, 302, 305, 329, 331, 333, 335, 339, 342, 353, 369, 371, 393, 395, 397, 401, 403, 409, 415, 423, 426, 431, 435-442, 450, 476, 516, 525, 530, 539, 568, 595-597, 616, 621, 643, 695, 699, 712, 774-803, 810, 812, 815, 817, 825, 855, 876, 893, 904, 924, 949, 964
+src/equivariant_linear_attention/inference.py               90      3  96.67%   53-54, 84
+src/equivariant_linear_attention/irreps.py                 303     32  89.44%   33, 36, 41, 66, 85-86, 88, 104, 117, 148-149, 174, 194, 198, 205, 211, 220, 247, 264, 279, 320, 356, 358, 362, 372, 374, 474, 477, 484, 489, 491, 504
+src/equivariant_linear_attention/kernels/__init__.py         2      0 100.00%
+src/equivariant_linear_attention/kernels/local.py          104     11  89.42%   130-136, 170-172, 217-219
+src/equivariant_linear_attention/kernels/triton.py         504    223  55.75%   90, 117, 124, 129, 152-174, 192-240, 261-334, 873-899, 906-941, 951-979, 1053-1096, 1109-1129, 1142-1196, 1211-1232, 1242, 1246, 1252, 1272, 1274, 1322, 1495, 1547-1548, 1571, 1577, 1635-1661, 1859-1860, 2100-2101, 2197-2204, 2212, 2219
+src/equivariant_linear_attention/migration.py               70     10  85.71%   27, 43, 45, 55, 101, 103, 105, 108, 110, 174
+src/equivariant_linear_attention/model/__init__.py           0      0 100.00%
+src/equivariant_linear_attention/model/ela.py              397     74  81.36%   44, 46, 52, 81, 83, 85, 90, 94, 141, 143, 145, 149, 151, 170, 174, 184, 194, 198, 202, 206, 210, 237, 241, 450, 479, 504, 506, 508, 510, 513, 523-525, 538-545, 558-559, 576-577, 603, 622, 626, 628, 639, 644, 647, 652, 666, 677, 682, 696, 706, 720, 722, 724, 726, 741, 784, 814-822, 841-855, 937-946, 987
+src/equivariant_linear_attention/model/runtime.py          150     25  83.33%   20, 22, 28, 30, 36, 39, 45, 48, 91, 93, 98, 117, 200, 245, 247, 249, 251, 258-261, 304, 318-319, 350
+src/equivariant_linear_attention/model/stack.py            243     18  92.59%   34, 37, 62, 65, 270, 575-577, 591-593, 608-615, 723
+src/equivariant_linear_attention/nn/__init__.py              0      0 100.00%
+src/equivariant_linear_attention/nn/core.py                318     36  88.68%   188, 243-274, 622, 666, 699, 948-1042, 1084
+src/equivariant_linear_attention/nn/heads.py               117     19  83.76%   204, 210, 212, 214, 256, 258, 262, 264, 277, 279, 295, 297, 299, 301, 303, 306, 327, 331, 333
+src/equivariant_linear_attention/nn/layers.py              241     14  94.19%   124, 146, 148, 156-158, 298, 300, 333, 336, 526, 653-655
+src/equivariant_linear_attention/nn/multipoles.py          196      3  98.47%   208, 210, 278
+src/equivariant_linear_attention/nn/parity.py              660    212  67.88%   133-134, 160, 262, 266, 279-303, 307, 310, 331-334, 457, 483, 592, 757-765, 774-920, 934-1090, 1291-1331, 1368, 1375, 1417, 1455, 1457, 1464, 1535-1594, 1603-1607, 1623-1633, 1640-1669, 1695, 1699, 1701, 1703, 1708, 1711, 1722, 1732-1733, 1737, 1744, 1746
+src/equivariant_linear_attention/nn/pooling.py              87     10  88.51%   164, 168, 170, 172, 176, 178, 188, 204, 208, 210
+src/equivariant_linear_attention/physics.py                 55     10  81.82%   34, 40, 56, 58, 63, 102, 104, 106, 112, 116
+---------------------------------------------------------------------------------------
+TOTAL                                                     5946   1175  80.24%
+Required test coverage of 80.01% reached. Total coverage: 80.24%
+333 passed, 28 skipped in 14.78s
+ml_smoke: ok (cpu, dtype=torch.float64)
+check fast: ok

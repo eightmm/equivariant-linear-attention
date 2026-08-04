@@ -174,7 +174,7 @@ class _BaseStackConfig:
             "local_operator": "single_positive_mass_damped_rank_r",
             "local_routing": "scalar_vector_axial_tensor_parity_complete",
             "local_reduction": "single_receiver_csr",
-            "tensor_product_closure": "low_rank_lte2_cartesian",
+            "tensor_product_closure": "low_rank_lte2_cartesian_cg12",
             "irrep_normalization": "sector_rms_pre_norm",
             "residual_scaling": "per_copy_layerscale",
             "cutoff_regularity": "C2",

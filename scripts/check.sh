@@ -13,6 +13,10 @@ MODE="${1:-fast}"
 run_fast() {
   local ran=0
   local dirs=()
+  # The fast contract is intentionally CPU-only even on a workstation that
+  # happens to have a visible accelerator. GPU kernels have a separate,
+  # explicitly scheduled gate below.
+  export CUDA_VISIBLE_DEVICES=""
   [ -d src ] && dirs+=(src)
   [ -d scripts ] && dirs+=(scripts)
 
@@ -28,6 +32,11 @@ PY
     ran=1
   fi
 
+  if [ -x scripts/wheel_smoke.sh ] && command -v uv >/dev/null 2>&1; then
+    scripts/wheel_smoke.sh
+    ran=1
+  fi
+
   if [ "${#dirs[@]}" -gt 0 ] && [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
     uv run python -m compileall -q "${dirs[@]}"
     ran=1
@@ -39,7 +48,7 @@ PY
   fi
 
   if [ -d tests ] && [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
-    uv run pytest -q --cov=equivariant_linear_attention --cov-report=term-missing --cov-fail-under=80
+    uv run pytest -q --cov=equivariant_linear_attention --cov-report=term-missing --cov-fail-under=80.01
     ran=1
   fi
 
@@ -77,12 +86,27 @@ run_ml_smoke() {
 }
 
 run_gpu() {
+  export UV_LOCKED=1
   if command -v srun >/dev/null 2>&1; then
+    srun --gres=gpu:1 --time=00:10:00 uv run python -c \
+      'import torch; from equivariant_linear_attention.kernels import triton_available; assert torch.cuda.is_available(), "CUDA unavailable"; assert torch.cuda.is_bf16_supported(), "CUDA BF16 unavailable"; assert triton_available(), "Triton unavailable"'
     srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda bf16
     srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda auto
+    srun --gres=gpu:1 --time=00:10:00 uv run pytest -q \
+      tests/test_gpu_completion.py \
+      tests/test_canonical_cuda.py \
+      tests/test_kernel_triton_cuda.py \
+      tests/test_triton_equivariance_cuda.py
   else
+    uv run python -c \
+      'import torch; from equivariant_linear_attention.kernels import triton_available; assert torch.cuda.is_available(), "CUDA unavailable"; assert torch.cuda.is_bf16_supported(), "CUDA BF16 unavailable"; assert triton_available(), "Triton unavailable"'
     uv run python scripts/ml_smoke.py cuda bf16
     uv run python scripts/ml_smoke.py cuda auto
+    uv run pytest -q \
+      tests/test_gpu_completion.py \
+      tests/test_canonical_cuda.py \
+      tests/test_kernel_triton_cuda.py \
+      tests/test_triton_equivariance_cuda.py
   fi
   echo "check gpu: ok"
 }

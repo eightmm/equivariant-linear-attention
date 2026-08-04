@@ -233,6 +233,7 @@ class _StaticGeometry:
     sender: torch.Tensor
     direction: torch.Tensor
     squared_distance: torch.Tensor
+    cutoff_argument: torch.Tensor
     rbf: torch.Tensor
     cutoff: torch.Tensor
     row_ptr: torch.Tensor
@@ -245,11 +246,24 @@ def _layout_feature_gemm(
     value: torch.Tensor,
     layout: PackedGraphLayout,
 ) -> torch.Tensor:
-    if layout.num_graphs == 1:
+    lane = layout.select_lane(
+        backend="feature_gemm",
+        dtype=query.dtype,
+        device=query.device,
+        num_heads=query.shape[1],
+        feature_width=query.shape[-1],
+        value_width=max(0, value.shape[-1] - 1),
+    )
+    if lane == "direct":
         summary = torch.einsum("nhf,nhv->hfv", key, value)
         return torch.einsum("nhf,hfv->nhv", query, summary)
 
-    if layout.dense_index is not None and layout.dense_mask is not None:
+    if lane == "outer_scatter":
+        return _segmented_feature_gemm(query, key, value, layout)
+
+    if lane == "padded_bmm":
+        if layout.dense_index is None or layout.dense_mask is None:
+            raise RuntimeError("padded global lane requires a dense layout plan")
         query_dense = layout.gather_dense(query)
         key_dense = layout.gather_dense(key)
         value_dense = layout.gather_dense(value)
@@ -261,7 +275,9 @@ def _layout_feature_gemm(
         grouped_output = output_dense[layout.dense_mask]
         return layout.ungroup_nodes(grouped_output)
 
-    if layout.buckets:
+    if lane == "bucket_bmm":
+        if not layout.buckets:
+            raise RuntimeError("bucketed global lane requires bucket plans")
         grouped_query = layout.group_nodes(query)
         grouped_key = layout.group_nodes(key)
         grouped_value = layout.group_nodes(value)
@@ -286,6 +302,196 @@ def _layout_feature_gemm(
             raise RuntimeError("bucketed graph layout contains no buckets")
         return layout.ungroup_nodes(grouped_output)
 
+    if lane == "ragged_gemm":
+        if _can_use_grouped_mm(query, key, value):
+            return _grouped_mm_feature_gemm(query, key, value, layout)
+        return _segmented_feature_gemm(query, key, value, layout)
+
+    raise RuntimeError(f"unknown packed global lane: {lane}")
+
+
+def _can_use_grouped_mm(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+) -> bool:
+    """Select native grouped GEMM only in its documented inference regime."""
+
+    if torch.is_grad_enabled() and any(
+        operand.requires_grad for operand in (query, key, value)
+    ):
+        # PyTorch grouped_mm's higher-order training contract is not yet part
+        # of ELA. Training keeps the fully differentiable segmented reference.
+        return False
+    if not (
+        query.device.type == "cuda"
+        and query.dtype == key.dtype == value.dtype == torch.bfloat16
+    ):
+        return False
+    if query.shape[0] * query.shape[1] > torch.iinfo(torch.int32).max - 8:
+        return False
+    major, _minor = torch.cuda.get_device_capability(query.device)
+    return major >= 8 and callable(getattr(F, "grouped_mm", None))
+
+
+def _head_group_order(
+    layout: PackedGraphLayout,
+    num_heads: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Map graph-major ``(node, head)`` rows to graph/head segments."""
+
+    counts = layout.graph_counts.to(dtype=torch.long)
+    segment_counts = counts.repeat_interleave(num_heads)
+    offsets = segment_counts.cumsum(0)
+    segment_starts = offsets - segment_counts
+    total = layout.num_nodes * num_heads
+    within = torch.arange(total, device=layout.device) - torch.repeat_interleave(
+        segment_starts,
+        segment_counts,
+        output_size=total,
+    )
+    graph_starts = layout.graph_ptr[:-1].to(dtype=torch.long).repeat_interleave(
+        num_heads
+    )
+    head = torch.arange(num_heads, device=layout.device).repeat(layout.num_graphs)
+    node = torch.repeat_interleave(
+        graph_starts,
+        segment_counts,
+        output_size=total,
+    ) + within
+    expanded_head = torch.repeat_interleave(
+        head,
+        segment_counts,
+        output_size=total,
+    )
+    source_order = node * num_heads + expanded_head
+    return source_order, offsets.to(dtype=torch.int32)
+
+
+def _grouped_mm_feature_gemm(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layout: PackedGraphLayout,
+) -> torch.Tensor:
+    """Two native grouped GEMMs over jagged graph/head token segments.
+
+    The first operation forms one ``K^T V`` summary per graph and head from
+    concatenated ragged segments. The second applies the matching summary to
+    every query. No padded node dimension or node-wise outer product is built.
+    """
+
+    grouped_query = layout.group_nodes(query)
+    grouped_key = layout.group_nodes(key)
+    grouped_value = layout.group_nodes(value)
+    heads = query.shape[1]
+    source_order, offsets = _head_group_order(layout, heads)
+    total = source_order.numel()
+
+    def pack_heads(tensor: torch.Tensor) -> torch.Tensor:
+        flattened = tensor.reshape(total, tensor.shape[-1])
+        return flattened.index_select(0, source_order)
+
+    query_tokens = pack_heads(grouped_query)
+    key_tokens = pack_heads(grouped_key)
+    value_tokens = pack_heads(grouped_value)
+    feature_width, value_width = layout.padded_widths(
+        feature_width=query.shape[-1],
+        augmented_value_width=value.shape[-1],
+        dtype=query.dtype,
+        device=query.device,
+    )
+    query_tokens = F.pad(query_tokens, (0, feature_width - query.shape[-1]))
+    key_tokens = F.pad(key_tokens, (0, feature_width - key.shape[-1]))
+    value_tokens = F.pad(value_tokens, (0, value_width - value.shape[-1]))
+
+    # The 2D x 2D grouped-MM kernel requires the leading stride of K^T to be
+    # 16-byte aligned. A zero tail is outside the final offset and ignored.
+    # ``grouped_mm`` requires the final offset to be strictly smaller than the
+    # sliced operand length.  Always reserve one aligned tail block, including
+    # when ``total`` is already a multiple of eight.
+    aligned_total = ((total // 8) + 1) * 8
+    tail = aligned_total - total
+    if tail:
+        key_tokens = F.pad(key_tokens, (0, 0, 0, tail))
+        value_tokens = F.pad(value_tokens, (0, 0, 0, tail))
+        query_tokens = F.pad(query_tokens, (0, 0, 0, tail))
+
+    summary = F.grouped_mm(
+        key_tokens.transpose(0, 1).contiguous(),
+        value_tokens,
+        offs=offsets,
+    )
+    # Column-major weights are the native fast layout for the second grouped
+    # multiply on current CUDA kernels.
+    summary = summary.transpose(-2, -1).contiguous().transpose(-2, -1)
+    transported = F.grouped_mm(query_tokens, summary, offs=offsets)
+    transported = transported[:total, : value.shape[-1]]
+
+    restored = transported.new_empty((total, value.shape[-1]))
+    restored.index_copy_(0, source_order, transported)
+    grouped_output = restored.reshape(layout.num_nodes, heads, value.shape[-1])
+    return layout.ungroup_nodes(grouped_output)
+
+
+def _segmented_feature_gemm(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layout: PackedGraphLayout,
+    *,
+    feature_tile: int = 8,
+) -> torch.Tensor:
+    """Exact differentiable ragged fallback without a per-graph Python loop.
+
+    The feature axis is tiled so the transient segmented outer product is
+    ``O(N * H * feature_tile * V)`` rather than ``O(N * H * F * V)``.  Each
+    tile is reduced by graph with ``index_add`` and immediately contracted with
+    its query tile. This keeps first- and higher-order autograd on ordinary
+    PyTorch operations. BF16 CUDA inference instead uses the native two-pass
+    grouped-MM path above, which materializes neither padding buckets nor the
+    node-wise outer product.
+    """
+
+    if feature_tile <= 0:
+        raise ValueError("feature_tile must be positive")
+    grouped_query = layout.group_nodes(query)
+    grouped_key = layout.group_nodes(key)
+    grouped_value = layout.group_nodes(value)
+    grouped_batch = layout.group_nodes(layout.batch).to(dtype=torch.long)
+    output: torch.Tensor | None = None
+    for start in range(0, query.shape[-1], feature_tile):
+        stop = min(start + feature_tile, query.shape[-1])
+        query_tile = grouped_query[..., start:stop]
+        key_tile = grouped_key[..., start:stop]
+        outer = key_tile.unsqueeze(-1) * grouped_value.unsqueeze(-2)
+        summary = outer.new_zeros(
+            (
+                layout.num_graphs,
+                outer.shape[1],
+                outer.shape[2],
+                outer.shape[3],
+            )
+        ).index_add(0, grouped_batch, outer)
+        contribution = torch.einsum(
+            "nhf,nhfv->nhv",
+            query_tile,
+            summary.index_select(0, grouped_batch),
+        )
+        output = contribution if output is None else output + contribution
+    if output is None:
+        raise RuntimeError("global feature width must be nonzero")
+    return layout.ungroup_nodes(output)
+
+
+def _graph_loop_feature_gemm_reference(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layout: PackedGraphLayout,
+) -> torch.Tensor:
+    """Small private oracle retained for focused numerical tests."""
+
     grouped_query = layout.group_nodes(query)
     grouped_key = layout.group_nodes(key)
     grouped_value = layout.group_nodes(value)
@@ -309,6 +515,19 @@ def _exact_balanced_attention(
     *,
     eps: float,
 ) -> torch.Tensor:
+    source_dtype = query.dtype
+    cuda_bf16_autocast = (
+        query.device.type == "cuda"
+        and torch.is_autocast_enabled("cuda")
+        and torch.get_autocast_dtype("cuda") == torch.bfloat16
+    )
+    use_bf16_grouped_mm = (
+        (
+            source_dtype == key.dtype == value.dtype == torch.bfloat16
+            or cuda_bf16_autocast
+        )
+        and layout.structure in {"ragged", "extreme"}
+    )
     dtype = _compute_dtype(query, key, value)
     query = query.to(dtype=dtype)
     key = key.to(dtype=dtype)
@@ -322,7 +541,35 @@ def _exact_balanced_attention(
         [value, value.new_ones((*value.shape[:-1], 1))],
         dim=-1,
     )
-    transported = _layout_feature_gemm(query, balanced_key, augmented, layout)
+    if use_bf16_grouped_mm:
+        # Keep normalization and the final division in FP32, but allow the
+        # documented BF16 CUDA inference kernel to perform the two GEMMs.  A
+        # failed eligibility check (CPU, unsupported GPU, or missing operator)
+        # stays on the exact FP32 fallback.
+        native_query = query.to(dtype=torch.bfloat16)
+        native_key = balanced_key.to(dtype=torch.bfloat16)
+        native_value = augmented.to(dtype=torch.bfloat16)
+        if _can_use_grouped_mm(native_query, native_key, native_value):
+            transported = _grouped_mm_feature_gemm(
+                native_query,
+                native_key,
+                native_value,
+                layout,
+            ).to(dtype=dtype)
+        else:
+            transported = _layout_feature_gemm(
+                query,
+                balanced_key,
+                augmented,
+                layout,
+            )
+    else:
+        transported = _layout_feature_gemm(
+            query,
+            balanced_key,
+            augmented,
+            layout,
+        )
     numerator = transported[..., :-1]
     denominator = transported[..., -1:].clamp_min(eps)
     return numerator / denominator
@@ -1424,6 +1671,7 @@ class ParityCompleteSE3Core(nn.Module):
             sender=sender,
             direction=direction,
             squared_distance=squared_distance,
+            cutoff_argument=cutoff_argument,
             rbf=rbf,
             cutoff=smooth,
             row_ptr=neighbors.row_ptr,

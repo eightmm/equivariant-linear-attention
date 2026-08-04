@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.geometry.prepared import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
     _BaseStackConfig,
     _ELARuntime,
@@ -89,7 +89,9 @@ def test_unified_contract_records_multipole_complete_path() -> None:
     assert contract["local_routing"] == (
         "scalar_vector_axial_tensor_parity_complete"
     )
-    assert contract["tensor_product_closure"] == "low_rank_lte2_cartesian"
+    assert contract["tensor_product_closure"] == (
+        "low_rank_lte2_cartesian_cg12"
+    )
     assert contract["irrep_normalization"] == "sector_rms_pre_norm"
     assert contract["residual_scaling"] == "per_copy_layerscale"
     assert contract["cutoff_regularity"] == "C2"

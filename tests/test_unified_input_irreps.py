@@ -9,7 +9,7 @@ from equivariant_linear_attention.irreps import (
     matrix_to_st5,
     st5_to_matrix,
 )
-from equivariant_linear_attention.geometry import prepare_3d_graph
+from equivariant_linear_attention.geometry.prepared import prepare_3d_graph
 from equivariant_linear_attention.model.runtime import (
     _BaseStackConfig,
     _ELARuntime,

@@ -8,6 +8,7 @@ import torch
 
 from .layout import PackedGraphLayout, pack_graph_layout
 from .neighbors import PackedNeighborGraph, build_receiver_csr
+from .radius import _radius_graph_csr
 
 
 _INTEGER_DTYPES = frozenset(
@@ -318,6 +319,75 @@ def prepare_3d_graph(
         batch=graph_layout.batch,
         graph_layout=graph_layout,
         neighbors=neighbors,
+        spec=spec,
+    )
+
+
+def _prepare_trusted_3d_graph(
+    batch: torch.Tensor,
+    neighbors: PackedNeighborGraph,
+    *,
+    graph_counts: torch.Tensor | None,
+    spec: PreparationSpec,
+) -> Prepared3DGraph:
+    """Assemble an internally validated graph without repeating full scans."""
+
+    if batch.dtype != torch.long:
+        batch = batch.to(dtype=torch.long)
+    graph_layout = pack_graph_layout(
+        batch,
+        graph_counts=graph_counts,
+        assume_grouped=graph_counts is not None,
+    )
+    return Prepared3DGraph._from_trusted(
+        batch=graph_layout.batch,
+        graph_layout=graph_layout,
+        neighbors=neighbors,
+        spec=spec,
+    )
+
+
+def _prepare_radius_3d_graph(
+    positions: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    cutoff: float,
+    max_neighbors: int | None,
+    include_self: bool,
+    num_edge_relations: int,
+    skin: float,
+    graph_counts: torch.Tensor | None,
+    prefer_int32: bool = True,
+) -> Prepared3DGraph:
+    """Discover automatic neighbors and materialize their private CSR once."""
+
+    spec = PreparationSpec.radius(
+        positions,
+        cutoff=cutoff,
+        max_neighbors=max_neighbors,
+        include_self=include_self,
+        num_edge_relations=num_edge_relations,
+        skin=skin,
+    )
+    neighbors = _radius_graph_csr(
+        positions,
+        cutoff=float(spec.candidate_cutoff),
+        # A normal ELAGraph batch carries a validated ptr.  Its counts are
+        # sufficient provenance for graph-major membership, so the hot path
+        # does not rescan ``batch`` or transfer a groupedness predicate to the
+        # host. Interaction-group layouts have no such proof and keep the
+        # general validated batch path.
+        batch=None if graph_counts is not None else batch,
+        max_neighbors=max_neighbors,
+        include_self=include_self,
+        num_edge_relations=num_edge_relations,
+        prefer_int32=prefer_int32,
+        _trusted_graph_counts=graph_counts,
+    )
+    return _prepare_trusted_3d_graph(
+        batch,
+        neighbors,
+        graph_counts=graph_counts,
         spec=spec,
     )
 

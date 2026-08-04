@@ -310,7 +310,7 @@ class PackedNeighborGraph:
         sender: torch.Tensor,
         edge_order: torch.Tensor,
         relation_id: torch.Tensor | None,
-        row_spans: tuple[tuple[int, int], ...],
+        row_spans: tuple[tuple[int, int], ...] | None,
         reverse_row_ptr: torch.Tensor | None,
         reverse_edge_order: torch.Tensor | None,
         degree: torch.Tensor | None,
@@ -453,7 +453,7 @@ class PackedNeighborGraph:
                 non_blocking=non_blocking,
             ),
             relation_id=move(self.relation_id),
-            row_spans=self._require_row_spans(),
+            row_spans=self.row_spans,
             reverse_row_ptr=move(self.reverse_row_ptr),
             reverse_edge_order=move(self.reverse_edge_order),
             degree=move(self.degree),
@@ -464,12 +464,6 @@ class PackedNeighborGraph:
             ell_sender=move(self.ell_sender),
             ell_mask=move(self.ell_mask),
         )
-
-    def _require_row_spans(self) -> tuple[tuple[int, int], ...]:
-        if self.row_spans is None:
-            raise RuntimeError("validated packed graph is missing row spans")
-        return self.row_spans
-
 
 def build_receiver_csr(
     edge_index: torch.Tensor,
@@ -589,6 +583,95 @@ def build_receiver_csr(
     )
 
 
+def _build_receiver_csr_from_major(
+    receiver: torch.Tensor,
+    sender: torch.Tensor,
+    *,
+    num_nodes: int,
+    edge_relation_id: torch.Tensor | None = None,
+    prefer_int32: bool = True,
+) -> PackedNeighborGraph:
+    """Build trusted CSR from an already receiver-major edge stream.
+
+    Automatic radius discovery owns both tensors and guarantees their range,
+    device, and stable receiver-major ordering.  Keeping this constructor
+    private lets that path form CSR offsets directly instead of sending its
+    output through :func:`build_receiver_csr` and sorting receivers again.
+    """
+
+    _validate_pack_controls(
+        num_nodes=num_nodes,
+        prefer_int32=prefer_int32,
+        build_ell=False,
+        ell_max_degree=64,
+        ell_max_padding_ratio=8.0,
+        ell_max_elements=16_777_216,
+    )
+    if not isinstance(receiver, torch.Tensor) or not isinstance(sender, torch.Tensor):
+        raise TypeError("receiver and sender must be tensors")
+    if receiver.ndim != 1 or sender.shape != receiver.shape:
+        raise ValueError("receiver and sender must be equal-length vectors")
+    if receiver.device != sender.device:
+        raise ValueError("receiver and sender must share one device")
+    if receiver.dtype not in _INTEGER_DTYPES or sender.dtype not in _INTEGER_DTYPES:
+        raise TypeError("receiver and sender must use integer dtypes")
+    if edge_relation_id is not None:
+        if not isinstance(edge_relation_id, torch.Tensor):
+            raise TypeError("edge_relation_id must be a tensor")
+        if edge_relation_id.shape != receiver.shape:
+            raise ValueError("edge_relation_id must have one relation per edge")
+        if edge_relation_id.device != receiver.device:
+            raise ValueError("edge_relation_id and edges must share one device")
+        if edge_relation_id.dtype not in _INTEGER_DTYPES:
+            raise TypeError("edge_relation_id must use an integer dtype")
+
+    receiver_long = receiver.to(dtype=torch.long)
+    sender_long = sender.to(dtype=torch.long)
+    num_edges = receiver_long.numel()
+    index_dtype = _select_index_dtype(
+        num_nodes=num_nodes,
+        num_edges=num_edges,
+        prefer_int32=prefer_int32,
+    )
+    row_ptr = _row_ptr(
+        receiver_long,
+        num_nodes=num_nodes,
+        dtype=index_dtype,
+    )
+    edge_order = torch.arange(
+        num_edges,
+        device=receiver.device,
+        dtype=index_dtype,
+    )
+    return PackedNeighborGraph._from_trusted(
+        num_nodes=num_nodes,
+        row_ptr=row_ptr,
+        sender=sender_long.to(dtype=index_dtype),
+        edge_order=edge_order,
+        relation_id=(
+            None
+            if edge_relation_id is None
+            else edge_relation_id.to(dtype=index_dtype)
+        ),
+        # Legacy host row spans are not consumed by the tensor kernels. Keep
+        # them lazy so GPU radius discovery does not synchronize row_ptr back
+        # to the CPU merely to duplicate CSR offsets as Python tuples.
+        row_spans=None,
+        reverse_row_ptr=None,
+        reverse_edge_order=None,
+        # Degree summaries were only diagnostic inputs for retired backend
+        # routing. Omitting them avoids a GPU ``max().item()`` synchronization
+        # in the automatic-radius hot path.
+        degree=None,
+        degree_histogram=None,
+        degree_bucket=None,
+        max_degree=None,
+        degree_skew=None,
+        ell_sender=None,
+        ell_mask=None,
+    )
+
+
 def build_reverse_csr(packed: PackedNeighborGraph) -> PackedNeighborGraph:
     """Attach sender-major reverse CSR to a validated receiver plan."""
     if not isinstance(packed, PackedNeighborGraph):
@@ -610,7 +693,7 @@ def build_reverse_csr(packed: PackedNeighborGraph) -> PackedNeighborGraph:
         sender=packed.sender,
         edge_order=packed.edge_order,
         relation_id=packed.relation_id,
-        row_spans=packed._require_row_spans(),
+        row_spans=packed.row_spans,
         reverse_row_ptr=reverse_row_ptr,
         reverse_edge_order=reverse_edge_order_long.to(dtype=packed.index_dtype),
         degree=packed.degree,

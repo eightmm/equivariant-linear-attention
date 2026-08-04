@@ -82,9 +82,11 @@ layout and radius-discovery constants while enforcing component additivity.
 
 ## Backends
 
-PyTorch is the numerical reference. Static graph shapes can be passed to
-`torch.compile(model)`; repository benchmarks may separately time a private
-prepared stack. Triton is an explicit optional backend whose current value is
+PyTorch is the numerical reference. `prepare_for_inference(...,
+compile_model=True)` isolates compilation to the private numerical core;
+repository benchmarks may separately time a private prepared stack. Compiler
+failure warns and falls back to exact eager execution. Triton is an explicit
+optional backend whose current value is
 primarily memory reduction; backend selection does not
 change the equations or complexity class. Higher-order autograd workloads remain
 on eager execution unless separately validated.

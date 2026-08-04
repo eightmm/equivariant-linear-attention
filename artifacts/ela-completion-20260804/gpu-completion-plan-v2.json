@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "experiment": "ela_cuda_completion_profile",
+  "status": "schema_only",
+  "created_at_utc": "2026-08-04T09:55:33.256214+00:00",
+  "git": {
+    "sha": "29241e9c0ee1bafb5ae19b19a36d765cc9379916",
+    "branch": "main",
+    "dirty": true
+  },
+  "source_manifest": {
+    "path": "artifacts/ela-completion-20260804/source-manifest-pre-gpu.json",
+    "manifest_sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0",
+    "combined_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
+    "file_count": 90,
+    "verified_against_current_bytes": true
+  },
+  "device": {
+    "requested": "cuda",
+    "actual": null,
+    "name": null,
+    "capability": null
+  },
+  "budget_contract": {
+    "target_wall_time_minutes_lt": 10,
+    "target_peak_allocated_gib_lt": 16,
+    "defaults_are_bounded": true,
+    "claim": "hard per-lane timed peak-allocation acceptance gate"
+  },
+  "timing_contract": {
+    "raw_samples": true,
+    "statistics": [
+      "median_ms",
+      "p95_ms",
+      "min_ms",
+      "max_ms"
+    ],
+    "cuda_events": true,
+    "synchronized_wall_clock": true,
+    "alternating_lane_order": true,
+    "peak_metric": "torch.cuda.max_memory_allocated",
+    "peak_baseline": "after optional lane setup and device synchronization"
+  },
+  "acceptance_contract": {
+    "trusted_prepared_cache": {
+      "prepared_object_identity_reused": true,
+      "immutable_trusted_prepared_admitted": true,
+      "packed_template_identity_reused": true,
+      "unsealed_dlpack_alias_invalidates_cache": true,
+      "peak_allocated_bytes_lt": 17179869184
+    },
+    "ragged_global": {
+      "transport_relative_l2_max": 0.05,
+      "balanced_relative_l2_max": 0.05,
+      "native_over_segmented_inference_median_max": 1.0,
+      "integrated_native_calls_exact": 1,
+      "dispatch_vs_direct_max_abs": 0.0,
+      "peak_allocated_bytes_lt": 17179869184
+    },
+    "radius_ingestion": {
+      "topology_equal": true,
+      "output_max_abs_error": 1e-05,
+      "output_relative_l2_error": 1e-05,
+      "latency_promotion_gate": null,
+      "peak_allocated_bytes_lt": 17179869184
+    },
+    "triton_training_local": {
+      "maximum_relative_l2": 0.001,
+      "maximum_absolute_error": 0.005,
+      "complete_fused_dispatch_proven": true,
+      "parameter_gradient_name_sets_equal": true,
+      "peak_allocated_bytes_lt": 17179869184
+    },
+    "compiled_numerical_core": {
+      "fallback_allowed": false,
+      "fallback_warning_allowed": false,
+      "cold_unique_graph_delta_min": 1,
+      "warm_unique_graph_delta": 0,
+      "same_shape_new_topology_unique_graph_delta": 0,
+      "maximum_absolute_error": 0.001,
+      "compiled_over_eager_inference_median_max": 1.0,
+      "peak_allocated_bytes_lt": 17179869184
+    }
+  },
+  "config": {
+    "seed": 20260804,
+    "warmup": 3,
+    "repeats": 7,
+    "cache_graphs": 8,
+    "cache_nodes_per_graph": 128,
+    "ragged_counts": [
+      257,
+      509,
+      1021,
+      2047
+    ],
+    "ragged_heads": 4,
+    "ragged_feature_width": 32,
+    "ragged_value_width": 33,
+    "radius_graphs": 8,
+    "radius_nodes_per_graph": 192,
+    "radius_cutoff": 1.25,
+    "radius_max_neighbors": 32,
+    "training_nodes": 1024,
+    "training_degree": 32,
+    "training_width": 64,
+    "training_depth": 2,
+    "compile_nodes": 256,
+    "compile_degree": 16,
+    "compile_width": 32,
+    "compile_depth": 2,
+    "compile_shape_delta": 32,
+    "compile_mode": "reduce-overhead"
+  },
+  "lanes": {
+    "trusted_prepared_cache": {
+      "status": "planned",
+      "scope": "public explicit-immutable trusted reuse and safe unsealed cache invalidation"
+    },
+    "ragged_global": {
+      "status": "planned",
+      "scope": "private BF16 grouped-MM and segmented global kernels"
+    },
+    "radius_ingestion": {
+      "status": "planned",
+      "scope": "public automatic radius and explicit COO ingestion"
+    },
+    "triton_training_local": {
+      "status": "planned",
+      "scope": "private prepared complete forward+backward backend comparison"
+    },
+    "compiled_numerical_core": {
+      "status": "planned",
+      "scope": "public wrapper around private compiled numerical core"
+    }
+  },
+  "failures": []
+}

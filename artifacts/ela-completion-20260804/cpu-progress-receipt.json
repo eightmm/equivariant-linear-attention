@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-08-04T09:56:15Z",
+  "status": "cpu_evidence_complete_gpu_execution_deferred",
+  "source_manifest": {
+    "path": "source-manifest-pre-gpu.json",
+    "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0",
+    "combined_source_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
+    "file_count": 90
+  },
+  "strict_cpu_gate": {
+    "path": "fast-gate-pre-gpu.log",
+    "sha256": "5334b52c0787e25280a52a6d2dd3ce5fa35635bf3901d73a836405dc7e89ee68",
+    "passed": true,
+    "tests_passed": 333,
+    "tests_skipped": 28,
+    "coverage_percent": 80.24,
+    "coverage_required_percent": 80.01,
+    "wheel_smoke": "passed",
+    "ml_smoke": "passed"
+  },
+  "recorded_cpu_evidence": [
+    "cpu-end-to-end-benchmark-recorded.json",
+    "relation-transport-ablation-cpu-recorded.json",
+    "architecture-lane-ablations-cpu-recorded.json"
+  ],
+  "cuda_protocol": {
+    "path": "gpu-completion-plan-v2.json",
+    "sha256": "3c0031243612546a454ee7ff54e86a15c0b9d67e090b11a01b820be461789c3f",
+    "numeric_thresholds_frozen": true,
+    "per_lane_peak_allocated_bytes_lt": 17179869184,
+    "source_bytes_verified_at_execution": true,
+    "executed": false
+  },
+  "preliminary_bundle": {
+    "path": "manifest.json",
+    "validation": "artifact bundle: valid"
+  },
+  "failed_attempts": [
+    {
+      "id": "accidental-preapproval-cuda-tests",
+      "duration_seconds": 6.3,
+      "outcome": "4 CUDA tests passed and 1 overstrict provenance object-identity assertion failed",
+      "positive_evidence_admitted": false,
+      "resolution": "value-equality contract corrected; no training or data access"
+    },
+    {
+      "id": "accidental-preapproval-cache-audit-cuda-test",
+      "duration_seconds": 2.05,
+      "outcome": "one four-node CUDA cache forward passed after a broad delegated pytest name filter selected it",
+      "positive_evidence_admitted": false,
+      "resolution": "immediately disclosed; no training or data access; worker stopped from further commands"
+    },
+    {
+      "id": "strict-coverage-gate-first-run",
+      "outcome": "79.99% below unchanged 80.01% threshold",
+      "resolution": "meaningful branch test added; retry reached 80.02%"
+    }
+  ],
+  "execution_deferral": {
+    "reason": "The user explicitly reserved the local GPU for another task.",
+    "gpu_or_data_command_executed_after_deferral": false,
+    "packet_sha256": "28f2dac1d5bbf4e8616b6a9c911d706b6adb0e2c3fadb41cb365f3bd7094608c",
+    "dry_run_phases_validated": ["gpu", "data", "finalize"]
+  },
+  "next_action": "Do not run G1-G5. Resume only after a future explicit user instruction that the GPU is available; authorize the GPU-only and data phases separately."
+}

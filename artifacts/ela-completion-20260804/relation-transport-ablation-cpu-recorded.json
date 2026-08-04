@@ -1,0 +1,104 @@
+{
+  "ablation": {
+    "candidate": "all ELA parameters trainable",
+    "control": "only relation modulation frozen at identity",
+    "control_frozen_parameters": [
+      "core.blocks.0.relation_score_bias",
+      "core.blocks.0.relation_radial_scale",
+      "core.blocks.0.relation_value_gate"
+    ],
+    "shared_inputs": true,
+    "shared_relation_cutoffs": true,
+    "shared_topology": true
+  },
+  "arms": {
+    "candidate": {
+      "best_pre_update_loss": 0.001312274020165205,
+      "elapsed_seconds": 6.517237781023141,
+      "final_loss": 0.009200969710946083,
+      "final_prediction_mean_by_relation": {
+        "0": -0.9005374908447266,
+        "1": 0.9077549576759338
+      },
+      "initial_loss": 1.0005725622177124,
+      "mean_step_ms": 101.83184032848658,
+      "steps": 64,
+      "total_parameters": 6788,
+      "trainable_parameters": 6788
+    },
+    "control": {
+      "best_pre_update_loss": 1.0,
+      "elapsed_seconds": 6.355533697991632,
+      "final_loss": 1.0000203847885132,
+      "final_prediction_mean_by_relation": {
+        "0": -0.00450989231467247,
+        "1": -0.004509895108640194
+      },
+      "initial_loss": 1.0005725622177124,
+      "mean_step_ms": 99.30521403111925,
+      "steps": 64,
+      "total_parameters": 6788,
+      "trainable_parameters": 6766
+    }
+  },
+  "deterministic_algorithms": true,
+  "device": "cpu",
+  "dtype": "float32",
+  "experiment": "relation_conditioned_transport_paired_ablation",
+  "initial_identity": {
+    "candidate_schema_sha256": "d0763e306aadf0b324f1987bbacaf91da2f76c9ca151318700a5e5204d62dfc5",
+    "candidate_state_sha256": "c4954787f63266652ce7d0fc3c95de6746d6942086cd96199def54db2cac1f22",
+    "control_schema_sha256": "d0763e306aadf0b324f1987bbacaf91da2f76c9ca151318700a5e5204d62dfc5",
+    "control_state_sha256": "c4954787f63266652ce7d0fc3c95de6746d6942086cd96199def54db2cac1f22",
+    "full_state_equal": true,
+    "initial_output_max_abs": 0.0,
+    "parameter_schema_equal": true,
+    "task_tensors_equal": true
+  },
+  "model": {
+    "depth": 1,
+    "input_irreps": "3x0e",
+    "local_readout_bootstrap": 0.1,
+    "opened_parameters": [
+      "core.blocks.0.local_scalar_out.weight"
+    ],
+    "output_irreps": "1x0e",
+    "relation_parameter_names": [
+      "core.blocks.0.relation_score_bias",
+      "core.blocks.0.relation_radial_scale",
+      "core.blocks.0.relation_value_gate"
+    ],
+    "width": 16
+  },
+  "paired_outcome": {
+    "candidate_lower_final_loss": true,
+    "candidate_minus_control_final_loss": -0.9908194150775671,
+    "candidate_to_control_final_loss_ratio": 0.009200782154947698
+  },
+  "relation_parameter_max_abs_after_training": {
+    "candidate": {
+      "core.blocks.0.relation_radial_scale": 0.26325148344039917,
+      "core.blocks.0.relation_score_bias": 0.2605260908603668,
+      "core.blocks.0.relation_value_gate": 0.28739672899246216
+    },
+    "control": {
+      "core.blocks.0.relation_radial_scale": 0.0,
+      "core.blocks.0.relation_score_bias": 0.0,
+      "core.blocks.0.relation_value_gate": 0.0
+    }
+  },
+  "schema_version": 1,
+  "scope": "synthetic mechanics ablation; not downstream accuracy, generalization, or model-superiority evidence",
+  "seed": 123,
+  "task": {
+    "edges_per_graph": 12,
+    "graphs": 32,
+    "nodes_per_graph": 4,
+    "only_varying_input": "edge_type",
+    "relation_types": 2,
+    "sha256": "dea52b12d59d0215037e5ca9c0dad3be6b55a3a9610304bca17c25ec13ccb913",
+    "shared_cutoff": 4.0,
+    "target": "-1 for relation 0; +1 for relation 1"
+  },
+  "threads": 1
+}

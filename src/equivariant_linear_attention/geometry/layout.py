@@ -343,13 +343,12 @@ class PackedGraphLayout:
 
         if backend == "outer_scatter":
             return "outer_scatter"
-        if self.structure == "extreme":
-            return "outer_scatter"
         feature_lane = {
             "direct": "direct",
             "padded": "padded_bmm",
             "bucketed": "bucket_bmm",
             "ragged": "ragged_gemm",
+            "extreme": "ragged_gemm",
         }[self.structure]
         if backend == "feature_gemm":
             return feature_lane
@@ -753,27 +752,34 @@ def pack_graph_layout(
     for count in count_values:
         graph_spans.append((span_start, count))
         span_start += count
-    return PackedGraphLayout(
-        batch=batch,
-        graph_counts=resolved_counts,
-        graph_ptr=graph_ptr,
-        order=order,
-        inverse_order=inverse_order,
-        num_nodes=num_nodes,
-        num_graphs=num_graphs,
-        max_nodes=max_nodes,
-        structure=structure,
-        graph_spans=tuple(graph_spans),
-        dense_index=dense_index,
-        dense_mask=dense_mask,
-        buckets=buckets,
-        packed_slots=packed_slots,
-        maximum_padding_ratio=float(maximum_padding_ratio),
-        maximum_bucket_padding_ratio=float(maximum_bucket_padding_ratio),
-        maximum_buckets=maximum_buckets,
-        extreme_size_ratio=float(extreme_size_ratio),
-        minimum_extreme_graphs=minimum_extreme_graphs,
-    )
+    fields = {
+        "batch": batch,
+        "graph_counts": resolved_counts,
+        "graph_ptr": graph_ptr,
+        "order": order,
+        "inverse_order": inverse_order,
+        "num_nodes": num_nodes,
+        "num_graphs": num_graphs,
+        "max_nodes": max_nodes,
+        "structure": structure,
+        "graph_spans": tuple(graph_spans),
+        "dense_index": dense_index,
+        "dense_mask": dense_mask,
+        "buckets": buckets,
+        "packed_slots": packed_slots,
+        "maximum_padding_ratio": float(maximum_padding_ratio),
+        "maximum_bucket_padding_ratio": float(maximum_bucket_padding_ratio),
+        "maximum_buckets": maximum_buckets,
+        "extreme_size_ratio": float(extreme_size_ratio),
+        "minimum_extreme_graphs": minimum_extreme_graphs,
+    }
+    if assume_grouped:
+        # ``graph_counts`` is the collation provenance for this private path.
+        # Shape/positivity/total checks above are sufficient; replaying the
+        # public semantic validator would scan the same batch and rebuild the
+        # same dense/bucket metadata a second time.
+        return PackedGraphLayout._from_trusted(**fields)
+    return PackedGraphLayout(**fields)
 
 
 def _validate_batch_tensor(batch: torch.Tensor) -> None:
