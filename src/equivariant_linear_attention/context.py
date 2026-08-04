@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite, pi
-from typing import Literal, Protocol
 
 import torch
 from torch import nn
@@ -19,31 +18,14 @@ _INTEGER_DTYPES = frozenset(
         torch.uint8,
     }
 )
-CenteringMode = Literal["none", "graph", "selected"]
-
-
-class GeometryRebuilder(Protocol):
-    """Rebuild a prepared sparse graph after a coordinate update."""
-
-    def __call__(
-        self,
-        positions: torch.Tensor,
-        batch: torch.Tensor,
-    ) -> Prepared3DGraph: ...
 
 
 @dataclass(frozen=True, slots=True)
 class ELAFeatures:
-    """Optional capabilities of the single canonical ELA architecture.
-
-    A zero dimension disables the corresponding invariant input completely.
-    Coordinate refinement only allocates a small zero-initialized polar head;
-    it still runs only when a :class:`RefinementRequest` is supplied.
-    """
+    """Optional invariant inputs of the one canonical ELA architecture."""
 
     condition_dim: int = 0
     order_dim: int = 0
-    coordinate_refinement: bool = False
 
     def __post_init__(self) -> None:
         for name in ("condition_dim", "order_dim"):
@@ -52,8 +34,6 @@ class ELAFeatures:
                 raise TypeError(f"{name} must be an integer")
             if value < 0:
                 raise ValueError(f"{name} must be nonnegative")
-        if not isinstance(self.coordinate_refinement, bool):
-            raise TypeError("coordinate_refinement must be a bool")
 
     @staticmethod
     def order_bands(width: int) -> int:
@@ -63,9 +43,6 @@ class ELAFeatures:
         if self.order_dim == 0:
             return 0
         bands = self.order_bands(width)
-        # Per coordinate: normalized coordinate, log scale, periodic flag,
-        # sine/cosine Fourier bands. Two final scalars are log group size and
-        # the runtime enabled flag.
         return self.order_dim * (3 + 2 * bands) + 2
 
     def total_condition_dim(self, width: int) -> int:
@@ -75,24 +52,13 @@ class ELAFeatures:
         return {
             "invariant_condition_dim": self.condition_dim,
             "semantic_order_dim": self.order_dim,
-            "order_fourier_bands": (
-                self.order_bands(width) if self.order_dim else 0
-            ),
-            "coordinate_refinement": self.coordinate_refinement,
-            "activation_policy": "runtime_context_presence",
+            "order_fourier_bands": self.order_bands(width) if self.order_dim else 0,
         }
 
 
 @dataclass(frozen=True)
 class OrderContext:
-    """Semantic order coordinates attached to nodes.
-
-    Coordinates are labels in an abstract index space, not Cartesian positions
-    and not tensor row indices. They must be permuted together with node data.
-    ``group_index`` splits one graph into independently normalized ordered
-    components. ``periods[k] > 0`` marks a cyclic coordinate. ``enabled`` allows
-    ordered and unordered node types to coexist in one graph.
-    """
+    """Semantic sequence/grid coordinates attached to nodes."""
 
     coordinates: torch.Tensor
     group_index: torch.Tensor | None = None
@@ -107,7 +73,7 @@ class OrderContext:
         segment_id: torch.Tensor | None = None,
         period: float | None = None,
         enabled: torch.Tensor | None = None,
-    ) -> OrderContext:
+    ) -> "OrderContext":
         if rank.ndim != 1:
             raise ValueError("sequence rank must have shape (N,)")
         periods = None
@@ -131,7 +97,7 @@ class OrderContext:
         segment_id: torch.Tensor | None = None,
         periods: torch.Tensor | None = None,
         enabled: torch.Tensor | None = None,
-    ) -> OrderContext:
+    ) -> "OrderContext":
         return cls(
             coordinates=coordinates,
             group_index=segment_id,
@@ -146,83 +112,36 @@ class OrderContext:
         *,
         segment_id: torch.Tensor | None = None,
         enabled: torch.Tensor | None = None,
-    ) -> OrderContext:
-        return cls.sequence(
-            rank,
-            segment_id=segment_id,
-            enabled=enabled,
-        )
+    ) -> "OrderContext":
+        return cls.sequence(rank, segment_id=segment_id, enabled=enabled)
 
     def to(
         self,
         device: torch.device | str,
         *,
         non_blocking: bool = False,
-    ) -> OrderContext:
+    ) -> "OrderContext":
         target = torch.device(device)
         return OrderContext(
-            coordinates=self.coordinates.to(
-                device=target,
-                non_blocking=non_blocking,
-            ),
+            coordinates=self.coordinates.to(device=target, non_blocking=non_blocking),
             group_index=None
             if self.group_index is None
-            else self.group_index.to(
-                device=target,
-                non_blocking=non_blocking,
-            ),
+            else self.group_index.to(device=target, non_blocking=non_blocking),
             periods=None
             if self.periods is None
-            else self.periods.to(
-                device=target,
-                non_blocking=non_blocking,
-            ),
+            else self.periods.to(device=target, non_blocking=non_blocking),
             enabled=None
             if self.enabled is None
-            else self.enabled.to(
-                device=target,
-                non_blocking=non_blocking,
-            ),
+            else self.enabled.to(device=target, non_blocking=non_blocking),
         )
 
 
 @dataclass(frozen=True)
-class RefinementRequest:
-    """Runtime request for bounded outer-loop coordinate refinement."""
-
-    steps: int = 1
-    max_step: float = 0.25
-    centering: CenteringMode = "selected"
-    update_mask: torch.Tensor | None = None
-    graph_rebuilder: GeometryRebuilder | None = None
-
-    def __post_init__(self) -> None:
-        if isinstance(self.steps, bool) or not isinstance(self.steps, int):
-            raise TypeError("steps must be an integer")
-        if self.steps <= 0:
-            raise ValueError("steps must be positive")
-        if isinstance(self.max_step, bool) or not isinstance(
-            self.max_step, (int, float)
-        ):
-            raise TypeError("max_step must be a real number")
-        if not isfinite(float(self.max_step)) or float(self.max_step) <= 0.0:
-            raise ValueError("max_step must be finite and positive")
-        if self.centering not in {"none", "graph", "selected"}:
-            raise ValueError("centering must be none, graph, or selected")
-
-
-@dataclass(frozen=True)
 class ELAContext:
-    """Optional runtime inputs for the single ELA model.
-
-    ``condition`` is an invariant ``0e`` tensor. ``order`` supplies semantic
-    sequence/grid/topology coordinates. ``refinement`` requests coordinate
-    mutation. Omitting a field disables that capability for the call.
-    """
+    """Optional invariant runtime inputs carried by :class:`ELAGraph`."""
 
     condition: torch.Tensor | None = None
     order: OrderContext | None = None
-    refinement: RefinementRequest | None = None
 
 
 class FourierOrderEncoder(nn.Module):
@@ -406,7 +325,5 @@ __all__ = [
     "ELAContext",
     "ELAFeatures",
     "FourierOrderEncoder",
-    "GeometryRebuilder",
     "OrderContext",
-    "RefinementRequest",
 ]

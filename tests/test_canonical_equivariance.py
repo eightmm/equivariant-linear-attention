@@ -3,13 +3,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention import (
-    ELA,
-    ELABatch,
+from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention.irreps import pack_irreps, split_irreps
+from equivariant_linear_attention.irreps import (
     IrrepLayout,
     matrix_to_st5,
-    pack_irreps,
-    split_irreps,
     st5_to_matrix,
 )
 
@@ -135,13 +133,25 @@ def _learned_model(
         width=width,
         depth=depth,
         cutoff=10.0,
-        num_rbf=8,
     ).double()
     with torch.no_grad():
         for layer in model.layers:
-            layer.branch_fusion.router[-1].weight.normal_(mean=0.0, std=0.1)
-            layer.branch_fusion.router[-1].bias.normal_(mean=0.0, std=0.1)
-            layer.branch_fusion.balance_strength.normal_(mean=0.0, std=0.2)
+            for name in (
+                "local_scalar_out",
+                "local_odd_out",
+                "local_polar_out",
+                "local_axial_out",
+                "local_even_tensor_out",
+                "local_odd_tensor_out",
+                "local_chiral_axial_out",
+                "local_chiral_tensor_out",
+                "local_mass_out",
+            ):
+                getattr(layer, name).weight.normal_(mean=0.0, std=0.03)
+            layer.local_radial_value.weight.normal_(mean=0.0, std=0.02)
+            layer.raw_odd_alignment.normal_(mean=-1.0, std=0.1)
+            layer.raw_global_radial_alignment.normal_(mean=-1.0, std=0.1)
+            layer.second_moment_chiral_mix.fill_(0.1)
     return model.eval()
 
 
@@ -159,18 +169,16 @@ def test_learned_ela_obeys_full_o3_and_translation() -> None:
 
     with torch.inference_mode():
         reference = model.split_output(
-            model(ELABatch(features, positions, edge_index=edge_index))[
-                "node_irreps"
-            ]
+            model(ELAGraph(features, positions, edge_index=edge_index)).x
         )
         actual = model.split_output(
             model(
-                ELABatch(
+                ELAGraph(
                     features,
                     positions @ orthogonal.T + translation,
                     edge_index=edge_index,
                 )
-            )["node_irreps"]
+            ).x
         )
 
     determinant = torch.linalg.det(orthogonal)
@@ -217,15 +225,15 @@ def test_ela_is_node_permutation_equivariant() -> None:
 
     with torch.inference_mode():
         reference = model(
-            ELABatch(features, positions, edge_index=edge_index)
-        )["node_irreps"]
+            ELAGraph(features, positions, edge_index=edge_index)
+        ).x
         actual = model(
-            ELABatch(
+            ELAGraph(
                 features[permutation],
                 positions[permutation],
                 edge_index=inverse[edge_index],
             )
-        )["node_irreps"]
+        ).x
     torch.testing.assert_close(
         actual,
         reference[permutation],
@@ -255,15 +263,15 @@ def test_ela_obeys_generic_o3_with_non_scalar_inputs(
 
     with torch.inference_mode():
         reference = model(
-            ELABatch(features, positions, edge_index=edge_index)
-        )["node_irreps"]
+            ELAGraph(features, positions, edge_index=edge_index)
+        ).x
         actual = model(
-            ELABatch(
+            ELAGraph(
                 _transform_irreps(model.config.input_layout, features, orthogonal),
                 positions @ orthogonal.T + translation,
                 edge_index=edge_index,
             )
-        )["node_irreps"]
+        ).x
     expected = _transform_irreps(
         model.config.output_layout,
         reference,
@@ -287,16 +295,15 @@ def test_ela_is_invariant_to_sparse_edge_order() -> None:
 
     with torch.inference_mode():
         reference = model(
-            ELABatch(features, positions, edge_index=edge_index)
+            ELAGraph(features, positions, edge_index=edge_index)
         )
         actual = model(
-            ELABatch(features, positions, edge_index=permuted_edges)
+            ELAGraph(features, positions, edge_index=permuted_edges)
         )
+    torch.testing.assert_close(actual.x, reference.x, atol=2e-10, rtol=2e-10)
+    assert actual.graph_x is not None and reference.graph_x is not None
     torch.testing.assert_close(
-        actual["node_irreps"], reference["node_irreps"], atol=2e-10, rtol=2e-10
-    )
-    torch.testing.assert_close(
-        actual["graph_irreps"], reference["graph_irreps"], atol=2e-10, rtol=2e-10
+        actual.graph_x, reference.graph_x, atol=2e-10, rtol=2e-10
     )
 
 
@@ -314,14 +321,14 @@ def test_ela_keeps_batched_graphs_isolated() -> None:
     )
     positions = torch.randn(2 * nodes_per_graph, 3, dtype=torch.float64)
     edge_index = _batched_complete_edges(nodes_per_graph, 2)
-    ptr = torch.tensor([0, nodes_per_graph, 2 * nodes_per_graph])
+    batch = torch.repeat_interleave(torch.arange(2), nodes_per_graph)
 
     with torch.inference_mode():
         reference = model(
-            ELABatch(features, positions, ptr=ptr, edge_index=edge_index)
+            ELAGraph(features, positions, batch=batch, edge_index=edge_index)
         )
         isolated = model(
-            ELABatch(
+            ELAGraph(
                 features[:nodes_per_graph],
                 positions[:nodes_per_graph],
                 edge_index=_complete_edges(nodes_per_graph),
@@ -337,29 +344,30 @@ def test_ela_keeps_batched_graphs_isolated() -> None:
             + torch.tensor([11.0, -5.0, 2.0], dtype=torch.float64)
         )
         changed = model(
-            ELABatch(
+            ELAGraph(
                 changed_features,
                 changed_positions,
-                ptr=ptr,
+                batch=batch,
                 edge_index=edge_index,
             )
         )
 
     torch.testing.assert_close(
-        reference["node_irreps"][:nodes_per_graph],
-        isolated["node_irreps"],
+        reference.x[:nodes_per_graph],
+        isolated.x,
+        atol=2e-10,
+        rtol=2e-10,
+    )
+    assert reference.graph_x is not None and isolated.graph_x is not None
+    torch.testing.assert_close(
+        reference.graph_x[0],
+        isolated.graph_x[0],
         atol=2e-10,
         rtol=2e-10,
     )
     torch.testing.assert_close(
-        reference["graph_irreps"][0],
-        isolated["graph_irreps"][0],
-        atol=2e-10,
-        rtol=2e-10,
-    )
-    torch.testing.assert_close(
-        changed["node_irreps"][:nodes_per_graph],
-        reference["node_irreps"][:nodes_per_graph],
+        changed.x[:nodes_per_graph],
+        reference.x[:nodes_per_graph],
         atol=2e-10,
         rtol=2e-10,
     )

@@ -15,4 +15,14 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      - name: Verify canonical import surface
+        run: |
+          uv run python - <<'PY'
+          import equivariant_linear_attention as ela
+          from equivariant_linear_attention import ELA, ELAGraph
+
+          assert ELA is not None
+          assert ELAGraph is not None
+          assert set(ela.__all__) == {"ELA", "ELAGraph"}
+          PY
       - run: scripts/check.sh fast

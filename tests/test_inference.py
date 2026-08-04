@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch import nn
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELAGraph
 from equivariant_linear_attention.inference import (
     _AutocastInferenceModule,
     _resolve_dtype,
@@ -11,7 +11,7 @@ from equivariant_linear_attention.inference import (
 )
 
 
-def _fixture() -> tuple[ELA, ELABatch]:
+def _fixture() -> tuple[ELA, ELAGraph]:
     model = ELA(
         input_irreps="3x0e",
         output_irreps="1x0e",
@@ -20,14 +20,14 @@ def _fixture() -> tuple[ELA, ELABatch]:
         cutoff=10.0,
     )
     nodes = 3
-    receiver = torch.arange(nodes).repeat_interleave(nodes)
     sender = torch.arange(nodes).repeat(nodes)
-    batch = ELABatch(
-        node_irreps=torch.randn(nodes, 3),
-        positions=torch.randn(nodes, 3),
-        edge_index=torch.stack([receiver, sender]),
+    receiver = torch.arange(nodes).repeat_interleave(nodes)
+    graph = ELAGraph(
+        x=torch.randn(nodes, 3),
+        pos=torch.randn(nodes, 3),
+        edge_index=torch.stack([sender, receiver]),
     )
-    return model, batch
+    return model, graph
 
 
 def test_auto_inference_keeps_parameters_in_float32_on_cpu() -> None:
@@ -39,7 +39,8 @@ def test_auto_inference_keeps_parameters_in_float32_on_cpu() -> None:
     assert not any(parameter.requires_grad for parameter in prepared.parameters())
     with torch.inference_mode():
         output = prepared(batch)
-    assert torch.isfinite(output["graph_irreps"]).all()
+    assert output.graph_x is not None
+    assert torch.isfinite(output.graph_x).all()
 
 
 def test_explicit_low_precision_inference_remains_available() -> None:

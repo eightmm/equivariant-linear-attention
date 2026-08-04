@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
 
-from .context import ELAContext, OrderContext, RefinementRequest
-from .packing import (
-    BatchLayout,
-    collate_graphs as _collate_mappings,
-    pack_edges,
-    pack_node_input,
-)
-from .geometry.prepared import Prepared3DGraph
+from .context import ELAContext, OrderContext
+from .geometry.prepared import PreparationSpec, Prepared3DGraph
 
 _INTEGER_DTYPES = frozenset(
     {torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8}
@@ -53,10 +46,7 @@ def _ptr_from_batch(batch: torch.Tensor, num_nodes: int) -> torch.Tensor:
     if bool((batch_long < 0).any().item()):
         raise ValueError("batch values must be nonnegative")
     if bool((batch_long[1:] < batch_long[:-1]).any().item()):
-        raise ValueError(
-            "ELABatch is graph-major; batch IDs must be nondecreasing. "
-            "Use ELABatch.collate or reorder nodes before construction."
-        )
+        raise ValueError("batch IDs must be nondecreasing")
     num_graphs = int(batch_long[-1].item()) + 1
     expected = torch.arange(num_graphs, device=batch.device)
     if not torch.equal(torch.unique_consecutive(batch_long), expected):
@@ -74,52 +64,26 @@ def _batch_from_ptr(ptr: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _flatten_order(
-    order: OrderContext | None,
-    layout: BatchLayout,
-) -> OrderContext | None:
-    if order is None:
-        return None
-    coordinates = layout.flatten_node_tensor(
-        order.coordinates,
-        name="order.coordinates",
-    )
-    group = None
-    if order.group_index is not None:
-        group = layout.flatten_node_tensor(
-            order.group_index,
-            name="order.group_index",
-        )
-    enabled = None
-    if order.enabled is not None:
-        enabled = layout.flatten_node_tensor(
-            order.enabled,
-            name="order.enabled",
-        )
-    return OrderContext(
-        coordinates=coordinates,
-        group_index=group,
-        periods=order.periods,
-        enabled=enabled,
-    )
-
-
-def _flatten_refinement(
-    refinement: RefinementRequest | None,
-    layout: BatchLayout,
-) -> RefinementRequest | None:
-    if refinement is None or refinement.update_mask is None:
-        return refinement
-    return RefinementRequest(
-        steps=refinement.steps,
-        max_step=refinement.max_step,
-        centering=refinement.centering,
-        update_mask=layout.flatten_node_tensor(
-            refinement.update_mask,
-            name="refinement.update_mask",
-        ),
-        graph_rebuilder=refinement.graph_rebuilder,
-    )
+def _interaction_batch(
+    sample_batch: torch.Tensor,
+    interaction_group: torch.Tensor | None,
+) -> torch.Tensor:
+    if interaction_group is None:
+        return sample_batch
+    if not isinstance(interaction_group, torch.Tensor):
+        raise TypeError("interaction_group must be a tensor")
+    if interaction_group.shape != sample_batch.shape:
+        raise ValueError("interaction_group must have shape (N,)")
+    if interaction_group.device != sample_batch.device:
+        raise ValueError("interaction_group and nodes must share one device")
+    if interaction_group.dtype not in _INTEGER_DTYPES:
+        raise TypeError("interaction_group must use an integer dtype")
+    value = interaction_group.to(dtype=torch.long)
+    if bool((value < 0).any().item()):
+        raise ValueError("interaction_group values must be nonnegative")
+    pair = torch.stack((sample_batch, value), dim=-1)
+    _, inverse = torch.unique(pair, dim=0, sorted=True, return_inverse=True)
+    return inverse.to(dtype=torch.long)
 
 
 def _move_order(
@@ -131,34 +95,13 @@ def _move_order(
     return None if order is None else order.to(device, non_blocking=non_blocking)
 
 
-def _move_refinement(
-    refinement: RefinementRequest | None,
-    device: torch.device,
-    *,
-    non_blocking: bool,
-) -> RefinementRequest | None:
-    if refinement is None:
-        return None
-    mask = refinement.update_mask
-    return RefinementRequest(
-        steps=refinement.steps,
-        max_step=refinement.max_step,
-        centering=refinement.centering,
-        update_mask=None
-        if mask is None
-        else mask.to(device=device, non_blocking=non_blocking),
-        graph_rebuilder=refinement.graph_rebuilder,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class ELABatch:
-    """The single public graph container consumed by :class:`ELA`.
+    """Private packed receiver-major execution representation.
 
-    Nodes are packed graph-major on one ragged axis. ``ptr`` stores graph
-    boundaries and ``edge_index`` is optional receiver/sender COO. Omitting
-    edges requests geometric radius candidates when the model prepares the
-    batch.
+    The public API is :class:`ELAGraph`. This class remains intentionally small
+    and internal so geometry preparation and numerical layers see one stable
+    tensor contract.
     """
 
     node_irreps: torch.Tensor
@@ -166,18 +109,23 @@ class ELABatch:
     ptr: torch.Tensor | None = None
     edge_index: torch.Tensor | None = None
     edge_relation_id: torch.Tensor | None = None
+    interaction_group: torch.Tensor | None = None
     condition: torch.Tensor | None = None
     order: OrderContext | None = None
-    refinement: RefinementRequest | None = None
+    update_mask: torch.Tensor | None = None
     target: torch.Tensor | None = None
     sample_ids: tuple[Any, ...] | None = None
-    _layout: BatchLayout | None = field(default=None, repr=False, compare=False)
     _prepared_graph: Prepared3DGraph | None = field(
         default=None,
         repr=False,
         compare=False,
     )
     _batch: torch.Tensor = field(init=False, repr=False, compare=False)
+    _interaction_batch: torch.Tensor = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         node = self.node_irreps
@@ -186,12 +134,12 @@ class ELABatch:
             raise ValueError("node_irreps must have shape (N,D)")
         if not isinstance(pos, torch.Tensor) or pos.shape != (node.shape[0], 3):
             raise ValueError("positions must have shape (N,3)")
+        if node.shape[0] == 0:
+            raise ValueError("packed graph requires at least one node")
         if node.device != pos.device:
             raise ValueError("node_irreps and positions must share one device")
         if not node.is_floating_point() or not pos.is_floating_point():
             raise TypeError("node_irreps and positions must be floating point")
-        if node.shape[0] == 0:
-            raise ValueError("ELABatch requires at least one node")
 
         ptr = self.ptr
         if ptr is None:
@@ -208,17 +156,22 @@ class ELABatch:
         if ptr.dtype not in {torch.int32, torch.int64}:
             raise TypeError("ptr must use int32 or int64")
         ptr_long = ptr.to(dtype=torch.long)
-        if ptr_long.numel() == 0 or int(ptr_long[0].item()) != 0:
-            raise ValueError("ptr must start at zero")
+        if ptr_long.numel() < 2 or int(ptr_long[0].item()) != 0:
+            raise ValueError("ptr must start at zero and contain a graph")
         if int(ptr_long[-1].item()) != node.shape[0]:
             raise ValueError("ptr must end at the packed node count")
-        if bool((ptr_long[1:] < ptr_long[:-1]).any().item()):
-            raise ValueError("ptr must be nondecreasing")
-        if ptr_long.numel() > 2 and bool(
-            (ptr_long[1:] == ptr_long[:-1]).any().item()
-        ):
-            raise ValueError("empty graphs are not supported in ELABatch")
-        object.__setattr__(self, "_batch", _batch_from_ptr(ptr_long))
+        if bool((ptr_long[1:] <= ptr_long[:-1]).any().item()):
+            raise ValueError("empty graphs are not supported")
+        batch = _batch_from_ptr(ptr_long)
+        object.__setattr__(self, "_batch", batch)
+        interaction_batch = _interaction_batch(batch, self.interaction_group)
+        object.__setattr__(self, "_interaction_batch", interaction_batch)
+        if self.interaction_group is not None:
+            object.__setattr__(
+                self,
+                "interaction_group",
+                self.interaction_group.to(dtype=torch.long),
+            )
 
         edge = self.edge_index
         if edge is not None:
@@ -232,64 +185,66 @@ class ELABatch:
                 raise TypeError(
                     "edge_index must be an integer tensor on the node device"
                 )
-            edge_long = edge.to(dtype=torch.long)
-            if edge_long.numel():
-                if bool((edge_long < 0).any().item()) or int(
-                    edge_long.max().item()
-                ) >= node.shape[0]:
+            edge = edge.to(dtype=torch.long)
+            if edge.numel():
+                if bool((edge < 0).any().item()) or int(edge.max().item()) >= node.shape[0]:
                     raise ValueError("edge_index contains an out-of-range node")
                 if not torch.equal(
-                    self._batch[edge_long[0]],
-                    self._batch[edge_long[1]],
+                    interaction_batch[edge[0]],
+                    interaction_batch[edge[1]],
                 ):
-                    raise ValueError("edges may not cross graph boundaries")
-            object.__setattr__(self, "edge_index", edge_long)
+                    raise ValueError(
+                        "edges may not cross graph or interaction-group boundaries"
+                    )
+            object.__setattr__(self, "edge_index", edge)
+
         relation = self.edge_relation_id
         if relation is not None:
             if edge is None:
                 raise ValueError("edge_relation_id requires edge_index")
-            if relation.shape != (self.edge_index.shape[1],):
+            if not isinstance(relation, torch.Tensor) or relation.shape != (
+                edge.shape[1],
+            ):
                 raise ValueError("edge_relation_id must have shape (E,)")
             if relation.device != node.device or relation.dtype not in _INTEGER_DTYPES:
                 raise TypeError(
                     "edge_relation_id must be an integer tensor on the node device"
                 )
-            object.__setattr__(
-                self,
-                "edge_relation_id",
-                relation.to(dtype=torch.long),
-            )
+            object.__setattr__(self, "edge_relation_id", relation.to(dtype=torch.long))
 
         if self.condition is not None and self.condition.device != node.device:
             raise ValueError("condition and nodes must share one device")
         if self.order is not None and self.order.coordinates.shape[0] != node.shape[0]:
             raise ValueError("order must contain one coordinate per packed node")
-        if (
-            self.refinement is not None
-            and self.refinement.update_mask is not None
-            and self.refinement.update_mask.shape != (node.shape[0],)
-        ):
-            raise ValueError("refinement update_mask must have shape (N,)")
+        if self.update_mask is not None:
+            if (
+                self.update_mask.shape != (node.shape[0],)
+                or self.update_mask.dtype != torch.bool
+            ):
+                raise ValueError("update_mask must be boolean with shape (N,)")
+            if self.update_mask.device != node.device:
+                raise ValueError("update_mask and nodes must share one device")
         if self.sample_ids is not None and len(self.sample_ids) != self.num_graphs:
             raise ValueError("sample_ids length must equal num_graphs")
-        if self._prepared_graph is not None:
-            graph = self._prepared_graph
-            if graph.num_nodes != node.shape[0] or graph.device != node.device:
-                raise ValueError("prepared graph does not match the batch")
-            if not torch.equal(graph.batch, self._batch):
-                raise ValueError("prepared graph membership does not match ptr")
 
-    @property
-    def x(self) -> torch.Tensor:
-        return self.node_irreps
-
-    @property
-    def pos(self) -> torch.Tensor:
-        return self.positions
+        prepared = self._prepared_graph
+        if prepared is not None:
+            if prepared.num_nodes != node.shape[0] or prepared.device != node.device:
+                raise ValueError("prepared graph does not match the packed graph")
+            if not torch.equal(prepared.batch, interaction_batch):
+                raise ValueError("prepared graph membership does not match")
 
     @property
     def batch(self) -> torch.Tensor:
         return self._batch
+
+    @property
+    def interaction_batch(self) -> torch.Tensor:
+        return self._interaction_batch
+
+    @property
+    def num_interactions(self) -> int:
+        return int(self._interaction_batch[-1].item()) + 1
 
     @property
     def num_nodes(self) -> int:
@@ -307,17 +262,17 @@ class ELABatch:
 
     @property
     def context(self) -> ELAContext | None:
-        if self.condition is None and self.order is None and self.refinement is None:
+        if self.condition is None and self.order is None:
             return None
-        return ELAContext(
-            condition=self.condition,
-            order=self.order,
-            refinement=self.refinement,
-        )
+        return ELAContext(condition=self.condition, order=self.order)
 
     @property
     def is_prepared(self) -> bool:
         return self._prepared_graph is not None
+
+    @property
+    def preparation_spec(self) -> PreparationSpec | None:
+        return None if self._prepared_graph is None else self._prepared_graph.spec
 
     @classmethod
     def from_flat(
@@ -329,9 +284,10 @@ class ELABatch:
         ptr: torch.Tensor | None = None,
         edge_index: torch.Tensor | None = None,
         edge_relation_id: torch.Tensor | None = None,
+        interaction_group: torch.Tensor | None = None,
         condition: torch.Tensor | None = None,
         order: OrderContext | None = None,
-        refinement: RefinementRequest | None = None,
+        update_mask: torch.Tensor | None = None,
         target: torch.Tensor | None = None,
         sample_ids: tuple[Any, ...] | None = None,
     ) -> ELABatch:
@@ -346,151 +302,29 @@ class ELABatch:
             ptr=resolved_ptr,
             edge_index=edge_index,
             edge_relation_id=edge_relation_id,
+            interaction_group=interaction_group,
             condition=condition,
             order=order,
-            refinement=refinement,
+            update_mask=update_mask,
             target=target,
             sample_ids=sample_ids,
         )
-
-    @classmethod
-    def from_padded(
-        cls,
-        node_irreps: torch.Tensor,
-        positions: torch.Tensor,
-        mask: torch.Tensor,
-        *,
-        edge_index: torch.Tensor | Sequence[torch.Tensor] | None = None,
-        edge_mask: torch.Tensor | None = None,
-        adjacency: torch.Tensor | None = None,
-        edge_relation_id: torch.Tensor | Sequence[torch.Tensor] | None = None,
-        condition: torch.Tensor | None = None,
-        order: OrderContext | None = None,
-        refinement: RefinementRequest | None = None,
-        target: torch.Tensor | None = None,
-        sample_ids: tuple[Any, ...] | None = None,
-    ) -> ELABatch:
-        packed = pack_node_input(node_irreps, positions, mask=mask)
-        edges, relations = pack_edges(
-            packed,
-            edge_index=edge_index,
-            edge_mask=edge_mask,
-            adjacency=adjacency,
-            edge_relation_id=edge_relation_id,
-        )
-        counts = mask.sum(dim=1).to(dtype=torch.long)
-        ptr = torch.cat([counts.new_zeros((1,)), counts.cumsum(0)])
-        packed_condition = condition
-        if (
-            condition is not None
-            and condition.ndim >= 3
-            and condition.shape[:2] == mask.shape
-        ):
-            packed_condition = packed.layout.flatten_node_tensor(
-                condition,
-                name="condition",
-            )
-        return cls(
-            node_irreps=packed.node_irreps,
-            positions=packed.positions,
-            ptr=ptr,
-            edge_index=edges,
-            edge_relation_id=relations,
-            condition=packed_condition,
-            order=_flatten_order(order, packed.layout),
-            refinement=_flatten_refinement(refinement, packed.layout),
-            target=target,
-            sample_ids=sample_ids,
-            _layout=packed.layout,
-        )
-
-    @classmethod
-    def from_mapping(cls, sample: Mapping[str, Any]) -> ELABatch:
-        if isinstance(sample, ELABatch):
-            return sample
-
-        def one(primary: str, aliases: tuple[str, ...] = ()) -> Any:
-            present = [name for name in (primary, *aliases) if name in sample]
-            if len(present) > 1:
-                raise ValueError(
-                    f"multiple aliases supplied for {primary}: {present}"
-                )
-            return None if not present else sample[present[0]]
-
-        node = one("node_irreps", ("x", "node_features"))
-        pos = one("positions", ("pos",))
-        if not isinstance(node, torch.Tensor) or not isinstance(pos, torch.Tensor):
-            raise TypeError(
-                "mapping requires tensor node_irreps/x and positions/pos"
-            )
-        order = sample.get("order")
-        if isinstance(order, torch.Tensor):
-            order = (
-                OrderContext.sequence(
-                    order,
-                    segment_id=sample.get("order_group"),
-                    enabled=sample.get("order_mask"),
-                )
-                if order.ndim == 1
-                else OrderContext.grid(
-                    order,
-                    segment_id=sample.get("order_group"),
-                    periods=sample.get("order_periods"),
-                    enabled=sample.get("order_mask"),
-                )
-            )
-        ids = one("sample_ids", ("sample_id", "id", "idx"))
-        if ids is not None and not isinstance(ids, tuple):
-            ids = (ids,)
-        return cls.from_flat(
-            node,
-            pos,
-            batch=sample.get("batch"),
-            ptr=sample.get("ptr"),
-            edge_index=sample.get("edge_index"),
-            edge_relation_id=one("edge_relation_id", ("edge_type",)),
-            condition=sample.get("condition"),
-            order=order,
-            refinement=sample.get("refinement"),
-            target=one("target", ("y", "label", "labels")),
-            sample_ids=ids,
-        )
-
-    @classmethod
-    def collate(cls, samples: Sequence[Mapping[str, Any]]) -> ELABatch:
-        normalized: list[dict[str, Any]] = []
-        for sample in samples:
-            item = dict(sample)
-            for canonical, aliases in (
-                ("target", ("y", "label", "labels")),
-                ("edge_relation_id", ("edge_type",)),
-                ("sample_id", ("id", "idx")),
-            ):
-                present = [name for name in (canonical, *aliases) if name in item]
-                if len(present) > 1:
-                    raise ValueError(
-                        f"sample contains multiple aliases for {canonical}: {present}"
-                    )
-                if present and present[0] != canonical:
-                    item[canonical] = item[present[0]]
-            normalized.append(item)
-        return cls.from_mapping(_collate_mappings(normalized))
 
     def with_prepared_graph(self, graph: Prepared3DGraph) -> ELABatch:
+        if not isinstance(graph, Prepared3DGraph):
+            raise TypeError("graph must be a Prepared3DGraph")
+        if not graph.spec.can_reuse_positions(self.positions):
+            raise ValueError("prepared radius topology does not match positions")
         return replace(self, _prepared_graph=graph)
 
     def without_prepared_graph(self) -> ELABatch:
         return replace(self, _prepared_graph=None)
 
-    def restore_nodes(
-        self,
-        value: torch.Tensor,
-        *,
-        template: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if self._layout is None:
-            return value
-        return self._layout.restore_node_tensor(value, template=template)
+    def with_positions(self, positions: torch.Tensor) -> ELABatch:
+        graph = self._prepared_graph
+        if graph is not None and not graph.spec.can_reuse_positions(positions):
+            graph = None
+        return replace(self, positions=positions, _prepared_graph=graph)
 
     def to(
         self,
@@ -500,84 +334,60 @@ class ELABatch:
         geometry_dtype: torch.dtype | None = None,
         non_blocking: bool = False,
     ) -> ELABatch:
-        target_device = torch.device(device)
+        target = torch.device(device)
         if geometry_dtype is None:
-            geometry_dtype = (
-                torch.float64 if dtype == torch.float64 else torch.float32
-            )
-        graph = (
+            geometry_dtype = torch.float64 if dtype == torch.float64 else torch.float32
+        moved_positions = self.positions.to(
+            device=target,
+            dtype=geometry_dtype,
+            non_blocking=non_blocking,
+        )
+        prepared = (
             None
             if self._prepared_graph is None
-            else self._prepared_graph.to(target_device)
+            else self._prepared_graph.to(target)
         )
-        layout = None
-        if self._layout is not None:
-            layout = BatchLayout(
-                kind=self._layout.kind,
-                batch=self._layout.batch.to(
-                    device=target_device,
-                    non_blocking=non_blocking,
-                ),
-                batch_size=self._layout.batch_size,
-                max_nodes=self._layout.max_nodes,
-                node_mask=None
-                if self._layout.node_mask is None
-                else self._layout.node_mask.to(
-                    device=target_device,
-                    non_blocking=non_blocking,
-                ),
-            )
+        if prepared is not None and not prepared.spec.can_reuse_positions(
+            moved_positions
+        ):
+            prepared = None
         return ELABatch(
             node_irreps=self.node_irreps.to(
-                device=target_device,
+                device=target,
                 dtype=dtype,
                 non_blocking=non_blocking,
             ),
-            positions=self.positions.to(
-                device=target_device,
-                dtype=geometry_dtype,
-                non_blocking=non_blocking,
-            ),
-            ptr=self.ptr.to(device=target_device, non_blocking=non_blocking)
-            if self.ptr is not None
-            else None,
+            positions=moved_positions,
+            ptr=None
+            if self.ptr is None
+            else self.ptr.to(device=target, non_blocking=non_blocking),
             edge_index=None
             if self.edge_index is None
-            else self.edge_index.to(
-                device=target_device,
-                non_blocking=non_blocking,
-            ),
+            else self.edge_index.to(device=target, non_blocking=non_blocking),
             edge_relation_id=None
             if self.edge_relation_id is None
-            else self.edge_relation_id.to(
-                device=target_device,
-                non_blocking=non_blocking,
-            ),
+            else self.edge_relation_id.to(device=target, non_blocking=non_blocking),
+            interaction_group=None
+            if self.interaction_group is None
+            else self.interaction_group.to(device=target, non_blocking=non_blocking),
             condition=_move_float(
                 self.condition,
-                device=target_device,
+                device=target,
                 dtype=dtype,
                 non_blocking=non_blocking,
             ),
-            order=_move_order(
-                self.order,
-                target_device,
-                non_blocking=non_blocking,
-            ),
-            refinement=_move_refinement(
-                self.refinement,
-                target_device,
-                non_blocking=non_blocking,
-            ),
+            order=_move_order(self.order, target, non_blocking=non_blocking),
+            update_mask=None
+            if self.update_mask is None
+            else self.update_mask.to(device=target, non_blocking=non_blocking),
             target=_move_float(
                 self.target,
-                device=target_device,
+                device=target,
                 dtype=dtype,
                 non_blocking=non_blocking,
             ),
             sample_ids=self.sample_ids,
-            _layout=layout,
-            _prepared_graph=graph,
+            _prepared_graph=prepared,
         )
 
     def pin_memory(self) -> ELABatch:
@@ -589,15 +399,6 @@ class ELABatch:
                 periods=_pin_tensor(order.periods),
                 enabled=_pin_tensor(order.enabled),
             )
-        refinement = self.refinement
-        if refinement is not None and refinement.update_mask is not None:
-            refinement = RefinementRequest(
-                steps=refinement.steps,
-                max_step=refinement.max_step,
-                centering=refinement.centering,
-                update_mask=_pin_tensor(refinement.update_mask),
-                graph_rebuilder=refinement.graph_rebuilder,
-            )
         return replace(
             self,
             node_irreps=_pin_tensor(self.node_irreps),
@@ -605,12 +406,13 @@ class ELABatch:
             ptr=_pin_tensor(self.ptr),
             edge_index=_pin_tensor(self.edge_index),
             edge_relation_id=_pin_tensor(self.edge_relation_id),
+            interaction_group=_pin_tensor(self.interaction_group),
             condition=_pin_tensor(self.condition),
             order=order,
-            refinement=refinement,
+            update_mask=_pin_tensor(self.update_mask),
             target=_pin_tensor(self.target),
             _prepared_graph=None,
         )
 
 
-__all__ = ["ELABatch"]
+__all__: list[str] = []

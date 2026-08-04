@@ -51,7 +51,7 @@ def _assert_state_close(left: object, right: object) -> None:
         )
 
 
-def test_stack_is_exact_composition_of_public_layers() -> None:
+def test_stack_is_exact_composition_of_inspectable_layers() -> None:
     torch.manual_seed(101)
     config = _BaseStackConfig(
         input_irreps="4x0e",
@@ -178,7 +178,7 @@ def test_graph_and_node_conditions_have_identical_broadcast_semantics() -> None:
     torch.testing.assert_close(graph_output, node_output, atol=2e-9, rtol=2e-9)
 
 
-def test_coordinate_refinement_is_se3_equivariant_and_bounded() -> None:
+def test_coordinate_update_is_se3_equivariant_and_bounded() -> None:
     torch.manual_seed(113)
     config = _BaseStackConfig(
         input_irreps="4x0e",

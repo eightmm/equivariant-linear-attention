@@ -32,8 +32,8 @@ API and should not be required for inference.
 ```python
 import torch
 
-from equivariant_linear_attention import (
-    ELA,
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.advanced import (
     ELAConfig,
     ELAFeatures,
     SparseGeometry,
@@ -46,7 +46,8 @@ if payload["format_version"] != 1:
 raw = dict(payload["config"])
 geometry = SparseGeometry(**raw.pop("geometry"))
 features = ELAFeatures(**raw.pop("features"))
-model = ELA(ELAConfig(**raw, geometry=geometry, features=features))
+config = ELAConfig(**raw, geometry=geometry, features=features)
+model = ELA.from_config(config)
 model.load_state_dict(payload["state_dict"], strict=True)
 ```
 

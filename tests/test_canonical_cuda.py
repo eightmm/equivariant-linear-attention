@@ -5,7 +5,8 @@ from contextlib import nullcontext
 import pytest
 import torch
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.batch import ELABatch
 
 
 def _fixed_degree_edges(
@@ -39,7 +40,6 @@ def test_canonical_ela_cuda_forward_backward(
         width=32,
         depth=2,
         cutoff=6.0,
-        num_rbf=8,
     ).to(device=device, dtype=torch.float32)
     nodes = 64
     features = torch.randn(
@@ -56,7 +56,7 @@ def test_canonical_ela_cuda_forward_backward(
         dtype=torch.float32,
         requires_grad=True,
     )
-    batch = model.prepare(
+    batch = model._prepare_packed(
         ELABatch(
             node_irreps=features,
             positions=positions,
@@ -70,17 +70,17 @@ def test_canonical_ela_cuda_forward_backward(
         else nullcontext()
     )
     with precision_context:
-        output = model.forward_prepared(batch)["node_irreps"]
+        output = model._forward_prepared(batch)["node_irreps"]
         loss = output.float().square().mean()
     loss.backward()
 
     assert torch.isfinite(output).all()
     assert features.grad is not None and torch.isfinite(features.grad).all()
     assert positions.grad is not None and torch.isfinite(positions.grad).all()
-    router = model.layers[0].branch_fusion.router[-1]
-    assert router.weight.grad is not None
-    assert torch.isfinite(router.weight.grad).all()
-    assert torch.count_nonzero(router.weight.grad) > 0
+    global_value = model.layers[0].global_scalar_value.weight
+    assert global_value.grad is not None
+    assert torch.isfinite(global_value.grad).all()
+    assert torch.count_nonzero(global_value.grad) > 0
     expected_dtype = torch.float32 if precision == "float32" else torch.bfloat16
     assert output.dtype == expected_dtype
 
@@ -116,7 +116,7 @@ def test_canonical_ela_bucketed_cuda_autocast_forward_backward() -> None:
         width=16,
         depth=1,
     ).to(device=device, dtype=torch.float32)
-    batch = model.prepare(
+    batch = model._prepare_packed(
         ELABatch(
             node_irreps=features,
             positions=positions,
@@ -128,7 +128,7 @@ def test_canonical_ela_bucketed_cuda_autocast_forward_backward() -> None:
     assert batch._prepared_graph.graph_layout.structure == "bucketed"
 
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        output = model.forward_prepared(batch)["node_irreps"]
+        output = model._forward_prepared(batch)["node_irreps"]
         loss = output.float().square().mean()
     loss.backward()
 

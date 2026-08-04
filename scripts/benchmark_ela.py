@@ -11,7 +11,8 @@ from typing import Any
 
 import torch
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.batch import ELABatch
 from equivariant_linear_attention.kernels import kernel_backend, triton_available
 
 
@@ -131,7 +132,7 @@ def _functional_probe(
     )
     model.zero_grad(set_to_none=True)
     with kernel_backend(backend):
-        output = model.forward_prepared(batch)["node_irreps"]
+        output = model._forward_prepared(batch)["node_irreps"]
         output.float().square().mean().backward()
     parameter = model.layers[0].local_scalar_out.weight
     if parameter.grad is None or features.grad is None or positions.grad is None:
@@ -157,7 +158,7 @@ def _profile_backends(
 
     def inference(backend: str) -> torch.Tensor:
         with torch.inference_mode(), kernel_backend(backend):
-            return model.forward_prepared(prepared)["node_irreps"]
+            return model._forward_prepared(prepared)["node_irreps"]
 
     inference_profiles = _measure_backends(
         {
@@ -186,7 +187,7 @@ def _profile_backends(
         features.grad = None
         positions.grad = None
         with kernel_backend(backend):
-            output = model.forward_prepared(training_batch)["node_irreps"]
+            output = model._forward_prepared(training_batch)["node_irreps"]
             output.float().square().mean().backward()
         return output
 
@@ -261,7 +262,7 @@ def main() -> None:
     )
     positions = torch.randn(args.nodes, 3, device=device, dtype=torch.float32)
     edges = _fixed_degree_edges(args.nodes, args.degree, device)
-    prepared = model.prepare(
+    prepared = model._prepare_packed(
         ELABatch(
             node_irreps=features,
             positions=positions,

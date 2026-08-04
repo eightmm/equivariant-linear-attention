@@ -112,7 +112,10 @@ class _EquivariantRMSNorm(nn.Module):
     def _vector(self, value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
         dtype = self._work_dtype(value)
         work = value.to(dtype=dtype)
-        rms = torch.sqrt(work.square().mean(dim=(-2, -1), keepdim=True) + self.eps)
+        # Each multiplicity copy is an independent irrep.  Coupling their
+        # magnitudes through one sector-wide RMS makes widening the geometric
+        # carrier change the normalization of existing copies.
+        rms = torch.sqrt(work.square().mean(dim=-1, keepdim=True) + self.eps)
         result = work / rms * gain.to(
             device=value.device, dtype=dtype
         ).reshape(1, -1, 1)
@@ -121,10 +124,7 @@ class _EquivariantRMSNorm(nn.Module):
     def _tensor(self, value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
         dtype = self._work_dtype(value)
         work = value.to(dtype=dtype)
-        rms = torch.sqrt(
-            _st_square(work).mean(dim=-1, keepdim=True).unsqueeze(-1) / 5.0
-            + self.eps
-        )
+        rms = torch.sqrt(_st_square(work).unsqueeze(-1) / 5.0 + self.eps)
         result = work / rms * gain.to(
             device=value.device, dtype=dtype
         ).reshape(1, -1, 1)

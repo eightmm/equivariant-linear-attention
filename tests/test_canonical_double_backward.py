@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELAGraph
 
 
 def _complete_edges(nodes: int) -> torch.Tensor:
@@ -11,7 +11,7 @@ def _complete_edges(nodes: int) -> torch.Tensor:
     return torch.stack([receiver, sender])
 
 
-def test_learned_router_supports_input_and_coordinate_double_backward() -> None:
+def test_canonical_fixed_fusion_supports_input_and_coordinate_double_backward() -> None:
     torch.manual_seed(53)
     model = ELA(
         input_irreps="4x0e",
@@ -19,14 +19,7 @@ def test_learned_router_supports_input_and_coordinate_double_backward() -> None:
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).double()
-    with torch.no_grad():
-        layer = model.layers[0]
-        layer.branch_fusion.router[-1].weight.normal_(mean=0.0, std=0.05)
-        layer.branch_fusion.router[-1].bias.normal_(mean=0.0, std=0.05)
-        layer.branch_fusion.balance_strength.fill_(0.1)
-
     nodes = 5
     features = torch.randn(
         nodes,
@@ -40,12 +33,12 @@ def test_learned_router_supports_input_and_coordinate_double_backward() -> None:
         dtype=torch.float64,
         requires_grad=True,
     )
-    batch = ELABatch(
-        node_irreps=features,
-        positions=positions,
+    graph = ELAGraph(
+        x=features,
+        pos=positions,
         edge_index=_complete_edges(nodes),
     )
-    output = model(batch)["node_irreps"]
+    output = model(graph).x
     first_features, first_positions = torch.autograd.grad(
         output.square().sum(),
         (features, positions),

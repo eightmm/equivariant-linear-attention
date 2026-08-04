@@ -1,258 +1,150 @@
-# ELA public API policy
+# Public API policy
 
-The repository exposes one public architecture, one architecture layer, and one
-graph container:
+Equivariant Linear Attention has one public model, one public graph type, and one
+execution form:
+
+```python
+from equivariant_linear_attention import ELA, ELAGraph
+
+graph = ELAGraph(x=node_features, pos=positions)
+model = ELA("32x0e", "1x0e")
+out = model(graph)
+```
+
+The package root exports exactly:
 
 ```text
 ELA
-ELALayer
-ELABatch
+ELAGraph
 ```
 
-The repository and distribution are named `equivariant-linear-attention`; the
-single Python import root is `equivariant_linear_attention`. The former
-pre-release root `equivariant_attention` is retired rather than shipped as a
-second compatibility namespace.
+## One graph contract
 
-No public legacy, implicit, AttnRes, conditioned, padded, scalar-only, or
-coordinate-updating model class may be added. Optional capabilities remain
-facades around the same `ELA` and `ELALayer` implementation.
+`ELAGraph` is both the model input and the model output. It carries graph data,
+optional supervision, and predictions without introducing a second output type.
 
-`ELALayer` is the inspectable concrete type used by `ELA.layers`. Users
-construct layers through `ELA`; the layer's hidden-state/context call protocol
-is an implementation boundary, not a second public model invocation API.
+Input fields:
 
-## 1. Representation policy
+```text
+x            [N, D_in] node irreps flattened in declared order
+pos          [N, 3] Cartesian coordinates
+edge_index   [2, E] optional source-to-target edges
+batch        [N] optional graph IDs; omitted for one graph
+edge_type    [E] optional semantic edge relation IDs
+group        [N] optional disconnected interaction-component IDs
+condition    [B, C] or [N, C] optional invariant conditioning
+order        optional semantic-order context
+update_mask  [N] optional mask for coordinate updates
+y            optional target
+ids          optional sample identifiers
+```
 
-Input and output representations are declared only with irreps.
+Output fields use the same object:
+
+```text
+out.x          [N, D_out] node prediction
+out.graph_x    [B, D_out] graph-mean prediction
+out.graph_sum  [B, D_out] graph-sum prediction
+out.pos        [N, 3] final coordinates
+out.delta      [N, 3] total coordinate displacement
+```
+
+Input topology and metadata remain attached to the returned graph. There are no
+public dictionaries, string-key aliases, padded-output wrappers, or separate
+output classes.
+
+## One edge convention
+
+Public `edge_index` follows the common source-to-target convention:
+
+```text
+edge_index[0] = sender/source
+edge_index[1] = receiver/target
+```
+
+The numerical core uses a receiver-major packed representation. Conversion is
+private and occurs exactly once at the public boundary.
+
+When `edge_index` is omitted, ELA builds an exact directed radius graph. Automatic
+radius graphs do not include self edges. Explicit edges are required for bonds,
+mesh connectivity, temporal transitions, metal coordination, or other semantic
+topologies.
+
+## One coordinate-update policy
+
+Coordinate behavior is declared when the model is constructed:
 
 ```python
-model = ELA(
-    input_irreps="32x0e + 4x1o",
-    output_irreps="1x0e + 1x1o",
-    width=128,
-    depth=8,
-    cutoff=6.0,
+fixed = ELA("32x0e", "1x0e", update_positions=False)
+moving = ELA(
+    "32x0e",
+    "1x0e",
+    update_positions=True,
+    max_coordinate_step=0.2,
 )
 ```
 
-Scalar-only data use scalar irreps:
-
-```text
-32 scalar input channels  -> "32x0e"
-1 scalar output channel   -> "1x0e"
-```
-
-The public model must not introduce parallel representation arguments such as
-`node_dim`, `output_dim`, or a separate scalar model factory. One representation
-language prevents ambiguous checkpoints and keeps scalar, vector, and tensor
-models on the same API.
-
-The lower-level configuration form remains valid:
+Calling either model remains identical:
 
 ```python
-model = ELA(ELAConfig(...))
+out = model(graph)
 ```
 
-A config and direct constructor fields are mutually exclusive.
+`update_positions=False` returns `out.pos == graph.pos` and a zero `out.delta`.
+`update_positions=True` performs the configured bounded equivariant update and
+returns the final coordinates in the same `ELAGraph`.
 
-Task names do not create additional model classes. A flow-matching velocity,
-coordinate score field, or learned coordinate displacement is a node-wise `1o`
-output and is read from `output["node"]`. `output["delta"]` has a narrower
-meaning: it is the bounded coordinate-refinement residual and is not a generic
-vector prediction.
+There is no public refinement request, rebuilder callback, or separate refiner
+object.
 
-## 2. Model input policy
+## Batching
 
-`ELA.forward` accepts one `ELABatch`:
+Dataset samples are ordinary `ELAGraph` objects. Variable-size graphs are packed
+with one collator:
 
 ```python
-batch = ELABatch(
-    node_irreps=x,
-    positions=pos,
-    ptr=ptr,
-    edge_index=edge_index,
+from torch.utils.data import DataLoader
+
+loader = DataLoader(
+    dataset,
+    batch_size=16,
+    collate_fn=ELAGraph.collate,
 )
 
-output = model(batch)
+for graph in loader:
+    out = model(graph)
 ```
 
-Convenience constructors normalize external layouts before model execution:
+`ELAGraph.collate` offsets edges, builds graph IDs, and packs optional fields.
+The numerical core never depends on PyG or DGL.
+
+## Advanced configuration
+
+Advanced reproducibility settings live outside the package root:
 
 ```python
-batch = ELA.batch(x, pos, batch=batch_index, edge_index=edge_index)
-batch = ELA.padded(x_padded, pos_padded, mask=node_mask)
-batch = ELA.collate(samples)
-```
+from equivariant_linear_attention.advanced import ELAConfig, SparseGeometry
 
-The numerical core always receives packed nodes and one receiver-major sparse
-execution graph. There is no separate padded model, dense-adjacency model, or
-framework-specific graph architecture.
-
-## 3. Graph policy
-
-`ELABatch.edge_index` uses receiver/sender COO:
-
-```text
-edge_index[0] = receiver
-edge_index[1] = sender
-```
-
-If edges are supplied, ELA packs them to receiver-major CSR. If edges are absent,
-ELA constructs exact radius candidates using the model cutoff.
-
-Automatic candidates represent geometric proximity only. Bond, mesh, temporal,
-periodic, or typed-relation semantics must be supplied explicitly.
-
-The public graph boundary is `ELABatch`. Internal types such as
-`Prepared3DGraph`, `PackedNeighborGraph`, graph-layout schedules, and radius
-builders are not package-root API.
-
-## 4. Prepared execution policy
-
-For fixed topology:
-
-```python
-batch = model.prepare(batch)
-output = model.forward_prepared(batch)
-```
-
-Preparation may include radius discovery, COO validation, receiver sorting, CSR
-construction, and graph-layout planning. Performance claims must distinguish
-this work from the prepared layer/stack execution.
-
-Prepared metadata is an execution cache, not a second graph container.
-
-## 5. Configuration policy
-
-Canonical public architecture choices are:
-
-```text
-input_irreps
-output_irreps
-width
-depth
-geometry
-features
-```
-
-The direct constructor may expose common geometry and feature fields such as
-`cutoff`, `num_rbf`, `condition_dim`, and `order_dim`; they compile into the same
-`ELAConfig` objects.
-
-The following remain derived, fixed, or execution-only:
-
-```text
-num_heads
-local_rank
-hidden_irreps
-residual scale
-normalization epsilon
-tensor-closure paths
-chirality construction
-kernel backend
-Triton launch policy
-```
-
-Execution kernels never enter checkpoint schemas.
-
-## 6. Runtime optional features
-
-Condition, semantic order, and coordinate refinement are optional fields of the
-same `ELABatch`:
-
-```python
-batch = ELABatch(
-    node_irreps=x,
-    positions=pos,
-    condition=condition,
-    order=order,
-    refinement=refinement,
+config = ELAConfig(
+    input_irreps="32x0e",
+    output_irreps="1x0e",
+    geometry=SparseGeometry(cutoff=6.0, max_neighbors=64),
 )
+model = ELA.from_config(config)
 ```
 
-If a field is absent, its path is bypassed rather than evaluated with a learned
-zero-input bias.
+Advanced configuration does not create another execution API. The call remains
+`model(ELAGraph(...))` and the result remains `ELAGraph`.
 
-## 7. Semantic-order policy
+## Internal contracts
 
-Order PE uses node-attached semantic coordinates, never the current tensor row
-index.
+Packed batches, prepared CSR topology, kernel outputs, and layer state are private
+implementation details. They may be used by repository tests and benchmarks but
+are not compatibility promises for downstream users.
 
-$$
-F(PX,Px,PGP^T,Po,Pm)=PF(X,x,G,o,m).
-$$
+A public API change is accepted only when it preserves or further simplifies the
+following contract:
 
-Valid examples include residue rank, polymer-backbone rank, trajectory time,
-grid coordinates, and stable topology coordinates. Arbitrary atom serialization
-or DataLoader row order is not semantic order.
-
-## 8. Conditioning policy
-
-Condition is invariant `0e` information and may be shared, graph-level, or
-node-level. Even scalars receive bounded affine modulation; non-scalar sectors
-receive invariant copy-wise scale only.
-
-Vector and tensor conditions belong in `input_irreps`.
-
-## 9. Coordinate policy
-
-Coordinate refinement is a bounded outer loop activated by a
-`RefinementRequest` in the batch. It owns step count, maximum displacement,
-update mask, centering policy, and optional graph rebuild callback.
-
-Direct refinement is not a conservative integrator. Conservative forces use
-
-$$
-F_i=-\nabla_{x_i}E.
-$$
-
-Likewise, a direct `1o` vector output is not automatically conservative. It is
-appropriate for velocity/score/displacement supervision; force conservation
-requires the scalar-potential construction above.
-
-## 10. Dependency policy
-
-The core package and data interface depend only on PyTorch. Framework-specific
-dataset loaders may exist only as optional integrations.
-
-Core graph packing, batching, edge offsetting, masks, radius candidates, and
-model execution must remain usable without PyG or DGL.
-
-Plain mapping samples plus `ELA.collate` are the canonical dataset boundary.
-
-## 11. Kernel policy
-
-The PyTorch implementation is the numerical reference. `torch.compile`, Triton,
-CUDA, or other kernels may accelerate the prepared path but must not add:
-
-- another architecture class;
-- a model hyperparameter;
-- a state-dict key;
-- a mathematical branch;
-- a different output contract.
-
-Backend selection is automatic or controlled by an execution/debug environment
-variable. Every custom kernel requires a PyTorch fallback and forward, gradient,
-equivariance, graph-isolation, dtype, and performance tests.
-
-## 12. Root exports
-
-The package root may expose:
-
-- `ELA`, `ELAConfig`, `ELAFeatures`, `ELALayer`;
-- `ELABatch` and optional context/geometry data types;
-- irrep construction helpers;
-- task-level physics heads.
-
-It must not expose a second backbone, a second architecture layer, or internal
-packed graph/runtime types. The API-policy test guards historical names and the
-irreps-only representation contract.
-
-Internal modules are grouped by responsibility: `geometry` owns sparse graph
-construction and layout, `kernels` owns backend dispatch and optimized kernels,
-and `packing` normalizes external tensor layouts. `model` contains the canonical
-ELA facade implementation, prepared runtime, and refined stack; `nn` contains
-the parity carrier, multipoles, equivariant core/layers, fusion, and generic
-heads. These paths are implementation boundaries, not additional public
-architectures.
+```text
+ELAGraph -> ELA -> ELAGraph
+```

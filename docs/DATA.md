@@ -1,7 +1,8 @@
 # Data Contract
 
 > **Historical:** this is the retired benchmark data contract. The current
-> dependency-free input boundary is `ELABatch`; see `docs/DATA_API.md`.
+> dependency-free boundary uses one `ELAGraph` input/output type and
+> `ELAGraph.collate` for mini-batches. See [the current data API](DATA_API.md).
 
 `GraphSample` stores node features, coordinates, a graph target, a stable
 sample ID, and optional local candidates/readout mask. `collate_graphs`

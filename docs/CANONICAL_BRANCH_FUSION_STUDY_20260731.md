@@ -1,5 +1,7 @@
 # Canonical branch-fusion study
 
+> **Historical experiment.** This study is the evidence for not promoting the learned router. Current ELA uses fixed exact `global + local` fusion; see `CANONICAL_ELA.md`.
+
 ## Scope
 
 This packet evaluates the architecture as a generic operator over sparse 3D

@@ -213,25 +213,35 @@ def pack_irreps(
     return torch.cat(flattened, dim=-1)
 
 
-def matrix_to_st5(value: torch.Tensor) -> torch.Tensor:
-    """Compress a symmetric traceless 3x3 tensor to [xx, yy, xy, xz, yz]."""
+def project_symmetric_traceless(value: torch.Tensor) -> torch.Tensor:
+    """Orthogonally project a matrix onto the symmetric-traceless subspace."""
 
     if value.shape[-2:] != (3, 3):
         raise ValueError("value must end with shape (3, 3)")
+    symmetric = 0.5 * (value + value.transpose(-1, -2))
+    trace_third = torch.diagonal(symmetric, dim1=-2, dim2=-1).sum(-1) / 3.0
+    identity = torch.eye(3, device=value.device, dtype=value.dtype)
+    return symmetric - trace_third[..., None, None] * identity
+
+
+def matrix_to_st5(value: torch.Tensor) -> torch.Tensor:
+    """Project and compress a 3x3 tensor to ``[xx, yy, xy, xz, yz]``."""
+
+    projected = project_symmetric_traceless(value)
     return torch.stack(
         [
-            value[..., 0, 0],
-            value[..., 1, 1],
-            value[..., 0, 1],
-            value[..., 0, 2],
-            value[..., 1, 2],
+            projected[..., 0, 0],
+            projected[..., 1, 1],
+            projected[..., 0, 1],
+            projected[..., 0, 2],
+            projected[..., 1, 2],
         ],
         dim=-1,
     )
 
 
 def st5_to_matrix(value: torch.Tensor) -> torch.Tensor:
-    """Expand [xx, yy, xy, xz, yz] with zz=-xx-yy."""
+    """Expand ``[xx, yy, xy, xz, yz]`` with ``zz=-xx-yy``."""
 
     if value.shape[-1] != 5:
         raise ValueError("value must end with dimension 5")
@@ -245,6 +255,47 @@ def st5_to_matrix(value: torch.Tensor) -> torch.Tensor:
         ],
         dim=-2,
     )
+
+
+def st5_inner(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    """Rotation-invariant Frobenius inner product in compact ST5 coordinates."""
+
+    if left.shape != right.shape or left.shape[-1] != 5:
+        raise ValueError("left and right must have equal shapes ending in 5")
+    lxx, lyy, lxy, lxz, lyz = left.unbind(dim=-1)
+    rxx, ryy, rxy, rxz, ryz = right.unbind(dim=-1)
+    return (
+        lxx * rxx
+        + lyy * ryy
+        + (lxx + lyy) * (rxx + ryy)
+        + 2.0 * (lxy * rxy + lxz * rxz + lyz * ryz)
+    )
+
+
+def st5_norm(value: torch.Tensor, *, eps: float = 0.0) -> torch.Tensor:
+    """Frobenius norm of a compact symmetric-traceless tensor."""
+
+    if eps < 0.0:
+        raise ValueError("eps must be nonnegative")
+    return torch.sqrt(st5_inner(value, value).clamp_min(0.0) + eps)
+
+
+def st5_mse(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """O(3)-invariant tensor MSE using the true Frobenius metric."""
+
+    error = st5_inner(prediction - target, prediction - target) / 5.0
+    if reduction == "none":
+        return error
+    if reduction == "mean":
+        return error.mean()
+    if reduction == "sum":
+        return error.sum()
+    raise ValueError("reduction must be 'none', 'mean', or 'sum'")
 
 
 def _product_parity(left: Irrep, right: Irrep) -> str:

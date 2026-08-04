@@ -16,6 +16,18 @@ run_fast() {
   [ -d src ] && dirs+=(src)
   [ -d scripts ] && dirs+=(scripts)
 
+  if [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
+    uv run python - <<'PY'
+import equivariant_linear_attention as ela
+from equivariant_linear_attention import ELA, ELAGraph
+
+assert ELA is not None
+assert ELAGraph is not None
+assert set(ela.__all__) == {"ELA", "ELAGraph"}
+PY
+    ran=1
+  fi
+
   if [ "${#dirs[@]}" -gt 0 ] && [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
     uv run python -m compileall -q "${dirs[@]}"
     ran=1

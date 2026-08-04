@@ -6,16 +6,10 @@ from math import isfinite, sqrt
 import torch
 from torch import nn
 
-from ..context import (
-    ELAContext,
-    ELAFeatures,
-    FourierOrderEncoder,
-    RefinementRequest,
-)
-from ..geometry.prepared import Prepared3DGraph, prepare_3d_graph
-from ..irreps import IrrepLayout
-from ..nn.core import CanonicalMultipoleSE3Core
-from ..nn.fusion import RMSAwareBranchFusion
+from ..context import ELAContext, ELAFeatures, FourierOrderEncoder
+from ..geometry.prepared import PreparationSpec, Prepared3DGraph, prepare_3d_graph
+from ..geometry.radius import radius_graph
+from ..irreps import IrrepLayout, split_irreps
 from ..nn.heads import EquivariantVectorHead
 from ..nn.layers import (
     _ELAStackCore,
@@ -34,7 +28,6 @@ from ..nn.parity import (
     _bounded_st,
     _unit_ball,
 )
-from .runtime import _ELARuntime
 from .stack import (
     EquivariantLinearAttentionConfig,
     EquivariantLinearAttentionLayer,
@@ -61,15 +54,34 @@ def _positive_real(name: str, value: object) -> float:
 
 @dataclass(frozen=True, slots=True)
 class SparseGeometry:
-    """Sparse geometry separated from model capacity and representation."""
+    """Sparse topology and radial geometry policy.
+
+    ``max_neighbors`` belongs to the model configuration rather than an
+    incidental preparation call, making topology reproducible. ``skin`` builds
+    a Verlet candidate shell so moving-coordinate workloads can safely reuse a
+    prepared graph until any node moves more than half the skin distance.
+    """
 
     cutoff: float = 5.0
     num_rbf: int = 16
+    max_neighbors: int | None = None
+    skin: float = 0.0
     relation_cutoffs: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         cutoff = _positive_real("cutoff", self.cutoff)
         _positive_integer("num_rbf", self.num_rbf)
+        if self.max_neighbors is not None:
+            _positive_integer("max_neighbors", self.max_neighbors)
+        if isinstance(self.skin, bool) or not isinstance(self.skin, (int, float)):
+            raise TypeError("skin must be a real number")
+        if not isfinite(float(self.skin)) or float(self.skin) < 0.0:
+            raise ValueError("skin must be finite and nonnegative")
+        if self.max_neighbors is not None and float(self.skin) > 0.0:
+            raise ValueError(
+                "skin and max_neighbors cannot be combined: a cached capped "
+                "candidate list cannot preserve exact nearest-neighbor membership"
+            )
         if not isinstance(self.relation_cutoffs, tuple):
             raise TypeError("relation_cutoffs must be a tuple")
         for relation_cutoff in self.relation_cutoffs:
@@ -88,12 +100,14 @@ class SparseGeometry:
         *,
         edge_relation_id: torch.Tensor | None = None,
         prefer_int32: bool = True,
+        spec: PreparationSpec | None = None,
     ) -> Prepared3DGraph:
         return prepare_3d_graph(
             batch,
             edge_index,
             edge_relation_id=edge_relation_id,
             prefer_int32=prefer_int32,
+            spec=spec,
         )
 
 
@@ -113,6 +127,8 @@ class ELAConfig:
     depth: int = 8
     geometry: SparseGeometry = field(default_factory=SparseGeometry)
     features: ELAFeatures = field(default_factory=ELAFeatures)
+    coordinate_updates: int = 0
+    max_coordinate_step: float = 0.25
 
     def __post_init__(self) -> None:
         _positive_integer("width", self.width)
@@ -123,6 +139,13 @@ class ELAConfig:
             raise TypeError("geometry must be a SparseGeometry")
         if not isinstance(self.features, ELAFeatures):
             raise TypeError("features must be an ELAFeatures")
+        if isinstance(self.coordinate_updates, bool) or not isinstance(
+            self.coordinate_updates, int
+        ):
+            raise TypeError("coordinate_updates must be an integer")
+        if self.coordinate_updates < 0:
+            raise ValueError("coordinate_updates must be nonnegative")
+        _positive_real("max_coordinate_step", self.max_coordinate_step)
         self.to_advanced_config()
 
     @property
@@ -143,7 +166,9 @@ class ELAConfig:
 
     @property
     def num_heads(self) -> int:
-        target = max(1, min(8, self.width // 16))
+        # Preserve the established carrier through width=128 while allowing
+        # geometric capacity to scale in larger models instead of saturating.
+        target = max(1, min(16, self.width // 16))
         for candidate in range(target, 0, -1):
             if self.width % candidate == 0:
                 return candidate
@@ -151,7 +176,9 @@ class ELAConfig:
 
     @property
     def local_rank(self) -> int:
-        return min(4, self.num_heads)
+        if self.num_heads <= 8:
+            return min(4, self.num_heads)
+        return min(8, self.num_heads)
 
     @property
     def local_cutoff(self) -> float:
@@ -180,14 +207,6 @@ class ELAConfig:
     @property
     def condition_dim(self) -> int:
         return self.features.total_condition_dim(self.width)
-
-    @property
-    def coordinate_updates(self) -> bool:
-        return False
-
-    @property
-    def max_coordinate_step(self) -> float:
-        return 0.25
 
     @property
     def residual_dropout(self) -> float:
@@ -237,7 +256,9 @@ class ELAConfig:
         return {
             "architecture": "equivariant_linear_attention",
             "public_model": "ELA",
-            "public_layer": "ELALayer",
+            "public_graph": "ELAGraph",
+            "public_contract": "ELAGraph -> ELA -> ELAGraph",
+            "inspectable_layer": "ELALayer",
             "public_options": (
                 "input_irreps",
                 "output_irreps",
@@ -245,14 +266,16 @@ class ELAConfig:
                 "depth",
                 "geometry",
                 "features",
+                "coordinate_updates",
+                "max_coordinate_step",
             ),
             "spatial_policy": (
                 "exact_global_linear_attention_plus_exact_sparse_short_range"
             ),
-            "message_fusion": (
-                "identity_initialized_rms_aware_global_local_router"
-            ),
+            "message_fusion": "fixed_exact_global_plus_local_sum",
             "optional_features": self.features.contract(self.width),
+            "coordinate_updates": self.coordinate_updates,
+            "max_coordinate_step": self.max_coordinate_step,
             "implicit_spatial": "not_in_canonical_architecture",
             "attention_residuals": "not_in_canonical_architecture",
             "derived_num_heads": self.num_heads,
@@ -262,14 +285,13 @@ class ELAConfig:
 
 
 class ELALayer(EquivariantLinearAttentionLayer):
-    """Concrete stack-layer type constructed and exposed by :class:`ELA`."""
+    """Concrete canonical stack layer.
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self.branch_fusion = RMSAwareBranchFusion(
-            scalar_width=self.scalar_width,
-            eps=max(self.eps, 1e-6),
-        )
+    Global and local exact messages are combined by the architecture's fixed
+    additive update. The previously tested learned branch router remains an
+    experimental module but is no longer part of canonical ELA parameters or
+    execution.
+    """
 
     def _resolve_modulation(
         self,
@@ -299,16 +321,11 @@ class ELALayer(EquivariantLinearAttentionLayer):
             context.graph_layout,
         )
         local_message = self._local_message(normalized, context.geometry)
-        routed_global, routed_local = self.branch_fusion(
-            normalized,
-            global_message,
-            local_message,
-        )
         candidate = _ParityCompleteBlock._update_state(
             self,
             normalized,
-            routed_global,
-            routed_local,
+            global_message,
+            local_message,
         )
         attention_delta = _state_subtract(candidate, normalized)
         if modulation is not None:
@@ -360,11 +377,10 @@ class ELALayer(EquivariantLinearAttentionLayer):
 
 
 class _ELACore(_ELAStackCore):
-    """Internal stack of the single public ELALayer implementation."""
+    """One composition-oriented stack of the canonical :class:`ELALayer`."""
 
     def __init__(self, config: EquivariantLinearAttentionConfig) -> None:
-        CanonicalMultipoleSE3Core.__init__(
-            self,
+        super().__init__(
             input_irreps=config.input_layout,
             output_irreps=config.output_layout,
             hidden_dim=config.hidden_dim,
@@ -377,11 +393,11 @@ class _ELACore(_ELAStackCore):
             num_edge_relations=config.num_edge_relations,
             relation_cutoffs=config.relation_cutoffs,
             residual_scale_init=config.residual_scale_init,
+            condition_dim=config.condition_dim,
+            coordinate_updates=False,
+            max_coordinate_step=config.max_coordinate_step,
             eps=config.eps,
         )
-        self.condition_dim = int(config.condition_dim)
-        self.coordinate_updates = False
-        self.max_coordinate_step = 0.25
         block_scale = config.residual_scale_init / sqrt(max(1, config.num_layers))
         self.blocks = nn.ModuleList(
             [
@@ -393,7 +409,7 @@ class _ELACore(_ELAStackCore):
                     num_edge_relations=config.num_edge_relations,
                     multipole_rank=self.multipole_rank,
                     residual_scale_init=block_scale,
-                    condition_dim=self.condition_dim,
+                    condition_dim=config.condition_dim,
                     coordinate_updates=False,
                     residual_dropout=0.0,
                     drop_path_probability=0.0,
@@ -405,7 +421,7 @@ class _ELACore(_ELAStackCore):
         )
 
 
-class _ELAEngine(_ELARuntime):
+class _ELAEngine(nn.Module):
     """Internal engine behind the single public ELA architecture.
 
     Optional features do not create alternative model classes. They are enabled
@@ -436,7 +452,7 @@ class _ELAEngine(_ELARuntime):
 
         self.coordinate_head: EquivariantVectorHead | None = None
         self.coordinate_gate: nn.Linear | None = None
-        if config.features.coordinate_refinement:
+        if config.coordinate_updates > 0:
             self.coordinate_head = EquivariantVectorHead(
                 config.width,
                 config.num_heads,
@@ -452,6 +468,107 @@ class _ELAEngine(_ELARuntime):
                 final.bias.zero_()
                 self.coordinate_gate.weight.zero_()
                 self.coordinate_gate.bias.zero_()
+
+    @property
+    def layers(self) -> nn.ModuleList:
+        return self.core.layers
+
+    def _initialize_chiral_bridge(self) -> None:
+        with torch.no_grad():
+            for layer in self.core.layers:
+                weight = layer.local_chiral_scalar_out.weight
+                weight.zero_()
+                rows = torch.arange(weight.shape[0], device=weight.device)
+                weight[rows, rows.remainder(weight.shape[1])] = 1.0
+
+    def _validate_graph_inputs(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> None:
+        if not isinstance(graph, Prepared3DGraph) or not graph._validated:
+            raise TypeError("graph must be a validated Prepared3DGraph")
+        if node_irreps.shape[0] != graph.num_nodes:
+            raise ValueError("node_irreps node count must match graph")
+        if pos.shape != (graph.num_nodes, 3):
+            raise ValueError("pos must have shape (N, 3)")
+        if node_irreps.device != graph.device or pos.device != graph.device:
+            raise ValueError("model inputs and graph must share one device")
+
+    def split_input(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
+        return split_irreps(self.config.input_layout, value)
+
+    def split_output(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
+        return split_irreps(self.output_irreps, value)
+
+    def prepare_context(
+        self,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> _ELALayerContext:
+        dummy = pos.new_zeros((graph.num_nodes, self.config.input_layout.dim))
+        self._validate_graph_inputs(dummy, pos, graph)
+        return self.core.prepare_context(
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+        )
+
+    def embed_input(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> tuple[_ELAHiddenState, _ELALayerContext]:
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        context = self.core.prepare_context(
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+        )
+        return self.core.embed_input(node_irreps, context), context
+
+    def project_state(self, state: _ELAHiddenState) -> torch.Tensor:
+        return self.core.project_state(state)
+
+    def _core_forward_features(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        condition: torch.Tensor | None,
+    ) -> tuple[_ELAHiddenState, torch.Tensor, torch.Tensor]:
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        return self.core.forward_features(
+            node_irreps,
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+            condition=condition,
+        )
+
+    def _core_forward(
+        self,
+        node_irreps: torch.Tensor,
+        pos: torch.Tensor,
+        graph: Prepared3DGraph,
+        *,
+        condition: torch.Tensor | None,
+    ) -> dict[str, torch.Tensor]:
+        self._validate_graph_inputs(node_irreps, pos, graph)
+        return self.core(
+            node_irreps,
+            pos,
+            graph.batch,
+            graph.graph_layout,
+            graph.neighbors,
+            condition=condition,
+        )
 
     @staticmethod
     def _validate_finite(name: str, value: torch.Tensor) -> None:
@@ -546,64 +663,56 @@ class _ELAEngine(_ELARuntime):
 
     @staticmethod
     def _selected_mask(
-        request: RefinementRequest,
+        update_mask: torch.Tensor | None,
         *,
         num_nodes: int,
         device: torch.device,
     ) -> torch.Tensor:
-        mask = request.update_mask
-        if mask is None:
+        if update_mask is None:
             return torch.ones(num_nodes, device=device, dtype=torch.bool)
-        if not isinstance(mask, torch.Tensor):
+        if not isinstance(update_mask, torch.Tensor):
             raise TypeError("update_mask must be a tensor")
-        if mask.dtype != torch.bool:
+        if update_mask.dtype != torch.bool:
             raise TypeError("update_mask must use torch.bool")
-        if mask.shape != (num_nodes,):
+        if update_mask.shape != (num_nodes,):
             raise ValueError("update_mask must have shape (N,)")
-        if mask.device != device:
+        if update_mask.device != device:
             raise ValueError("update_mask and positions must share one device")
-        return mask
+        return update_mask
 
     @staticmethod
     def _center_and_bound(
         raw: torch.Tensor,
         batch: torch.Tensor,
         selected: torch.Tensor,
-        request: RefinementRequest,
+        *,
+        max_step: float,
     ) -> torch.Tensor:
+        """Center selected updates per graph and bound the graphwise max step."""
+
         batch_index = batch.to(dtype=torch.long)
         if batch_index.numel() == 0:
-            raise ValueError("coordinate refinement requires at least one node")
+            raise ValueError("coordinate updates require at least one node")
         num_graphs = int(batch_index.max().item()) + 1
         masked = torch.where(selected[:, None], raw, torch.zeros_like(raw))
-        if request.centering == "none":
-            centered = masked
-        elif request.centering == "graph":
-            graph_sum = raw.new_zeros((num_graphs, 3)).index_add(
-                0, batch_index, raw
-            )
-            counts = torch.bincount(
-                batch_index, minlength=num_graphs
-            ).clamp_min(1)
-            centered = raw - graph_sum[batch_index] / counts[
-                batch_index, None
-            ].to(dtype=raw.dtype)
-            centered = torch.where(
-                selected[:, None], centered, torch.zeros_like(centered)
-            )
-        else:
-            selected_sum = raw.new_zeros((num_graphs, 3)).index_add(
-                0, batch_index, masked
-            )
-            selected_count = torch.bincount(
-                batch_index[selected], minlength=num_graphs
-            ).clamp_min(1)
-            centered = raw - selected_sum[batch_index] / selected_count[
-                batch_index, None
-            ].to(dtype=raw.dtype)
-            centered = torch.where(
-                selected[:, None], centered, torch.zeros_like(centered)
-            )
+        selected_sum = raw.new_zeros((num_graphs, 3)).index_add(
+            0,
+            batch_index,
+            masked,
+        )
+        selected_count = torch.bincount(
+            batch_index[selected],
+            minlength=num_graphs,
+        ).clamp_min(1)
+        centered = raw - selected_sum[batch_index] / selected_count[
+            batch_index,
+            None,
+        ].to(dtype=raw.dtype)
+        centered = torch.where(
+            selected[:, None],
+            centered,
+            torch.zeros_like(centered),
+        )
 
         norms = torch.linalg.vector_norm(centered, dim=-1)
         graph_max = norms.new_zeros((num_graphs,))
@@ -614,22 +723,19 @@ class _ELAEngine(_ELARuntime):
             reduce="amax",
             include_self=True,
         )
-        scale = (
-            float(request.max_step)
-            / graph_max.clamp_min(float(request.max_step))
-        ).clamp(max=1.0)
+        scale = (max_step / graph_max.clamp_min(max_step)).clamp(max=1.0)
         return centered * scale[batch_index, None]
 
     def _coordinate_delta(
         self,
         state: _ELAHiddenState,
         graph: Prepared3DGraph,
-        request: RefinementRequest,
+        update_mask: torch.Tensor | None,
     ) -> torch.Tensor:
         if self.coordinate_head is None or self.coordinate_gate is None:
-            raise RuntimeError("coordinate refinement is not enabled in ELAFeatures")
+            raise RuntimeError("coordinate updates are not enabled on this model")
         selected = self._selected_mask(
-            request,
+            update_mask,
             num_nodes=graph.num_nodes,
             device=graph.device,
         )
@@ -638,7 +744,54 @@ class _ELAEngine(_ELARuntime):
             state.polar_vector,
         ).squeeze(1)
         raw = torch.sigmoid(self.coordinate_gate(state.even_scalar)) * raw
-        return self._center_and_bound(raw, graph.batch, selected, request)
+        return self._center_and_bound(
+            raw,
+            graph.batch,
+            selected,
+            max_step=float(self.config.max_coordinate_step),
+        )
+
+    def _refresh_coordinate_graph(
+        self,
+        positions: torch.Tensor,
+        graph: Prepared3DGraph,
+    ) -> Prepared3DGraph:
+        if graph.spec.source == "explicit" or graph.spec.can_reuse_positions(positions):
+            return graph
+
+        relation_count = self.config.geometry.num_edge_relations
+        if relation_count > 1:
+            raise ValueError(
+                "automatic radius updates cannot infer multiple semantic relations"
+            )
+        spec = PreparationSpec.radius(
+            positions,
+            cutoff=self.config.geometry.cutoff,
+            max_neighbors=graph.spec.max_neighbors,
+            include_self=False,
+            num_edge_relations=relation_count,
+            skin=self.config.geometry.skin,
+        )
+        edge_index = radius_graph(
+            positions,
+            cutoff=float(spec.candidate_cutoff),
+            batch=graph.batch,
+            max_neighbors=spec.max_neighbors,
+            include_self=False,
+        )
+        relation = None
+        if relation_count == 1:
+            relation = torch.zeros(
+                edge_index.shape[1],
+                device=edge_index.device,
+                dtype=torch.long,
+            )
+        return prepare_3d_graph(
+            graph.batch,
+            edge_index,
+            edge_relation_id=relation,
+            spec=spec,
+        )
 
     def forward_features(
         self,
@@ -653,7 +806,7 @@ class _ELAEngine(_ELARuntime):
             graph,
             dtype=node_irreps.dtype,
         )
-        return super().forward_features(
+        return self._core_forward_features(
             node_irreps,
             pos,
             graph,
@@ -667,35 +820,35 @@ class _ELAEngine(_ELARuntime):
         graph: Prepared3DGraph,
         *,
         context: ELAContext | None = None,
+        update_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        refinement = None if context is None else context.refinement
-        if refinement is None:
+        if self.config.coordinate_updates == 0:
+            if update_mask is not None:
+                raise ValueError(
+                    "update_mask was supplied but update_positions=False on the model"
+                )
             condition = self.encode_context(
                 context,
                 graph,
                 dtype=node_irreps.dtype,
             )
-            return super().forward(
+            return self._core_forward(
                 node_irreps,
                 pos,
                 graph,
                 condition=condition,
             )
-        if not self.config.features.coordinate_refinement:
-            raise ValueError(
-                "refinement was requested but ELAFeatures.coordinate_refinement is false"
-            )
 
         current_positions = pos
         current_graph = graph
         total_delta = torch.zeros_like(pos)
-        for _ in range(refinement.steps):
+        for _ in range(self.config.coordinate_updates):
             condition = self.encode_context(
                 context,
                 current_graph,
                 dtype=node_irreps.dtype,
             )
-            state, _, _ = super().forward_features(
+            state, _, _ = self._core_forward_features(
                 node_irreps,
                 current_positions,
                 current_graph,
@@ -704,24 +857,14 @@ class _ELAEngine(_ELARuntime):
             delta = self._coordinate_delta(
                 state,
                 current_graph,
-                refinement,
+                update_mask,
             ).to(dtype=current_positions.dtype)
             current_positions = current_positions + delta
             total_delta = total_delta + delta
-            if refinement.graph_rebuilder is not None:
-                rebuilt = refinement.graph_rebuilder(
-                    current_positions,
-                    current_graph.batch,
-                )
-                if not isinstance(rebuilt, Prepared3DGraph):
-                    raise TypeError("graph_rebuilder must return Prepared3DGraph")
-                if rebuilt.num_nodes != current_graph.num_nodes:
-                    raise ValueError("rebuilt graph must preserve node count")
-                if rebuilt.device != current_graph.device:
-                    raise ValueError("rebuilt graph must preserve device")
-                if not torch.equal(rebuilt.batch, current_graph.batch):
-                    raise ValueError("rebuilt graph must preserve graph membership")
-                current_graph = rebuilt
+            current_graph = self._refresh_coordinate_graph(
+                current_positions,
+                current_graph,
+            )
 
         condition = self.encode_context(
             context,
@@ -729,7 +872,7 @@ class _ELAEngine(_ELARuntime):
             dtype=node_irreps.dtype,
         )
         output = dict(
-            super().forward(
+            self._core_forward(
                 node_irreps,
                 current_positions,
                 current_graph,

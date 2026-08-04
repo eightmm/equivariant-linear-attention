@@ -4,7 +4,8 @@ import pytest
 import torch
 
 import equivariant_linear_attention.kernels.local as optimized_local
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.batch import ELABatch
 from equivariant_linear_attention.kernels.triton import (
     _trusted_csr_sum_many,
     _trusted_weighted_gather_reduce_pair,
@@ -360,16 +361,15 @@ def test_full_triton_inference_uses_weighted_gather_reduce(
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).to(device)
     features = torch.randn(8, 4, device=device)
     positions = torch.randn(8, 3, device=device)
-    prepared = model.prepare(
+    prepared = model._prepare_packed(
         ELABatch(features, positions, edge_index=_complete_edges(8, device))
     )
 
     with torch.inference_mode(), kernel_backend("triton"):
-        model.forward_prepared(prepared)
+        model._forward_prepared(prepared)
 
     assert observed_lanes == [(0, 1), (2, 3)]
 
@@ -419,7 +419,7 @@ def test_full_ela_triton_matches_torch_output_and_gradients() -> None:
         positions=positions,
         edge_index=_complete_edges(nodes, device),
     )
-    prepared = reference_model.prepare(base)
+    prepared = reference_model._prepare_packed(base)
 
     reference_x = features.detach().clone().requires_grad_(True)
     reference_pos = positions.detach().clone().requires_grad_(True)
@@ -430,7 +430,9 @@ def test_full_ela_triton_matches_torch_output_and_gradients() -> None:
         _prepared_graph=prepared._prepared_graph,
     )
     with kernel_backend("torch"):
-        reference_output = reference_model(reference_batch)["node_irreps"]
+        reference_output = reference_model._forward_prepared(reference_batch)[
+            "node_irreps"
+        ]
         reference_output.square().mean().backward()
 
     triton_x = features.detach().clone().requires_grad_(True)
@@ -442,7 +444,7 @@ def test_full_ela_triton_matches_torch_output_and_gradients() -> None:
         _prepared_graph=prepared._prepared_graph,
     )
     with kernel_backend("triton"):
-        triton_output = triton_model(triton_batch)["node_irreps"]
+        triton_output = triton_model._forward_prepared(triton_batch)["node_irreps"]
         triton_output.square().mean().backward()
 
     torch.testing.assert_close(
@@ -483,7 +485,6 @@ def test_native_bfloat16_full_ela_matches_torch() -> None:
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).to(device=device, dtype=torch.bfloat16)
     _activate_local_outputs(reference_model)
     triton_model = ELA(
@@ -492,7 +493,6 @@ def test_native_bfloat16_full_ela_matches_torch() -> None:
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).to(device=device, dtype=torch.bfloat16)
     triton_model.load_state_dict(reference_model.state_dict(), strict=True)
 
@@ -510,7 +510,7 @@ def test_native_bfloat16_full_ela_matches_torch() -> None:
         dtype=torch.bfloat16,
     )
     edges = _complete_edges(nodes, device)
-    prepared = reference_model.prepare(ELABatch(features, positions, edge_index=edges))
+    prepared = reference_model._prepare_packed(ELABatch(features, positions, edge_index=edges))
 
     reference_x = features.clone().requires_grad_(True)
     reference_pos = positions.clone().requires_grad_(True)
@@ -521,7 +521,7 @@ def test_native_bfloat16_full_ela_matches_torch() -> None:
         _prepared_graph=prepared._prepared_graph,
     )
     with kernel_backend("torch"):
-        reference = reference_model(reference_batch)["node_irreps"]
+        reference = reference_model._forward_prepared(reference_batch)["node_irreps"]
         reference.float().square().mean().backward()
 
     triton_x = features.clone().requires_grad_(True)
@@ -533,7 +533,7 @@ def test_native_bfloat16_full_ela_matches_torch() -> None:
         _prepared_graph=prepared._prepared_graph,
     )
     with kernel_backend("triton"):
-        actual = triton_model(triton_batch)["node_irreps"]
+        actual = triton_model._forward_prepared(triton_batch)["node_irreps"]
         actual.float().square().mean().backward()
 
     torch.testing.assert_close(actual, reference, atol=0.04, rtol=0.04)

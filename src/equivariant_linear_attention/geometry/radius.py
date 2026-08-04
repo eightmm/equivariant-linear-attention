@@ -288,6 +288,147 @@ def _cell_edges(
     )
 
 
+def _batched_cell_edges(
+    positions: torch.Tensor,
+    batch: torch.Tensor,
+    *,
+    num_graphs: int,
+    cutoff: float,
+    cutoff_squared: float,
+    include_self: bool,
+    max_neighbors: int | None,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Exact multi-graph cell list without a Python loop over graphs."""
+
+    nodes = positions.shape[0]
+    if nodes == 0:
+        empty = torch.empty(0, device=positions.device, dtype=torch.long)
+        return empty, empty
+    work = positions.detach().to(
+        dtype=torch.float64 if positions.dtype == torch.float64 else torch.float32
+    )
+    cell = torch.floor(work / cutoff).to(dtype=torch.long)
+    minimum = torch.full(
+        (num_graphs, 3),
+        torch.iinfo(torch.long).max,
+        device=positions.device,
+        dtype=torch.long,
+    )
+    maximum = torch.full(
+        (num_graphs, 3),
+        torch.iinfo(torch.long).min,
+        device=positions.device,
+        dtype=torch.long,
+    )
+    expanded_batch = batch[:, None].expand(-1, 3)
+    minimum.scatter_reduce_(
+        0, expanded_batch, cell, reduce="amin", include_self=True
+    )
+    maximum.scatter_reduce_(
+        0, expanded_batch, cell, reduce="amax", include_self=True
+    )
+    spans_by_graph = maximum - minimum + 1
+    spans = spans_by_graph.amax(dim=0).to(device="cpu")
+    span_x, span_y, span_z = (int(value) for value in spans.tolist())
+    if num_graphs * span_x * span_y * span_z > _INT64_SAFE:
+        return None
+
+    shifted = cell - minimum[batch]
+    key = (
+        ((batch * span_x + shifted[:, 0]) * span_y + shifted[:, 1])
+        * span_z
+        + shifted[:, 2]
+    )
+    node_order = torch.argsort(key, stable=True)
+    sorted_key = key[node_order]
+    unique_key, counts = torch.unique_consecutive(sorted_key, return_counts=True)
+    cell_ptr = torch.cat([counts.new_zeros((1,)), counts.cumsum(0)])
+    representative = node_order[cell_ptr[:-1]]
+    unique_graph = batch[representative]
+    unique_shifted = shifted[representative]
+    cell_ids = torch.arange(unique_key.numel(), device=positions.device)
+
+    receiver_parts: list[torch.Tensor] = []
+    sender_parts: list[torch.Tensor] = []
+    distance_parts: list[torch.Tensor] = []
+    for offset_tuple in _CELL_OFFSETS:
+        offset = unique_shifted.new_tensor(offset_tuple)
+        neighbor_shifted = unique_shifted + offset
+        graph_spans = spans_by_graph[unique_graph]
+        in_bounds = (
+            (neighbor_shifted >= 0) & (neighbor_shifted < graph_spans)
+        ).all(dim=-1)
+        if not bool(in_bounds.any().item()):
+            continue
+        source_cell = cell_ids[in_bounds]
+        candidate_graph = unique_graph[in_bounds]
+        candidate_shifted = neighbor_shifted[in_bounds]
+        candidate_key = (
+            (
+                (candidate_graph * span_x + candidate_shifted[:, 0])
+                * span_y
+                + candidate_shifted[:, 1]
+            )
+            * span_z
+            + candidate_shifted[:, 2]
+        )
+        destination_cell = torch.searchsorted(unique_key, candidate_key)
+        found = destination_cell < unique_key.numel()
+        if bool(found.any().item()):
+            safe = destination_cell.clamp_max(max(0, unique_key.numel() - 1))
+            found = found & (unique_key[safe] == candidate_key)
+        if not bool(found.any().item()):
+            continue
+        source_cell = source_cell[found]
+        destination_cell = destination_cell[found]
+        source_count = counts[source_cell]
+        destination_count = counts[destination_cell]
+        pair_count = source_count * destination_count
+        total_pairs = int(pair_count.sum().item())
+        if total_pairs == 0:
+            continue
+        group = torch.repeat_interleave(
+            torch.arange(source_cell.numel(), device=positions.device),
+            pair_count,
+            output_size=total_pairs,
+        )
+        group_start = torch.repeat_interleave(
+            pair_count.cumsum(0) - pair_count,
+            pair_count,
+            output_size=total_pairs,
+        )
+        within = torch.arange(total_pairs, device=positions.device) - group_start
+        destination_width = destination_count[group]
+        source_local = within // destination_width
+        destination_local = within - source_local * destination_width
+        receiver = node_order[cell_ptr[source_cell[group]] + source_local]
+        sender = node_order[
+            cell_ptr[destination_cell[group]] + destination_local
+        ]
+        distance_squared = (work[sender] - work[receiver]).square().sum(dim=-1)
+        valid = distance_squared < cutoff_squared
+        if not include_self:
+            valid = valid & (receiver != sender)
+        if bool(valid.any().item()):
+            receiver_parts.append(receiver[valid])
+            sender_parts.append(sender[valid])
+            distance_parts.append(distance_squared[valid])
+
+    if not receiver_parts:
+        empty = torch.empty(0, device=positions.device, dtype=torch.long)
+        return empty, empty
+    receiver = torch.cat(receiver_parts)
+    sender = torch.cat(sender_parts)
+    distance_squared = torch.cat(distance_parts)
+    return _limit_neighbors(
+        receiver,
+        sender,
+        distance_squared,
+        nodes=nodes,
+        max_neighbors=max_neighbors,
+    )
+
+
 def radius_graph(
     positions: torch.Tensor,
     *,
@@ -322,11 +463,63 @@ def radius_graph(
     _validate_positive_int("max_neighbors", max_neighbors)
     _validate_positive_int("dense_threshold", dense_threshold)
     _validate_positive_int("chunk_size", chunk_size)
+
+    if ptr is not None and batch is not None:
+        raise ValueError("supply ptr or batch, not both")
+    if batch is not None:
+        if batch.shape != (positions.shape[0],):
+            raise ValueError("batch must have shape (N,)")
+        if batch.dtype not in _INTEGER_DTYPES:
+            raise TypeError("batch must use an integer dtype")
+        batch_long = batch.to(dtype=torch.long)
+        if batch_long.numel() and bool((batch_long < 0).any().item()):
+            raise ValueError("batch values must be nonnegative")
+        if batch_long.numel():
+            unique = torch.unique(batch_long, sorted=True)
+            expected = torch.arange(
+                int(batch_long.max().item()) + 1,
+                device=batch_long.device,
+            )
+            if not torch.equal(unique, expected):
+                raise ValueError("batch graph IDs must be contiguous from zero")
+        if bool((batch_long[1:] < batch_long[:-1]).any().item()):
+            order = torch.argsort(batch_long, stable=True)
+            sorted_edges = radius_graph(
+                positions[order],
+                cutoff=cutoff,
+                batch=batch_long[order],
+                max_neighbors=max_neighbors,
+                include_self=include_self,
+                dense_threshold=dense_threshold,
+                chunk_size=chunk_size,
+            )
+            return order[sorted_edges]
     graph_ptr = _normalize_ptr(positions, ptr=ptr, batch=batch)
+
+    cutoff_squared = cutoff_value * cutoff_value
+    num_graphs = graph_ptr.numel() - 1
+    if num_graphs > 1:
+        counts = graph_ptr[1:] - graph_ptr[:-1]
+        batch_index = torch.repeat_interleave(
+            torch.arange(num_graphs, device=positions.device),
+            counts,
+            output_size=positions.shape[0],
+        )
+        batched = _batched_cell_edges(
+            positions,
+            batch_index,
+            num_graphs=num_graphs,
+            cutoff=cutoff_value,
+            cutoff_squared=cutoff_squared,
+            include_self=include_self,
+            max_neighbors=max_neighbors,
+        )
+        if batched is not None:
+            receiver, sender = batched
+            return torch.stack([receiver, sender])
 
     receivers: list[torch.Tensor] = []
     senders: list[torch.Tensor] = []
-    cutoff_squared = cutoff_value * cutoff_value
     boundaries = [
         int(value) for value in graph_ptr.detach().to("cpu").tolist()
     ]

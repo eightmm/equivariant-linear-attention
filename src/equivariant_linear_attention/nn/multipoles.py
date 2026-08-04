@@ -243,9 +243,10 @@ class _ParitySectorNorm(nn.Module):
         value: torch.Tensor,
         gain: torch.Tensor,
     ) -> torch.Tensor:
-        inverse = (
-            value.square().mean(dim=(-2, -1), keepdim=True) + self.eps
-        ).rsqrt()
+        # Normalize each irrep copy independently over its Cartesian
+        # components. Different geometric channels therefore retain distinct
+        # magnitudes instead of sharing one sector-wide RMS.
+        inverse = (value.square().mean(dim=-1, keepdim=True) + self.eps).rsqrt()
         return value * inverse * gain.to(dtype=value.dtype).reshape(1, -1, 1)
 
     def _tensor_sector(
@@ -253,7 +254,7 @@ class _ParitySectorNorm(nn.Module):
         value: torch.Tensor,
         gain: torch.Tensor,
     ) -> torch.Tensor:
-        square = _st_square(value).mean(dim=-1, keepdim=True) / 5.0
+        square = _st_square(value) / 5.0
         inverse = (square + self.eps).rsqrt().unsqueeze(-1)
         return value * inverse * gain.to(dtype=value.dtype).reshape(1, -1, 1)
 

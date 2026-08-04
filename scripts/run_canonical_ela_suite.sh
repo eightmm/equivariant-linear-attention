@@ -76,11 +76,12 @@ fi
 
 uv run --locked pytest -q \
   tests/test_api_policy.py \
-  tests/test_elabatch_api.py \
+  tests/test_elagraph_api.py \
+  tests/test_preparation_provenance.py \
+  tests/test_architecture_hardening.py \
+  tests/test_st5_metrics.py \
   tests/test_dependency_free_radius_graph.py \
   tests/test_kernel_triton.py \
-  tests/test_branch_fusion.py \
-  tests/test_branch_fusion_zero_init.py \
   tests/test_canonical_api.py \
   tests/test_canonical_double_backward.py \
   tests/test_canonical_equivariance.py \
@@ -149,7 +150,7 @@ for name in required:
         "bytes": len(data),
     }
 manifest = {
-    "schema_version": 6,
+    "schema_version": 7,
     "suite": "canonical_ela",
     "status": "completed",
     "mode": mode,
@@ -157,8 +158,11 @@ manifest = {
     "dtype": dtype,
     "git_sha": git_sha,
     "public_architecture": "ELA",
-    "public_layer": "ELALayer",
-    "public_graph_container": "ELABatch",
+    "public_graph_and_output": "ELAGraph",
+    "public_contract": "ELAGraph -> ELA -> ELAGraph",
+    "graph_input": "ELAGraph",
+    "private_prepared_ir": "packed_receiver_major_csr",
+    "inspectable_layer": "internal_ELALayer",
     "representation_api": "input_output_irreps",
     "internal_graph_layout": "packed_nodes_receiver_csr",
     "kernel_backends": list(kernels["profiles"]),

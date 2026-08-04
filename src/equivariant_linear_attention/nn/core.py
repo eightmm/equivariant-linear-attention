@@ -82,8 +82,19 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         self.tensor_key_even = _ChannelMix(num_heads, num_heads)
         self.tensor_query_odd = _ChannelMix(num_heads, num_heads)
         self.tensor_key_odd = _ChannelMix(num_heads, num_heads)
+        self.query_odd_scalar = _ChannelMix(num_heads, num_heads)
+        self.key_odd_scalar = _ChannelMix(num_heads, num_heads)
         self.raw_tensor_alignment = nn.Parameter(
             torch.full((2, num_heads), -2.0)
+        )
+        self.raw_odd_alignment = nn.Parameter(torch.full((num_heads,), -2.0))
+        self.register_buffer(
+            "global_radial_centers",
+            torch.linspace(0.0, 1.5, 4),
+            persistent=True,
+        )
+        self.raw_global_radial_alignment = nn.Parameter(
+            torch.full((num_heads, 4), -3.0)
         )
 
         self.local_odd_scalar_query = _ChannelMix(num_heads, local_rank)
@@ -98,6 +109,19 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             bias=False,
         )
         self.local_tensor_mix = nn.Parameter(torch.zeros(5, local_rank))
+        self.relation_radial_scale = (
+            nn.Parameter(torch.zeros(num_edge_relations, local_rank))
+            if num_edge_relations
+            else None
+        )
+        self.relation_value_gate = (
+            nn.Parameter(torch.zeros(num_edge_relations, local_rank, 9))
+            if num_edge_relations
+            else None
+        )
+        self.second_moment_chiral_mix = nn.Parameter(
+            torch.zeros(local_rank)
+        )
         nn.init.zeros_(self.local_tensor_radial_score.weight)
 
         self.tensor_closure = _LowOrderTensorClosure(
@@ -256,6 +280,14 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
                 self.eps,
             )
         )
+        query_odd_scalar = _bounded_scalar(
+            self.query_odd_scalar(state.odd_scalar),
+            self.eps,
+        )
+        key_odd_scalar = _bounded_scalar(
+            self.key_odd_scalar(state.odd_scalar),
+            self.eps,
+        )
 
         vector_alignment = F.softplus(self.raw_alignment_scale)
         tensor_alignment = F.softplus(self.raw_tensor_alignment)
@@ -263,6 +295,33 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         axial_scale = vector_alignment[1]
         even_tensor_scale = tensor_alignment[0]
         odd_tensor_scale = tensor_alignment[1]
+        odd_scalar_scale = F.softplus(self.raw_odd_alignment)
+        odd_query_feature = torch.stack(
+            (1.0 + query_odd_scalar, 1.0 - query_odd_scalar),
+            dim=-1,
+        ) * torch.sqrt(0.5 * odd_scalar_scale)[None, :, None]
+        odd_key_feature = torch.stack(
+            (1.0 + key_odd_scalar, 1.0 - key_odd_scalar),
+            dim=-1,
+        ) * torch.sqrt(0.5 * odd_scalar_scale)[None, :, None]
+
+        radius_squared = normalized_pos.to(
+            dtype=state.even_scalar.dtype
+        ).square().sum(dim=-1)
+        centers = self.global_radial_centers.to(
+            device=radius_squared.device,
+            dtype=radius_squared.dtype,
+        ).square()
+        # Squared-radius shells avoid the non-differentiable norm at the graph
+        # centre while remaining invariant and positive.
+        radial_shell = torch.exp(
+            -4.0 * (radius_squared[:, None] - centers[None, :]).square()
+        )
+        radial_scale = F.softplus(self.raw_global_radial_alignment).to(
+            dtype=radius_squared.dtype
+        )
+        radial_feature = radial_shell[:, None, :] * torch.sqrt(radial_scale)[None, :, :]
+
         constant = torch.sqrt(
             1.0
             + polar_scale
@@ -274,6 +333,8 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             [
                 query_scalar,
                 constant.expand(num_nodes, -1, -1),
+                odd_query_feature,
+                radial_feature,
                 torch.sqrt(polar_scale)[None, :, None] * query_polar,
                 torch.sqrt(axial_scale)[None, :, None] * query_axial,
                 torch.sqrt(even_tensor_scale)[None, :, None]
@@ -287,6 +348,8 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             [
                 key_scalar,
                 constant.expand(num_nodes, -1, -1),
+                odd_key_feature,
+                radial_feature,
                 torch.sqrt(polar_scale)[None, :, None] * key_polar,
                 torch.sqrt(axial_scale)[None, :, None] * key_axial,
                 torch.sqrt(even_tensor_scale)[None, :, None]
@@ -450,10 +513,10 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         sender_axial = axial_key[sender]
         polar_dot = (receiver_polar * sender_polar).sum(dim=-1)
         axial_dot = (receiver_axial * sender_axial).sum(dim=-1)
-        receiver_polar_axis = (receiver_polar * edge_direction).sum(dim=-1)
-        sender_polar_axis = (sender_polar * edge_direction).sum(dim=-1)
-        receiver_axial_axis = (receiver_axial * edge_direction).sum(dim=-1)
-        sender_axial_axis = (sender_axial * edge_direction).sum(dim=-1)
+        receiver_polar_axis = (receiver_polar * unit_direction).sum(dim=-1)
+        sender_polar_axis = (sender_polar * unit_direction).sum(dim=-1)
+        receiver_axial_axis = (receiver_axial * unit_direction).sum(dim=-1)
+        sender_axial_axis = (sender_axial * unit_direction).sum(dim=-1)
 
         odd_query = self.local_odd_scalar_query(state.odd_scalar).to(dtype=dtype)
         odd_key = self.local_odd_scalar_key(state.odd_scalar).to(dtype=dtype)
@@ -489,9 +552,21 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             _st_matvec(odd_tensor_key[sender], unit_direction)
             * unit_direction
         ).sum(dim=-1)
+        relation_id = geometry.relation_id
+        radial_score = self.local_radial_score(rbf).to(dtype=dtype)
+        tensor_radial_score = self.local_tensor_radial_score(rbf).to(dtype=dtype)
+        if self.relation_radial_scale is not None:
+            if relation_id is None:
+                raise ValueError("relation-aware ELA requires relation metadata")
+            relation_scale = 1.0 + torch.tanh(
+                self.relation_radial_scale.to(dtype=dtype)[relation_id]
+            )
+            radial_score = radial_score * relation_scale
+            tensor_radial_score = tensor_radial_score * relation_scale
+
         tensor_mix = self.local_tensor_mix.to(dtype=dtype)
         tensor_score = (
-            self.local_tensor_radial_score(rbf).to(dtype=dtype)
+            tensor_radial_score
             + tensor_mix[0][None, :] * odd_query[receiver] * odd_key[sender]
             + tensor_mix[1][None, :] * _st_inner(
                 even_tensor_query[receiver],
@@ -508,7 +583,7 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         score = (
             scalar_query[receiver] * scalar_key[sender]
             + self.local_score_bias.to(dtype=dtype)[None, :]
-            + self.local_radial_score(rbf).to(dtype=dtype)
+            + radial_score
             + self.local_polar_mix[0].to(dtype=dtype)[None, :] * polar_dot
             + self.local_polar_mix[1].to(dtype=dtype)[None, :]
             * receiver_polar_axis
@@ -520,13 +595,9 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             + tensor_score
         )
         if self.relation_score_bias is not None:
-            if geometry.relation_id is None:
-                raise ValueError(
-                    "relation-aware ELA requires relation metadata"
-                )
-            score = score + self.relation_score_bias.to(dtype=dtype)[
-                geometry.relation_id
-            ]
+            if relation_id is None:
+                raise ValueError("relation-aware ELA requires relation metadata")
+            score = score + self.relation_score_bias.to(dtype=dtype)[relation_id]
         positive_gate = torch.exp(3.0 * torch.tanh(score / 3.0))
         raw_weight = geometry.cutoff.to(dtype=dtype)[:, None] * positive_gate
         mass = _csr_sum(raw_weight, geometry.row_ptr)
@@ -556,6 +627,15 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
                 9,
             )
         ).to(dtype=dtype)
+        if self.relation_value_gate is not None:
+            if relation_id is None:
+                raise ValueError("relation-aware ELA requires relation metadata")
+            radial_gate = radial_gate * (
+                1.0
+                + torch.tanh(
+                    self.relation_value_gate.to(dtype=dtype)[relation_id]
+                )
+            )
 
         def reduce_rank(value: torch.Tensor) -> torch.Tensor:
             return _csr_sum(value, geometry.row_ptr)
@@ -609,7 +689,16 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             second_direction,
             dim=-1,
         )
-        chiral_scalar = (chiral_axial * third_direction).sum(dim=-1)
+        tensor_direction = _st_matvec(even_tensor_rank, third_direction)
+        second_axial = torch.cross(second_direction, tensor_direction, dim=-1)
+        second_scalar = (first_direction * second_axial).sum(dim=-1)
+        second_mix = torch.tanh(self.second_moment_chiral_mix).to(dtype=dtype)
+        # Keep the proven first-moment axial/tensor channel unchanged.  The
+        # second-moment pseudoscalar is an isolated zero-initialized residual,
+        # so it cannot silently alter the canonical initialization.
+        chiral_scalar = (
+            chiral_axial * third_direction
+        ).sum(dim=-1) + second_mix[None, :] * second_scalar
         chiral_tensor = _st_cross(third_direction, chiral_axial)
 
         scalar_message = self.local_scalar_out(scalar_rank)
@@ -617,17 +706,18 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
             torch.cat([torch.log1p(mass), torch.log1p(mass_square)], dim=-1)
             .to(dtype=state.even_scalar.dtype)
         ).reshape(num_nodes, self.num_heads, self.head_dim).to(dtype=dtype)
+        chiral_scalar_message = self.local_chiral_scalar_out(chiral_scalar)
         return (
             scalar_message,
             self.local_odd_out(odd_rank)
-            + self.local_chiral_scalar_out(chiral_scalar),
+            + chiral_scalar_message,
             self.local_polar_out(polar_rank),
             self.local_axial_out(axial_rank)
             + self.local_chiral_axial_out(chiral_axial),
             self.local_even_tensor_out(even_tensor_rank),
             self.local_odd_tensor_out(odd_tensor_rank)
             + self.local_chiral_tensor_out(chiral_tensor),
-            self.local_chiral_scalar_out(chiral_scalar),
+            chiral_scalar_message,
         )
 
     def _enhanced_ffn(self, state: _ParityState) -> _ParityState:

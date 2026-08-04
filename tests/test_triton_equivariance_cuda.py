@@ -3,15 +3,16 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention import (
-    ELA,
-    ELABatch,
-    IrrepLayout,
-    RefinementRequest,
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.batch import ELABatch
+from equivariant_linear_attention.advanced import (
     conservative_forces,
-    matrix_to_st5,
     pack_irreps,
     split_irreps,
+)
+from equivariant_linear_attention.irreps import (
+    IrrepLayout,
+    matrix_to_st5,
     st5_to_matrix,
 )
 from equivariant_linear_attention.kernels.triton import kernel_backend, triton_available
@@ -125,23 +126,25 @@ def _activate_every_local_sector(model: ELA) -> None:
                 module = getattr(layer, name)
                 module.weight.normal_(mean=0.0, std=0.05)
             layer.local_radial_value.weight.normal_(mean=0.0, std=0.03)
-            layer.branch_fusion.router[-1].weight.normal_(mean=0.0, std=0.04)
-            layer.branch_fusion.router[-1].bias.normal_(mean=0.0, std=0.04)
-            layer.branch_fusion.balance_strength.fill_(0.1)
+            layer.raw_odd_alignment.normal_(mean=-1.0, std=0.04)
+            layer.raw_global_radial_alignment.normal_(mean=-1.0, std=0.04)
+            # Keep the second-moment path large enough that any Torch/Triton
+            # equation drift is visible above the backend tolerance.
+            layer.second_moment_chiral_mix.fill_(1.25)
         if model.coordinate_head is not None:
             model.coordinate_head.base_weight.fill_(0.15)
 
 
-def _model(*, coordinate_refinement: bool = False) -> ELA:
+def _model(*, update_positions: bool = False) -> ELA:
     model = ELA(
         input_irreps=FULL_IRREPS,
         output_irreps=FULL_IRREPS,
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
-        num_edge_types=2,
-        coordinate_refinement=coordinate_refinement,
+        edge_types=2,
+        update_positions=update_positions,
+        max_coordinate_step=0.1,
     ).cuda()
     _activate_every_local_sector(model)
     return model
@@ -153,6 +156,12 @@ def _local_parameters(model: ELA) -> tuple[torch.Tensor, ...]:
         for name, parameter in model.layers[0].named_parameters()
         if name.startswith("local_") or name == "relation_score_bias"
     )
+
+
+def _forward_internal(model: ELA, batch: ELABatch) -> dict[str, torch.Tensor]:
+    """Exercise the private packed path in backend-level kernel tests."""
+
+    return model._forward_prepared(model._prepare_packed(batch))
 
 
 def test_forced_triton_full_irreps_matches_torch_and_all_local_vjps() -> None:
@@ -182,14 +191,15 @@ def test_forced_triton_full_irreps_matches_torch_and_all_local_vjps() -> None:
         *_local_parameters(reference_model),
     )
     with kernel_backend("torch"):
-        reference = reference_model(
+        reference = _forward_internal(
+            reference_model,
             ELABatch(
                 reference_features,
                 reference_positions,
                 ptr=ptr,
                 edge_index=edge_index,
                 edge_relation_id=relation,
-            )
+            ),
         )["node_irreps"]
         reference_gradients = torch.autograd.grad(
             (reference * cotangent).sum(),
@@ -204,14 +214,15 @@ def test_forced_triton_full_irreps_matches_torch_and_all_local_vjps() -> None:
         *_local_parameters(candidate_model),
     )
     with kernel_backend("triton"):
-        candidate = candidate_model(
+        candidate = _forward_internal(
+            candidate_model,
             ELABatch(
                 candidate_features,
                 candidate_positions,
                 ptr=ptr,
                 edge_index=edge_index,
                 edge_relation_id=relation,
-            )
+            ),
         )["node_irreps"]
         candidate_gradients = torch.autograd.grad(
             (candidate * cotangent).sum(),
@@ -250,7 +261,7 @@ def test_forced_triton_full_irreps_matches_torch_and_all_local_vjps() -> None:
 def test_forced_triton_obeys_o3_translation_permutation_and_refinement() -> None:
     torch.manual_seed(409)
     device = torch.device("cuda")
-    model = _model(coordinate_refinement=True).eval()
+    model = _model(update_positions=True).eval()
     ptr, edge_index, relation = _ragged_graph(device)
     nodes = int(ptr[-1].item())
     features = torch.randn(nodes, model.config.input_layout.dim, device=device)
@@ -259,20 +270,19 @@ def test_forced_triton_obeys_o3_translation_permutation_and_refinement() -> None
     if torch.linalg.det(orthogonal) > 0:
         orthogonal[:, 0].neg_()
     translation = torch.tensor([0.7, -1.1, 0.3], device=device)
-    refinement = RefinementRequest(steps=1, max_step=0.1, centering="graph")
-
     with torch.inference_mode(), kernel_backend("triton"):
-        reference = model(
+        reference = _forward_internal(
+            model,
             ELABatch(
                 features,
                 positions,
                 ptr=ptr,
                 edge_index=edge_index,
                 edge_relation_id=relation,
-                refinement=refinement,
-            )
+            ),
         )
-        transformed = model(
+        transformed = _forward_internal(
+            model,
             ELABatch(
                 _transform_irreps(
                     model.config.input_layout,
@@ -283,8 +293,7 @@ def test_forced_triton_obeys_o3_translation_permutation_and_refinement() -> None
                 ptr=ptr,
                 edge_index=edge_index,
                 edge_relation_id=relation,
-                refinement=refinement,
-            )
+            ),
         )
 
     assert torch.count_nonzero(reference["coordinate_delta"]) > 0
@@ -324,15 +333,15 @@ def test_forced_triton_obeys_o3_translation_permutation_and_refinement() -> None
     old_to_new[permutation] = torch.arange(nodes, device=device)
     edge_shuffle = torch.randperm(edge_index.shape[1], device=device)
     with torch.inference_mode(), kernel_backend("triton"):
-        permuted = model(
+        permuted = _forward_internal(
+            model,
             ELABatch(
                 features[permutation],
                 positions[permutation],
                 ptr=ptr,
                 edge_index=old_to_new[edge_index[:, edge_shuffle]],
                 edge_relation_id=relation[edge_shuffle],
-                refinement=refinement,
-            )
+            ),
         )
     torch.testing.assert_close(
         permuted["node_irreps"],
@@ -357,7 +366,6 @@ def test_forced_triton_conservative_force_double_backward_matches_torch() -> Non
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).cuda()
     _activate_every_local_sector(reference_model)
     candidate_model = ELA(
@@ -366,7 +374,6 @@ def test_forced_triton_conservative_force_double_backward_matches_torch() -> Non
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).cuda()
     candidate_model.load_state_dict(reference_model.state_dict(), strict=True)
     nodes = 7
@@ -383,9 +390,10 @@ def test_forced_triton_conservative_force_double_backward_matches_torch() -> Non
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         local_parameter = model.layers[0].local_radial_score.weight
         with kernel_backend(backend):
-            energy = model(ELABatch(features, position, edge_index=edge_index))[
-                "node_irreps"
-            ]
+            packed = model._prepare_packed(
+                ELABatch(features, position, edge_index=edge_index)
+            )
+            energy = model._forward_prepared(packed)["node_irreps"]
             forces = conservative_forces(energy, position, create_graph=True)
             position_hvp, parameter_hvp = torch.autograd.grad(
                 forces.square().sum(),

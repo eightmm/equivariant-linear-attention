@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.nn.functional as F
-import pytest
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA, ELAGraph
 
 
 def _complete_edges(ptr: torch.Tensor) -> torch.Tensor:
@@ -12,9 +12,9 @@ def _complete_edges(ptr: torch.Tensor) -> torch.Tensor:
     for start, stop in zip(ptr[:-1], ptr[1:], strict=True):
         first = int(start.item())
         nodes = int((stop - start).item())
-        receiver = torch.arange(nodes).repeat_interleave(nodes) + first
         sender = torch.arange(nodes).repeat(nodes) + first
-        parts.append(torch.stack([receiver, sender]))
+        receiver = torch.arange(nodes).repeat_interleave(nodes) + first
+        parts.append(torch.stack([sender, receiver]))
     return torch.cat(parts, dim=1)
 
 
@@ -69,34 +69,34 @@ def _model() -> ELA:
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=8,
     ).double()
 
 
 def test_flow_matching_velocity_shape_and_backward() -> None:
     torch.manual_seed(101)
-    features, x_t, target, ptr, _, time = _fixture()
+    features, x_t, target, ptr, batch_index, time = _fixture()
     features.requires_grad_(True)
     x_t.requires_grad_(True)
     model = _model()
-    batch = ELABatch(
-        node_irreps=features,
-        positions=x_t,
-        ptr=ptr,
+    graph = ELAGraph(
+        x=features,
+        pos=x_t,
+        batch=batch_index,
         edge_index=_complete_edges(ptr),
         condition=time,
     )
 
-    output = model(batch)
-    split_velocity = model.split_output(output["node"])["1o"]
+    output = model(graph)
+    split_velocity = model.split_output(output.x)["1o"]
     velocity = split_velocity.squeeze(-2)
     loss = F.mse_loss(velocity, target)
     loss.backward()
 
-    assert output["node"].shape == (7, 3)
+    assert output.x.shape == (7, 3)
     assert split_velocity.shape == (7, 1, 3)
     assert velocity.shape == target.shape
-    torch.testing.assert_close(output["delta"], torch.zeros_like(x_t))
+    assert output.delta is not None
+    torch.testing.assert_close(output.delta, torch.zeros_like(x_t))
     assert torch.isfinite(loss)
     assert features.grad is not None and torch.isfinite(features.grad).all()
     assert x_t.grad is not None and torch.isfinite(x_t.grad).all()
@@ -117,7 +117,7 @@ def test_flow_matching_velocity_obeys_o3_translation_and_permutation(
     determinant_sign: int,
 ) -> None:
     torch.manual_seed(103)
-    features, x_t, target, ptr, _, time = _fixture()
+    features, x_t, target, ptr, batch_index, time = _fixture()
     edges = _complete_edges(ptr)
     model = _model().eval()
     orthogonal, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
@@ -127,21 +127,19 @@ def test_flow_matching_velocity_obeys_o3_translation_and_permutation(
 
     with torch.inference_mode():
         reference_output = model(
-            ELABatch(features, x_t, ptr=ptr, edge_index=edges, condition=time)
+            ELAGraph(features, x_t, edge_index=edges, batch=batch_index, condition=time)
         )
-        reference = model.split_output(reference_output["node"])["1o"].squeeze(-2)
+        reference = model.split_output(reference_output.x)["1o"].squeeze(-2)
         transformed_output = model(
-            ELABatch(
+            ELAGraph(
                 features,
                 x_t @ orthogonal.T + translation,
-                ptr=ptr,
                 edge_index=edges,
+                batch=batch_index,
                 condition=time,
             )
         )
-        transformed = model.split_output(transformed_output["node"])[
-            "1o"
-        ].squeeze(-2)
+        transformed = model.split_output(transformed_output.x)["1o"].squeeze(-2)
 
     expected_velocity = reference @ orthogonal.T
     transformed_target = target @ orthogonal.T
@@ -163,15 +161,15 @@ def test_flow_matching_velocity_obeys_o3_translation_and_permutation(
     inverse[permutation] = torch.arange(permutation.numel())
     with torch.inference_mode():
         permuted_output = model(
-            ELABatch(
+            ELAGraph(
                 features[permutation],
                 x_t[permutation],
-                ptr=ptr,
                 edge_index=inverse[edges],
+                batch=batch_index,
                 condition=time,
             )
         )
-        permuted = model.split_output(permuted_output["node"])["1o"].squeeze(-2)
+        permuted = model.split_output(permuted_output.x)["1o"].squeeze(-2)
     torch.testing.assert_close(
         permuted,
         reference[permutation],

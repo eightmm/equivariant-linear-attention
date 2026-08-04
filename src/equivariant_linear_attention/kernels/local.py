@@ -87,10 +87,10 @@ def dispatch_local_message(
     sender_axial = axial_key[sender]
     polar_dot = (receiver_polar * sender_polar).sum(dim=-1)
     axial_dot = (receiver_axial * sender_axial).sum(dim=-1)
-    receiver_polar_axis = (receiver_polar * edge_direction).sum(dim=-1)
-    sender_polar_axis = (sender_polar * edge_direction).sum(dim=-1)
-    receiver_axial_axis = (receiver_axial * edge_direction).sum(dim=-1)
-    sender_axial_axis = (sender_axial * edge_direction).sum(dim=-1)
+    receiver_polar_axis = (receiver_polar * unit_direction).sum(dim=-1)
+    sender_polar_axis = (sender_polar * unit_direction).sum(dim=-1)
+    receiver_axial_axis = (receiver_axial * unit_direction).sum(dim=-1)
+    sender_axial_axis = (sender_axial * unit_direction).sum(dim=-1)
 
     odd_query = self.local_odd_scalar_query(state.odd_scalar).to(dtype=work_dtype)
     odd_key = self.local_odd_scalar_key(state.odd_scalar).to(dtype=work_dtype)
@@ -122,9 +122,21 @@ def dispatch_local_message(
     odd_key_axis = (
         _st_matvec(odd_tensor_key[sender], unit_direction) * unit_direction
     ).sum(dim=-1)
+    relation_id = geometry.relation_id
+    radial_score = self.local_radial_score(rbf).to(dtype=work_dtype)
+    tensor_radial_score = self.local_tensor_radial_score(rbf).to(dtype=work_dtype)
+    if self.relation_radial_scale is not None:
+        if relation_id is None:
+            raise ValueError("relation-aware ELA requires relation metadata")
+        relation_scale = 1.0 + torch.tanh(
+            self.relation_radial_scale.to(dtype=work_dtype)[relation_id]
+        )
+        radial_score = radial_score * relation_scale
+        tensor_radial_score = tensor_radial_score * relation_scale
+
     tensor_mix = self.local_tensor_mix.to(dtype=work_dtype)
     tensor_score = (
-        self.local_tensor_radial_score(rbf).to(dtype=work_dtype)
+        tensor_radial_score
         + tensor_mix[0][None, :] * odd_query[receiver] * odd_key[sender]
         + tensor_mix[1][None, :]
         * _st_inner(even_tensor_query[receiver], even_tensor_key[sender])
@@ -137,7 +149,7 @@ def dispatch_local_message(
     score = (
         scalar_query[receiver] * scalar_key[sender]
         + self.local_score_bias.to(dtype=work_dtype)[None, :]
-        + self.local_radial_score(rbf).to(dtype=work_dtype)
+        + radial_score
         + self.local_polar_mix[0].to(dtype=work_dtype)[None, :] * polar_dot
         + self.local_polar_mix[1].to(dtype=work_dtype)[None, :]
         * receiver_polar_axis
@@ -149,11 +161,9 @@ def dispatch_local_message(
         + tensor_score
     )
     if self.relation_score_bias is not None:
-        if geometry.relation_id is None:
+        if relation_id is None:
             raise ValueError("relation-aware ELA requires relation metadata")
-        score = (
-            score + self.relation_score_bias.to(dtype=work_dtype)[geometry.relation_id]
-        )
+        score = score + self.relation_score_bias.to(dtype=work_dtype)[relation_id]
     positive_gate = torch.exp(3.0 * torch.tanh(score / 3.0))
     raw_weight = geometry.cutoff.to(dtype=work_dtype)[:, None] * positive_gate
 
@@ -197,6 +207,15 @@ def dispatch_local_message(
             9,
         )
     ).to(dtype=work_dtype)
+    if self.relation_value_gate is not None:
+        if relation_id is None:
+            raise ValueError("relation-aware ELA requires relation metadata")
+        radial_gate = radial_gate * (
+            1.0
+            + torch.tanh(
+                self.relation_value_gate.to(dtype=work_dtype)[relation_id]
+            )
+        )
     weight = raw_weight
     direction_payload = edge_direction
 
@@ -290,7 +309,17 @@ def dispatch_local_message(
     third_direction = third_direction.to(dtype=work_dtype) / denominator.unsqueeze(-1)
 
     chiral_axial = torch.cross(first_direction, second_direction, dim=-1)
-    chiral_scalar = (chiral_axial * third_direction).sum(dim=-1)
+    tensor_direction = _st_matvec(even_tensor_rank, third_direction)
+    second_axial = torch.cross(second_direction, tensor_direction, dim=-1)
+    second_scalar = (first_direction * second_axial).sum(dim=-1)
+    second_mix = torch.tanh(self.second_moment_chiral_mix).to(dtype=work_dtype)
+    # Match the PyTorch reference exactly: second-moment chirality is an
+    # isolated pseudoscalar residual and must not alter the established axial
+    # or tensor carriers when the experimental coefficient learns away from
+    # zero.
+    chiral_scalar = (
+        chiral_axial * third_direction
+    ).sum(dim=-1) + second_mix[None, :] * second_scalar
     chiral_tensor = _st_cross(third_direction, chiral_axial)
 
     scalar_message = self.local_scalar_out(scalar_rank)
@@ -299,15 +328,16 @@ def dispatch_local_message(
             dtype=state.even_scalar.dtype
         )
     ).reshape(num_nodes, self.num_heads, self.head_dim).to(dtype=work_dtype)
+    chiral_scalar_message = self.local_chiral_scalar_out(chiral_scalar)
     return (
         scalar_message,
-        self.local_odd_out(odd_rank) + self.local_chiral_scalar_out(chiral_scalar),
+        self.local_odd_out(odd_rank) + chiral_scalar_message,
         self.local_polar_out(polar_rank),
         self.local_axial_out(axial_rank) + self.local_chiral_axial_out(chiral_axial),
         self.local_even_tensor_out(even_tensor_rank),
         self.local_odd_tensor_out(odd_tensor_rank)
         + self.local_chiral_tensor_out(chiral_tensor),
-        self.local_chiral_scalar_out(chiral_scalar),
+        chiral_scalar_message,
     )
 
 

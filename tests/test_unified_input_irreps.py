@@ -3,11 +3,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention import (
+from equivariant_linear_attention.irreps import pack_irreps, split_irreps
+from equivariant_linear_attention.irreps import (
     IrrepLayout,
     matrix_to_st5,
-    pack_irreps,
-    split_irreps,
     st5_to_matrix,
 )
 from equivariant_linear_attention.geometry import prepare_3d_graph

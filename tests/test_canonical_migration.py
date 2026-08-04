@@ -45,38 +45,83 @@ def test_conditioned_advanced_config_maps_to_ela_features() -> None:
     assert candidate.to_advanced_config().condition_dim == 8
 
 
-def test_state_migration_allows_only_new_branch_router_keys() -> None:
+def test_complete_advanced_state_loads_without_canonical_initialization() -> None:
     advanced = _advanced()
     control = EquivariantLinearAttention(advanced)
-    model = ELA(canonical_config_from_advanced(advanced))
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
     receipt = load_advanced_ela_state(model, control.state_dict())
 
-    assert receipt.router_initialized is True
-    assert receipt.missing_keys
+    assert receipt.canonical_initialized is False
+    assert not receipt.missing_keys
     assert not receipt.unexpected_keys
-    assert all(".branch_fusion." in key for key in receipt.missing_keys)
 
 
 def test_conditioned_state_migration_preserves_conditioner_schema() -> None:
     advanced = _advanced(condition_dim=8)
     control = EquivariantLinearAttention(advanced)
-    model = ELA(canonical_config_from_advanced(advanced))
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
     receipt = load_advanced_ela_state(model, control.state_dict())
 
-    assert receipt.router_initialized is True
-    assert all(".branch_fusion." in key for key in receipt.missing_keys)
+    assert receipt.canonical_initialized is False
+    assert not receipt.missing_keys
     assert any(layer.conditioner is not None for layer in model.layers)
+
+
+def test_legacy_branch_router_requires_explicit_lossy_opt_in() -> None:
+    advanced = _advanced()
+    source = dict(EquivariantLinearAttention(advanced).state_dict())
+    source["core.blocks.0.branch_fusion.router.2.weight"] = torch.randn(12, 12)
+    source["core.blocks.0.branch_fusion.balance_strength"] = torch.randn(6)
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
+
+    with pytest.raises(RuntimeError, match="allow_drop_learned_fusion=True"):
+        load_advanced_ela_state(model, source)
+
+    receipt = load_advanced_ela_state(
+        model,
+        source,
+        allow_drop_learned_fusion=True,
+    )
+
+    assert receipt.canonical_initialized is True
+    assert not receipt.missing_keys
+    assert not receipt.unexpected_keys
+    assert receipt.dropped_keys == (
+        "core.blocks.0.branch_fusion.balance_strength",
+        "core.blocks.0.branch_fusion.router.2.weight",
+    )
+    assert not any("branch_fusion" in key for key in model.state_dict())
+
+
+def test_missing_new_canonical_field_keeps_target_initialization() -> None:
+    advanced = _advanced()
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
+    source = dict(EquivariantLinearAttention(advanced).state_dict())
+    missing_key = next(key for key in source if key.endswith(".raw_odd_alignment"))
+    del source[missing_key]
+    before = model.state_dict()[missing_key].detach().clone()
+
+    receipt = load_advanced_ela_state(model, source)
+
+    assert receipt.canonical_initialized is True
+    assert receipt.missing_keys == (missing_key,)
+    torch.testing.assert_close(
+        model.state_dict()[missing_key],
+        before,
+        atol=0.0,
+        rtol=0.0,
+    )
 
 
 def test_migration_rejects_historical_per_layer_coordinate_update() -> None:
     advanced = _advanced(coordinate_updates=True)
-    with pytest.raises(ValueError, match="ELAContext.refinement"):
+    with pytest.raises(ValueError, match="update_positions=True"):
         canonical_config_from_advanced(advanced)
 
 
 def test_migration_rejects_silent_unexpected_checkpoint_keys() -> None:
     advanced = _advanced()
-    model = ELA(canonical_config_from_advanced(advanced))
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
     state = dict(EquivariantLinearAttention(advanced).state_dict())
     changed_key = next(iter(state))
     before = {
@@ -109,29 +154,9 @@ def test_migration_rejects_noncanonical_runtime_options(
         canonical_config_from_advanced(advanced)
 
 
-def test_migration_rejects_partial_router_state_without_mutation() -> None:
-    advanced = _advanced()
-    model = ELA(canonical_config_from_advanced(advanced))
-    state = dict(EquivariantLinearAttention(advanced).state_dict())
-    router_key = next(
-        key for key in model.state_dict() if ".branch_fusion." in key
-    )
-    state[router_key] = torch.ones_like(model.state_dict()[router_key])
-    before = {
-        key: value.detach().clone()
-        for key, value in model.state_dict().items()
-    }
-
-    with pytest.raises(RuntimeError, match="partial branch_fusion"):
-        load_advanced_ela_state(model, state)
-
-    for key, value in model.state_dict().items():
-        torch.testing.assert_close(value, before[key], atol=0.0, rtol=0.0)
-
-
 def test_migration_stages_tensor_copies_before_mutating_model() -> None:
     advanced = _advanced()
-    model = ELA(canonical_config_from_advanced(advanced))
+    model = ELA.from_config(canonical_config_from_advanced(advanced))
     state = dict(model.state_dict())
     keys = [key for key, value in state.items() if value.ndim == 2]
     state[keys[0]] = torch.full_like(state[keys[0]], 7)
@@ -148,47 +173,13 @@ def test_migration_stages_tensor_copies_before_mutating_model() -> None:
         torch.testing.assert_close(value, before[key], atol=0.0, rtol=0.0)
 
 
-def test_advanced_migration_restores_identity_on_reused_target() -> None:
-    advanced = _advanced()
-    model = ELA(canonical_config_from_advanced(advanced))
-    fusion = model.core.blocks[0].branch_fusion
-    with torch.no_grad():
-        fusion.router[-1].bias.fill_(1)
-        fusion.balance_strength.fill_(0.5)
-
-    receipt = load_advanced_ela_state(
-        model,
-        EquivariantLinearAttention(advanced).state_dict(),
-    )
-
-    assert receipt.router_initialized is True
-    torch.testing.assert_close(
-        fusion.router[-1].weight,
-        torch.zeros_like(fusion.router[-1].weight),
-        atol=0.0,
-        rtol=0.0,
-    )
-    torch.testing.assert_close(
-        fusion.router[-1].bias,
-        torch.zeros_like(fusion.router[-1].bias),
-        atol=0.0,
-        rtol=0.0,
-    )
-    torch.testing.assert_close(
-        fusion.balance_strength,
-        torch.zeros_like(fusion.balance_strength),
-        atol=0.0,
-        rtol=0.0,
-    )
-
-
 def test_migration_accepts_complete_canonical_state() -> None:
     advanced = _advanced()
-    source = ELA(canonical_config_from_advanced(advanced))
-    target = ELA(canonical_config_from_advanced(advanced))
+    source = ELA.from_config(canonical_config_from_advanced(advanced))
+    target = ELA.from_config(canonical_config_from_advanced(advanced))
 
     receipt = load_advanced_ela_state(target, source.state_dict())
 
-    assert receipt.router_initialized is False
+    assert receipt.canonical_initialized is False
     assert not receipt.missing_keys
     assert not receipt.unexpected_keys

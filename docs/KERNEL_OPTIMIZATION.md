@@ -4,24 +4,25 @@ ELA has one mathematical implementation and multiple execution backends. The
 PyTorch path is the numerical reference; Triton is an optional acceleration path
 and never changes model parameters, checkpoints, or architecture.
 
-## 1. Prepared execution boundary
+## 1. Execution boundary
 
-Performance measurements use one prepared `ELABatch`:
+Users always execute the public graph contract:
 
 ```python
-batch = model.prepare(batch)
-output = model.forward_prepared(batch)
+out = model(graph)
 ```
 
-This excludes radius discovery, edge validation, COO sorting, CSR construction,
-and graph-layout planning from the timed stack. End-to-end ingestion must be
-reported separately when it is measured.
+Kernel microbenchmarks in this repository may time the private packed/CSR path to
+exclude radius discovery, edge validation, COO sorting, CSR construction, and
+graph-layout planning. Those private helpers are not a second public API and may
+change without compatibility guarantees. End-to-end ingestion is reported
+separately whenever it is measured.
 
-`torch.compile` should be tested on this path:
+Normal compiled usage remains:
 
 ```python
-compiled = torch.compile(model.forward_prepared, mode="reduce-overhead")
-output = compiled(batch)
+compiled = torch.compile(model, mode="reduce-overhead")
+out = compiled(graph)
 ```
 
 ## 2. Implemented backend
@@ -61,7 +62,7 @@ The same policy can be selected task-locally without changing `os.environ`:
 from equivariant_linear_attention.kernels import kernel_backend
 
 with kernel_backend("triton"):
-    output = model.forward_prepared(batch)
+    output = model(graph)
 ```
 
 `auto` currently selects the PyTorch reference for every regime. `triton` fails
@@ -204,7 +205,7 @@ promotion threshold.
 ### Compiled prepared path
 
 The same `N=512, k=32, width=64, depth=2` BF16 model was also measured with
-`torch.compile(model.forward_prepared, mode="reduce-overhead")`:
+the repository-private compiled prepared stack:
 
 | path | eager | compiled | compiled/eager |
 |---|---:|---:|---:|

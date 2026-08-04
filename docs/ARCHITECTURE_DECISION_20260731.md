@@ -2,7 +2,12 @@
 
 Date: 2026-07-31
 
-Status: implemented on `main`.
+Status: **historical and superseded** by `docs/CANONICAL_ELA.md`.
+
+The 2026-07-31 decision established one model and one graph container. The
+current contract subsequently removed the learned router and replaced that
+container with the single public `ELAGraph -> ELA -> ELAGraph` boundary. The
+equations below are retained as decision history, not current API.
 
 ## Decision
 
@@ -94,22 +99,22 @@ required by the base stability contract.
 
 ## Data and graph decision
 
-The numerical core uses packed nodes and a receiver-major sparse graph.
-`ELABatch` is the only public graph boundary:
+The numerical core uses packed nodes and a receiver-major sparse graph, but that
+representation is private. The canonical public boundary is one `ELAGraph`:
 
 ```python
-batch = ELABatch(
-    node_irreps=x,
-    positions=pos,
-    ptr=ptr,
+graph = ELAGraph(
+    x=x,
+    pos=pos,
+    batch=batch,
     edge_index=edge_index,
 )
-
-output = model(batch)
+out = model(graph)
 ```
 
-Flat batch IDs, padded tensors, and mapping datasets are normalized by
-`ELA.batch`, `ELA.padded`, and `ELA.collate` before model execution.
+The returned value is another `ELAGraph`. Public edges use source-to-target order;
+conversion to receiver-major CSR occurs once inside the model. Variable-size
+dataset samples use `ELAGraph.collate`.
 
 If edge topology is absent, preparation constructs exact geometric radius
 candidates. Small graphs use chunked dense distance tests; larger graphs use a
@@ -118,30 +123,9 @@ explicitly.
 
 ## Optional capabilities
 
-`ELAFeatures` allocates optional modules:
-
-```python
-ELAFeatures(
-    condition_dim=0,
-    order_dim=0,
-    coordinate_refinement=False,
-)
-```
-
-`ELABatch` activates them with optional fields:
-
-```python
-ELABatch(
-    node_irreps=x,
-    positions=pos,
-    condition=None,
-    order=None,
-    refinement=None,
-)
-```
-
-Omitting a field bypasses the corresponding path entirely, including after the
-optional module has trained.
+Invariant conditions and semantic order remain optional fields on `ELAGraph`.
+The model allocates their encoders through `condition_dim` and `order_dim`.
+Omitting a field bypasses the corresponding path.
 
 ### Invariant condition
 
@@ -153,11 +137,12 @@ scale, and residual gates. Vector and tensor conditions remain input irreps.
 Order is a node-attached semantic coordinate, not tensor row index. It is encoded
 as invariant Fourier PE. An enable mask supports mixed ordered/unordered nodes.
 
-### Coordinate refinement
+### Coordinate updates
 
-A zero-initialized `1o` head is allocated only when configured. A
-`RefinementRequest` runs the same stack in an explicit outer loop and owns step
-size, masking, centering, and optional graph reconstruction.
+A zero-initialized `1o` head is allocated only when the model is declared with
+`update_positions=True`. The same `model(graph)` call returns final coordinates
+in `out.pos` and the bounded displacement in `out.delta`; masks and topology
+reconstruction are graph/model properties rather than a second execution API.
 
 ## Public options
 

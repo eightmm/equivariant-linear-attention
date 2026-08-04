@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention import ELA, ELABatch
+from equivariant_linear_attention import ELA
+from equivariant_linear_attention.batch import ELABatch
 import equivariant_linear_attention.kernels.local as optimized_local
 from equivariant_linear_attention.kernels.triton import csr_sum_many
 
@@ -24,7 +25,6 @@ def test_grouped_local_path_matches_reference_values_and_input_gradients(
         width=16,
         depth=1,
         cutoff=10.0,
-        num_rbf=6,
     ).double()
     nodes = 5
     features = torch.randn(nodes, 4, dtype=torch.float64)
@@ -33,10 +33,10 @@ def test_grouped_local_path_matches_reference_values_and_input_gradients(
 
     reference_features = features.clone().requires_grad_(True)
     reference_positions = positions.clone().requires_grad_(True)
-    reference_batch = model.prepare(
+    reference_batch = model._prepare_packed(
         ELABatch(reference_features, reference_positions, edge_index=edges)
     )
-    reference = model.forward_prepared(reference_batch)["node_irreps"]
+    reference = model._forward_prepared(reference_batch)["node_irreps"]
     reference_gradients = torch.autograd.grad(
         reference.square().sum(),
         (reference_features, reference_positions),
@@ -57,10 +57,10 @@ def test_grouped_local_path_matches_reference_values_and_input_gradients(
     )
     candidate_features = features.clone().requires_grad_(True)
     candidate_positions = positions.clone().requires_grad_(True)
-    candidate_batch = model.prepare(
+    candidate_batch = model._prepare_packed(
         ELABatch(candidate_features, candidate_positions, edge_index=edges)
     )
-    candidate = model.forward_prepared(candidate_batch)["node_irreps"]
+    candidate = model._forward_prepared(candidate_batch)["node_irreps"]
     candidate_gradients = torch.autograd.grad(
         candidate.square().sum(),
         (candidate_features, candidate_positions),

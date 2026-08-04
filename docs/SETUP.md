@@ -27,7 +27,8 @@ uv sync --locked --extra pdbbind
 
 These dependency groups remain in the lockfile for historical environment
 reproduction. The architecture-only package no longer ships QM9 or PDBBind
-loaders; current datasets enter through mappings collated into `ELABatch`.
+loaders; current datasets return `ELAGraph` samples and use
+`ELAGraph.collate` for variable-size mini-batches.
 
 ## GPU smoke
 

@@ -1,287 +1,348 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any
-
 import torch
 
 from .batch import ELABatch
-from .context import ELAFeatures
+from .context import ELAContext, ELAFeatures
+from .geometry.prepared import PreparationSpec
 from .geometry.radius import radius_graph
-from .kernels import (
-    backend_policy,
-    triton_available,
-)
-from .model.ela import ELAConfig, ELALayer, SparseGeometry, _ELAEngine
+from .graph import ELAGraph
+from .kernels import backend_policy, triton_available
+from .model.ela import ELAConfig, SparseGeometry, _ELAEngine
+
+
+def _nonnegative_integer(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{name} must be nonnegative")
+    return value
+
 
 class ELA(_ELAEngine):
-    """Single public equivariant linear-attention model.
+    """The one public equivariant linear-attention model.
 
-    Input and output representations are always declared with irreps. Scalar-only
-    models use ordinary scalar irreps such as ``"32x0e"`` and ``"1x0e"`` rather
-    than a separate node-dimension API.
+    The complete public execution contract is::
+
+        graph = ELAGraph(x, pos, edge_index=edges, batch=batch)
+        graph = model(graph)
+
+    The returned graph contains node predictions in ``x``, graph predictions in
+    ``graph_x`` and ``graph_sum``, and final coordinates in ``pos``. Coordinate
+    updates are a model property selected once with ``update_positions=True``.
     """
 
     def __init__(
         self,
-        config: ELAConfig | None = None,
+        input_irreps: str,
+        output_irreps: str = "1x0e",
         *,
-        input_irreps: str | None = None,
-        output_irreps: str | None = None,
-        width: int | None = None,
-        depth: int | None = None,
-        cutoff: float | None = None,
-        num_rbf: int | None = None,
-        num_edge_types: int | None = None,
-        relation_cutoffs: tuple[float, ...] | None = None,
-        condition_dim: int | None = None,
-        order_dim: int | None = None,
-        coordinate_refinement: bool | None = None,
+        width: int = 128,
+        depth: int = 8,
+        cutoff: float = 5.0,
+        max_neighbors: int | None = None,
+        edge_types: int = 0,
+        condition_dim: int = 0,
+        order_dim: int = 0,
+        update_positions: bool = False,
+        max_coordinate_step: float = 0.25,
     ) -> None:
-        direct_values = {
-            "input_irreps": input_irreps,
-            "output_irreps": output_irreps,
-            "width": width,
-            "depth": depth,
-            "cutoff": cutoff,
-            "num_rbf": num_rbf,
-            "num_edge_types": num_edge_types,
-            "relation_cutoffs": relation_cutoffs,
-            "condition_dim": condition_dim,
-            "order_dim": order_dim,
-            "coordinate_refinement": coordinate_refinement,
-        }
-        if config is not None:
-            if not isinstance(config, ELAConfig):
-                raise TypeError("config must be an ELAConfig")
-            supplied = [
-                name for name, value in direct_values.items() if value is not None
-            ]
-            if supplied:
-                raise ValueError(
-                    "config and direct constructor fields are mutually exclusive; "
-                    f"received {supplied}"
-                )
-            resolved = config
-        else:
-            if input_irreps is None:
-                raise ValueError(
-                    "input_irreps is required when config is omitted; "
-                    "for scalar features use a declaration such as '32x0e'"
-                )
-            resolved_width = 128 if width is None else width
-            resolved_depth = 8 if depth is None else depth
-            resolved_cutoff = 5.0 if cutoff is None else cutoff
-            resolved_num_rbf = 16 if num_rbf is None else num_rbf
-            resolved_edge_types = 0 if num_edge_types is None else num_edge_types
-            resolved_condition_dim = 0 if condition_dim is None else condition_dim
-            resolved_order_dim = 0 if order_dim is None else order_dim
-            resolved_refinement = (
-                False if coordinate_refinement is None else coordinate_refinement
-            )
-            if (
-                isinstance(resolved_edge_types, bool)
-                or not isinstance(resolved_edge_types, int)
-                or resolved_edge_types < 0
-            ):
-                raise ValueError("num_edge_types must be a nonnegative integer")
-            resolved_relation_cutoffs = (
-                () if relation_cutoffs is None else relation_cutoffs
-            )
-            if (
-                resolved_relation_cutoffs
-                and resolved_edge_types
-                and len(resolved_relation_cutoffs) != resolved_edge_types
-            ):
-                raise ValueError(
-                    "num_edge_types must match relation_cutoffs when both are supplied"
-                )
-            if not resolved_relation_cutoffs and resolved_edge_types:
-                resolved_relation_cutoffs = (
-                    float(resolved_cutoff),
-                ) * resolved_edge_types
-            resolved = ELAConfig(
-                input_irreps=input_irreps,
-                output_irreps=("1x0e" if output_irreps is None else output_irreps),
-                width=resolved_width,
-                depth=resolved_depth,
-                geometry=SparseGeometry(
-                    cutoff=resolved_cutoff,
-                    num_rbf=resolved_num_rbf,
-                    relation_cutoffs=resolved_relation_cutoffs,
-                ),
-                features=ELAFeatures(
-                    condition_dim=resolved_condition_dim,
-                    order_dim=resolved_order_dim,
-                    coordinate_refinement=resolved_refinement,
-                ),
-            )
-        super().__init__(resolved)
+        if not isinstance(input_irreps, str):
+            raise TypeError("input_irreps must be a string")
+        if not isinstance(output_irreps, str):
+            raise TypeError("output_irreps must be a string")
+        if not isinstance(update_positions, bool):
+            raise TypeError("update_positions must be a bool")
+        relation_count = _nonnegative_integer("edge_types", edge_types)
+        relation_cutoffs = (float(cutoff),) * relation_count
+        config = ELAConfig(
+            input_irreps=input_irreps,
+            output_irreps=output_irreps,
+            width=width,
+            depth=depth,
+            geometry=SparseGeometry(
+                cutoff=cutoff,
+                num_rbf=16,
+                max_neighbors=max_neighbors,
+                skin=0.0,
+                relation_cutoffs=relation_cutoffs,
+            ),
+            features=ELAFeatures(
+                condition_dim=condition_dim,
+                order_dim=order_dim,
+            ),
+            coordinate_updates=1 if update_positions else 0,
+            max_coordinate_step=max_coordinate_step,
+        )
+        super().__init__(config)
 
-    @staticmethod
-    def batch(
-        x: torch.Tensor,
-        pos: torch.Tensor,
-        **kwargs: Any,
-    ) -> ELABatch:
-        """Build a packed :class:`ELABatch` from ordinary flat tensors."""
+    @classmethod
+    def from_config(cls, config: ELAConfig) -> ELA:
+        """Construct from the reproducibility-oriented advanced configuration."""
 
-        return ELABatch.from_mapping({"x": x, "pos": pos, **kwargs})
+        if not isinstance(config, ELAConfig):
+            raise TypeError("config must be an ELAConfig")
+        model = cls.__new__(cls)
+        _ELAEngine.__init__(model, config)
+        return model
 
-    @staticmethod
-    def padded(
-        x: torch.Tensor,
-        pos: torch.Tensor,
-        mask: torch.Tensor | None = None,
-        **kwargs: Any,
-    ) -> ELABatch:
-        """Pack a padded ``[B,M,...]`` input into one :class:`ELABatch`."""
-
-        if x.ndim != 3 or pos.shape != (*x.shape[:2], 3):
-            raise ValueError("padded x and pos must have shapes [B,M,D] and [B,M,3]")
-        if mask is None:
-            mask = torch.ones(x.shape[:2], device=x.device, dtype=torch.bool)
-        aliases = {"edge_type": "edge_relation_id", "y": "target"}
-        normalized = dict(kwargs)
-        for alias, canonical in aliases.items():
-            if alias in normalized:
-                if canonical in normalized:
-                    raise ValueError(f"{alias} and {canonical} are mutually exclusive")
-                normalized[canonical] = normalized.pop(alias)
-        return ELABatch.from_padded(x, pos, mask, **normalized)
-
-    @staticmethod
-    def collate(samples: Sequence[Mapping[str, Any]]) -> ELABatch:
-        """Collate dependency-free mapping samples into one packed batch."""
-
-        return ELABatch.collate(samples)
+    @property
+    def updates_positions(self) -> bool:
+        return self.config.coordinate_updates > 0
 
     def extra_repr(self) -> str:
         return (
             f"input_irreps={self.config.input_irreps!r}, "
             f"output_irreps={self.config.output_irreps!r}, "
             f"width={self.config.width}, depth={self.config.depth}, "
-            f"cutoff={self.config.geometry.cutoff}"
+            f"cutoff={self.config.geometry.cutoff}, "
+            f"update_positions={self.updates_positions}"
         )
 
     def describe(self) -> dict[str, object]:
-        """Return a compact, serialization-friendly execution summary."""
-
         return {
             "model": "ELA",
-            "layer": "ELALayer",
+            "graph": "ELAGraph",
             "input_irreps": str(self.config.input_layout),
             "output_irreps": str(self.config.output_layout),
             "width": self.config.width,
             "depth": self.config.depth,
             "cutoff": self.config.geometry.cutoff,
-            "num_rbf": self.config.geometry.num_rbf,
-            "num_edge_types": self.config.geometry.num_edge_relations,
+            "max_neighbors": self.config.geometry.max_neighbors,
+            "edge_types": self.config.geometry.num_edge_relations,
+            "update_positions": self.updates_positions,
+            "coordinate_updates": self.config.coordinate_updates,
+            "max_coordinate_step": self.config.max_coordinate_step,
             "num_parameters": sum(parameter.numel() for parameter in self.parameters()),
             "kernel_backend_policy": backend_policy(),
             "triton_available": triton_available(),
-            "graph_input": "ELABatch",
+            "public_contract": "ELAGraph -> ELA -> ELAGraph",
+            "internal_graph_ir": "packed receiver-major CSR",
         }
 
-    def prepare(
+    def _preparation_matches(self, batch: ELABatch) -> bool:
+        graph = batch._prepared_graph
+        if graph is None:
+            return False
+        source = "explicit" if batch.edge_index is not None else "radius"
+        if not torch.equal(graph.batch, batch.interaction_batch):
+            return False
+        if not graph.spec.matches(
+            source=source,
+            cutoff=None if source == "explicit" else self.config.geometry.cutoff,
+            max_neighbors=self.config.geometry.max_neighbors,
+            include_self=False,
+            num_edge_relations=self.config.geometry.num_edge_relations,
+            skin=0.0 if source == "explicit" else self.config.geometry.skin,
+        ):
+            return False
+        if not graph.spec.can_reuse_positions(batch.positions):
+            return False
+        if source == "explicit":
+            if batch.edge_index is None:
+                return False
+            if not torch.equal(
+                graph.neighbors.original_edge_index().to(dtype=torch.long),
+                batch.edge_index.to(dtype=torch.long),
+            ):
+                return False
+            packed_relation = graph.neighbors.relation_id
+            raw_relation = batch.edge_relation_id
+            if packed_relation is None:
+                return raw_relation is None
+            original_relation = graph.neighbors.original_relation_id().to(
+                dtype=torch.long
+            )
+            if raw_relation is None:
+                return (
+                    self.config.geometry.num_edge_relations == 1
+                    and not bool(original_relation.any().item())
+                )
+            if not torch.equal(
+                original_relation,
+                raw_relation.to(dtype=torch.long),
+            ):
+                return False
+        return True
+
+    def _prepare_packed(
         self,
         batch: ELABatch,
         *,
-        max_neighbors: int | None = None,
         prefer_int32: bool = True,
         force: bool = False,
     ) -> ELABatch:
-        """Return ``batch`` with a cached receiver-major execution graph."""
-
         if not isinstance(batch, ELABatch):
-            raise TypeError("ELA.prepare expects an ELABatch")
-        if batch.is_prepared and not force:
+            raise TypeError("internal preparation expects ELABatch")
+        if batch.is_prepared and not force and self._preparation_matches(batch):
             return batch
-        edge_index = batch.edge_index
+        if batch.is_prepared:
+            batch = batch.without_prepared_graph()
+
+        candidate_edges = batch.edge_index
         relation = batch.edge_relation_id
         relation_count = self.config.geometry.num_edge_relations
-        if edge_index is None:
+        if candidate_edges is None:
             if relation is not None:
-                raise ValueError("edge_relation_id cannot be used without edge_index")
-            edge_index = radius_graph(
+                raise ValueError("edge_type cannot be used without edge_index")
+            if relation_count > 1:
+                raise ValueError(
+                    "multiple edge types require explicit edges; "
+                    "radius geometry cannot infer semantic relations"
+                )
+            spec = PreparationSpec.radius(
                 batch.positions,
                 cutoff=self.config.geometry.cutoff,
-                ptr=batch.ptr,
-                max_neighbors=max_neighbors,
-                include_self=True,
+                max_neighbors=self.config.geometry.max_neighbors,
+                include_self=False,
+                num_edge_relations=relation_count,
+                skin=self.config.geometry.skin,
             )
+            candidate_edges = radius_graph(
+                batch.positions,
+                cutoff=float(spec.candidate_cutoff),
+                batch=batch.interaction_batch,
+                max_neighbors=self.config.geometry.max_neighbors,
+                include_self=False,
+            )
+        else:
+            spec = PreparationSpec.explicit(num_edge_relations=relation_count)
+
         if relation is None and relation_count == 1:
             relation = torch.zeros(
-                edge_index.shape[1],
-                device=edge_index.device,
+                candidate_edges.shape[1],
+                device=candidate_edges.device,
                 dtype=torch.long,
             )
         elif relation is None and relation_count > 1:
-            raise ValueError(
-                "multiple edge types are configured but no edge_type was supplied; "
-                "automatic geometry cannot infer semantic relations"
-            )
+            raise ValueError("edge_type is required when edge_types > 1")
         if relation is not None:
             if relation_count == 0:
                 raise ValueError(
-                    "edge types were supplied but the model has no relation "
-                    "capacity; configure num_edge_types or relation_cutoffs"
+                    "edge_type was supplied but edge_types=0 on the model"
                 )
             if relation.numel() and (
                 int(relation.min().item()) < 0
                 or int(relation.max().item()) >= relation_count
             ):
-                raise ValueError(
-                    f"edge_relation_id values must be in [0, {relation_count})"
-                )
-        graph = self.config.geometry.prepare(
-            batch.batch,
-            edge_index,
+                raise ValueError(f"edge_type values must be in [0, {relation_count})")
+
+        prepared = self.config.geometry.prepare(
+            batch.interaction_batch,
+            candidate_edges,
             edge_relation_id=relation,
             prefer_int32=prefer_int32,
+            spec=spec,
         )
-        return batch.with_prepared_graph(graph)
+        return batch.with_prepared_graph(prepared)
 
-    def forward_prepared(self, batch: ELABatch) -> dict[str, torch.Tensor]:
-        """Hot path for an already prepared immutable batch."""
+    def _prepare_graph(self, graph: ELAGraph) -> ELAGraph:
+        """Prepare topology while preserving the one public graph type."""
 
-        if not isinstance(batch, ELABatch):
-            raise TypeError("ELA.forward_prepared expects an ELABatch")
+        if not isinstance(graph, ELAGraph):
+            raise TypeError("_prepare_graph expects an ELAGraph")
+        packed = self._prepare_packed(graph._to_packed())
+        if packed._prepared_graph is None:
+            raise RuntimeError("graph preparation failed")
+        return graph._with_prepared(packed._prepared_graph)
+
+    @torch.compiler.disable
+    def _pack_and_prepare(self, graph: ELAGraph) -> ELABatch:
+        """Keep public validation and topology discovery outside compiled math."""
+
+        packed = self._prepare_packed(graph._to_packed())
+        if packed._prepared_graph is None:
+            raise RuntimeError("graph preparation failed")
+        graph._cache_prepared(packed._prepared_graph)
+        return packed
+
+    def _execute_packed(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        """Numerical hot path for one already validated packed graph."""
+
         if batch._prepared_graph is None:
-            raise ValueError("batch is not prepared; call model.prepare(batch) first")
-        output = dict(
-            _ELAEngine.forward(
-                self,
-                batch.node_irreps,
-                batch.positions,
-                batch._prepared_graph,
-                context=batch.context,
+            raise RuntimeError("packed graph preparation invariant was violated")
+
+        context = batch.context
+        if (
+            context is not None
+            and context.condition is not None
+            and batch.num_interactions != batch.num_graphs
+            and context.condition.ndim == 2
+            and context.condition.shape[0] == batch.num_graphs
+        ):
+            context = ELAContext(
+                condition=context.condition[batch.batch],
+                order=context.order,
             )
+        raw = _ELAEngine.forward(
+            self,
+            batch.node_irreps,
+            batch.positions,
+            batch._prepared_graph,
+            context=context,
+            update_mask=batch.update_mask,
         )
-        node = output["node_irreps"]
-        graph_mean = output["graph_irreps"]
+        node = raw["node_irreps"]
         graph_sum = node.new_zeros((batch.num_graphs, node.shape[-1]))
         graph_sum.index_add_(0, batch.batch, node)
-        positions = output.get("positions", batch.positions)
-        delta = output.get("coordinate_delta", torch.zeros_like(batch.positions))
-        output.update(
-            node=node,
-            graph=graph_mean,
-            graph_mean=graph_mean,
-            graph_sum=graph_sum,
-            pos=positions,
-            delta=delta,
-        )
-        return output
+        counts = torch.bincount(
+            batch.batch,
+            minlength=batch.num_graphs,
+        ).clamp_min(1)
+        graph_mean = graph_sum / counts[:, None].to(dtype=node.dtype)
+        final_positions = raw.get("positions", batch.positions)
+        delta = raw.get("coordinate_delta", torch.zeros_like(batch.positions))
+        return {
+            "node_irreps": node,
+            "graph_irreps": graph_mean,
+            "graph_sum": graph_sum,
+            "positions": final_positions,
+            "coordinate_delta": delta,
+        }
 
-    def forward(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+    def _forward_prepared(self, batch: ELABatch) -> dict[str, torch.Tensor]:
+        """Checked private packed path used by kernel tests and benchmarks."""
+
         if not isinstance(batch, ELABatch):
+            raise TypeError("_forward_prepared expects the private packed graph")
+        if batch._prepared_graph is None:
+            raise ValueError("packed graph is not prepared")
+        if not self._preparation_matches(batch):
+            raise ValueError("prepared topology is stale or incompatible")
+        return self._execute_packed(batch)
+
+    @torch.compiler.disable
+    def _wrap_output(
+        self,
+        graph: ELAGraph,
+        packed: ELABatch,
+        output: dict[str, torch.Tensor],
+    ) -> ELAGraph:
+        # A fixed-position output can safely carry the prepared topology into a
+        # subsequent model. Coordinate-updating execution may finish with a
+        # rebuilt radius graph, so it deliberately drops the private cache.
+        prepared = packed._prepared_graph if not self.updates_positions else None
+        return graph._with_output(
+            x=output["node_irreps"],
+            graph_x=output["graph_irreps"],
+            graph_sum=output["graph_sum"],
+            pos=output["positions"],
+            delta=output["coordinate_delta"],
+            prepared=prepared,
+        )
+
+    def _forward_graph(self, graph: ELAGraph) -> ELAGraph:
+        packed = self._pack_and_prepare(graph)
+        output = self._execute_packed(packed)
+        return self._wrap_output(graph, packed, output)
+
+    def forward(self, graph: ELAGraph) -> ELAGraph:
+        if not isinstance(graph, ELAGraph):
             raise TypeError(
-                "ELA accepts one ELABatch. Use ELA.batch(...), ELA.padded(...), "
-                "or ELA.collate(...)."
+                "ELA accepts exactly one public input type: "
+                "ELAGraph(x, pos, edge_index=..., batch=...)"
             )
-        prepared = batch if batch.is_prepared else self.prepare(batch)
-        return self.forward_prepared(prepared)
+        return self._forward_graph(graph)
 
 
-__all__ = ["ELA", "ELAConfig", "ELAFeatures", "ELALayer", "SparseGeometry"]
+__all__ = ["ELA"]

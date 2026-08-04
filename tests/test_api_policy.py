@@ -5,87 +5,95 @@ import importlib.util
 import inspect
 from pathlib import Path
 
+import torch
+
 import equivariant_linear_attention as ela
-from equivariant_linear_attention import (
-    ELA,
-    ELABatch,
-    ELAConfig,
-    ELAFeatures,
-    ELALayer,
-    SparseGeometry,
-)
+from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention.advanced import ELAConfig, ELAFeatures, SparseGeometry
+from equivariant_linear_attention.model.ela import ELALayer
 
 
-def test_package_root_exposes_one_architecture_layer_and_graph_container() -> None:
-    exported = set(ela.__all__)
-    assert {"ELA", "ELALayer", "ELABatch"}.issubset(exported)
+def test_package_root_is_one_model_and_one_graph() -> None:
+    assert ela.__all__ == ["ELA", "ELAGraph"]
+    assert ela.ELA is ELA
+    assert ela.ELAGraph is ELAGraph
 
     forbidden = {
-        "CanonicalEquivariantLinearAttention",
-        "ConditionedELA",
-        "ELAContext",
-        "ELACoordinateRefiner",
-        "EquivariantAttention",
-        "EquivariantAttentionResiduals",
-        "EquivariantLinearAttention",
-        "ImplicitGaussianSpatialKernel",
-        "PackedGraphLayout",
-        "PackedNeighborGraph",
-        "Prepared3DGraph",
-        "SpatialOperatorAblationModel",
-        "UnifiedEquivariantAttention",
-        "UnifiedEquivariantLayer",
-        "_ELARuntime",
-        "_BaseELALayer",
-        "collate_graphs",
-        "prepare_3d_graph",
+        "ELABatch",
+        "ELAOutput",
+        "ELALayer",
+        "ELAConfig",
+        "ELAFeatures",
+        "SparseGeometry",
+        "RefinementRequest",
+        "ELARefiner",
+        "conservative_forces",
+        "pack_irreps",
+        "split_irreps",
         "radius_graph",
+        "prepare_3d_graph",
     }
-    assert exported.isdisjoint(forbidden)
+    assert set(ela.__all__).isdisjoint(forbidden)
     for name in forbidden:
         assert not hasattr(ela, name)
 
-    public_module_classes = {
+    public_modules = {
         name
-        for name in exported
+        for name in ela.__all__
         if inspect.isclass(getattr(ela, name))
-        and issubclass(getattr(ela, name), __import__("torch").nn.Module)
+        and issubclass(getattr(ela, name), torch.nn.Module)
     }
-    assert public_module_classes == {
-        "CoordinateUpdateHead",
-        "DirectVectorForceHead",
-        "ELA",
-        "ELALayer",
-        "EquivariantVectorHead",
-        "ScalarEnergyHead",
-    }
+    assert public_modules == {"ELA"}
 
 
-def test_representation_is_declared_only_with_irreps() -> None:
+def test_model_has_one_declared_graph_call_contract() -> None:
     parameters = inspect.signature(ELA.__init__).parameters
-    assert "input_irreps" in parameters
-    assert "output_irreps" in parameters
+    assert tuple(parameters) == (
+        "self",
+        "input_irreps",
+        "output_irreps",
+        "width",
+        "depth",
+        "cutoff",
+        "max_neighbors",
+        "edge_types",
+        "condition_dim",
+        "order_dim",
+        "update_positions",
+        "max_coordinate_step",
+    )
     assert "node_dim" not in parameters
     assert "output_dim" not in parameters
-    assert not hasattr(ELA, "scalar")
+    assert "coordinate_refinement" not in parameters
+    assert "num_rbf" not in parameters
+    assert "relation_cutoffs" not in parameters
+    assert not hasattr(ELA, "batch")
+    assert not hasattr(ELA, "padded")
+    assert not hasattr(ELA, "as_batch")
+    assert not hasattr(ELA, "refiner")
+    assert not hasattr(ELA, "prepare")
+    assert not hasattr(ELA, "forward_prepared")
 
 
-def test_optional_capabilities_stay_in_one_model_and_batch() -> None:
+def test_advanced_configuration_still_builds_the_same_model() -> None:
     config = ELAConfig(
         input_irreps="4x0e",
-        geometry=SparseGeometry(cutoff=5.0),
-        features=ELAFeatures(
-            condition_dim=8,
-            order_dim=1,
-            coordinate_refinement=True,
-        ),
+        output_irreps="1x0e",
+        width=32,
+        depth=2,
+        geometry=SparseGeometry(cutoff=5.0, num_rbf=8),
+        features=ELAFeatures(condition_dim=8, order_dim=1),
+        coordinate_updates=2,
+        max_coordinate_step=0.1,
     )
-    model = ELA(config)
+    model = ELA.from_config(config)
     assert model.attention_kind == "equivariant_linear_attention"
+    assert model.updates_positions
     assert isinstance(model.layers[0], ELALayer)
-    assert config.canonical_contract()["public_model"] == "ELA"
-    assert config.canonical_contract()["public_layer"] == "ELALayer"
-    assert ELABatch.__name__ == "ELABatch"
+    contract = config.canonical_contract()
+    assert contract["public_model"] == "ELA"
+    assert contract["public_graph"] == "ELAGraph"
+    assert contract["message_fusion"] == "fixed_exact_global_plus_local_sum"
 
 
 def test_every_shipped_core_module_imports_without_optional_dependencies() -> None:
@@ -102,30 +110,14 @@ def test_every_shipped_core_module_imports_without_optional_dependencies() -> No
         importlib.import_module(f"{ela.__name__}.{module}")
 
 
-def test_retired_package_root_is_not_importable() -> None:
-    assert importlib.util.find_spec("equivariant_attention") is None
-
-
-def test_retired_architecture_modules_are_not_shipped() -> None:
+def test_retired_architecture_modules_do_not_reappear() -> None:
     retired = {
-        "_egnn_baseline",
-        "_matched_vnext_arms",
-        "benchmarking",
-        "branch_fusion",
-        "canonical",
-        "canonical_se3",
-        "config",
-        "data",
-        "diagnostics",
-        "equivariant_linear_attention",
-        "execution",
-        "graph_layout",
-        "heads",
-        "high_order",
-        "interface",
-        "layered_se3",
-        "local_streaming",
-        "moment",
+        "attention",
+        "base",
+        "conditioned",
+        "equivariant_attention",
+        "implicit_kernel",
+        "linear_attention",
         "multiscale",
         "multipole_ops",
         "neighbor_providers",
