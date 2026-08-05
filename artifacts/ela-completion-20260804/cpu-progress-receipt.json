@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "recorded_at_utc": "2026-08-04T09:56:15Z",
+  "recorded_at_utc": "2026-08-05T08:18:03Z",
   "status": "cpu_evidence_complete_gpu_execution_deferred",
   "source_manifest": {
     "path": "source-manifest-pre-gpu.json",
-    "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0",
-    "combined_source_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
-    "file_count": 90
+    "sha256": "b3f2de2c491b59ee5b9ab598b01f6376087043c469fe0ca72fb60c651c5e66df",
+    "combined_source_sha256": "b1d04932013c44e19c85b7337abde5ca534c086b6f73282c6d738571d5179fdb",
+    "file_count": 91
   },
   "strict_cpu_gate": {
     "path": "fast-gate-pre-gpu.log",
-    "sha256": "5334b52c0787e25280a52a6d2dd3ce5fa35635bf3901d73a836405dc7e89ee68",
+    "sha256": "d9489d03cdef5d0f638fdf928c35198382be8436319d3ca6ccf198a100a32903",
     "passed": true,
-    "tests_passed": 333,
+    "tests_passed": 363,
     "tests_skipped": 28,
-    "coverage_percent": 80.24,
+    "coverage_percent": 82.59,
     "coverage_required_percent": 80.01,
     "wheel_smoke": "passed",
     "ml_smoke": "passed"
@@ -26,7 +26,7 @@
   ],
   "cuda_protocol": {
     "path": "gpu-completion-plan-v2.json",
-    "sha256": "3c0031243612546a454ee7ff54e86a15c0b9d67e090b11a01b820be461789c3f",
+    "sha256": "877fbddb4ccbbf8a4f159443ec3eb5a89c11dec5fa8afef4337ff71b2b3f31f4",
     "numeric_thresholds_frozen": true,
     "per_lane_peak_allocated_bytes_lt": 17179869184,
     "source_bytes_verified_at_execution": true,
@@ -60,7 +60,7 @@
   "execution_deferral": {
     "reason": "The user explicitly reserved the local GPU for another task.",
     "gpu_or_data_command_executed_after_deferral": false,
-    "packet_sha256": "28f2dac1d5bbf4e8616b6a9c911d706b6adb0e2c3fadb41cb365f3bd7094608c",
+    "packet_sha256": "ebbb9b221aa4ceb0fafca316ade456ef2073792bdee3da6b8018cb80bda1b7c8",
     "dry_run_phases_validated": ["gpu", "data", "finalize"]
   },
   "next_action": "Do not run G1-G5. Resume only after a future explicit user instruction that the GPU is available; authorize the GPU-only and data phases separately."

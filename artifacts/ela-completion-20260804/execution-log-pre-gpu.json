@@ -279,6 +279,21 @@
       "fast_gate_log_sha256": "5334b52c0787e25280a52a6d2dd3ce5fa35635bf3901d73a836405dc7e89ee68",
       "cuda_executed": false,
       "real_data_accessed": false
+    },
+    {
+      "id": "E23-main-review-hardening-and-packet-refreeze",
+      "status": "completed-deferred",
+      "started_at_utc": "2026-08-05T08:16:12Z",
+      "duration_seconds": 17,
+      "command": "env CUDA_VISIBLE_DEVICES= bash scripts/check.sh fast; capture 91-file source manifest; generate CUDA schema-only plan; validate gpu/data/finalize packet phases with --dry-run",
+      "exit_code": 0,
+      "result": "363 passed, 28 skipped; coverage 82.59%; wheel/import/Ruff/compileall/ml_smoke passed. Source manifest b1d04932013c44e19c85b7337abde5ca534c086b6f73282c6d738571d5179fdb verified against clean main source bytes; packet ebbb9b221aa4ceb0fafca316ade456ef2073792bdee3da6b8018cb80bda1b7c8 validated exact G1-G6 argv. No GPU, real-data, dependency, or network command ran.",
+      "source_manifest_sha256": "b3f2de2c491b59ee5b9ab598b01f6376087043c469fe0ca72fb60c651c5e66df",
+      "gpu_plan_sha256": "877fbddb4ccbbf8a4f159443ec3eb5a89c11dec5fa8afef4337ff71b2b3f31f4",
+      "fast_gate_log_sha256": "d9489d03cdef5d0f638fdf928c35198382be8436319d3ca6ccf198a100a32903",
+      "cuda_executed": false,
+      "real_data_accessed": false,
+      "network_accessed": false
     }
   ]
 }

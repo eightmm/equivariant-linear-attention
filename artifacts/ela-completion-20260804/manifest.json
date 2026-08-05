@@ -20,7 +20,7 @@
     {
       "path": "source-manifest-pre-gpu.json",
       "role": "exact source, test, lockfile, and execution-script byte identity",
-      "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0"
+      "sha256": "b3f2de2c491b59ee5b9ab598b01f6376087043c469fe0ca72fb60c651c5e66df"
     },
     {
       "external_id": "QM9/PyG cached representation",
@@ -37,9 +37,9 @@
   "code": [
     {
       "path": "source-manifest-pre-gpu.json",
-      "git_head": "29241e9c0ee1bafb5ae19b19a36d765cc9379916",
-      "working_tree": "dirty exact-byte manifest",
-      "combined_source_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e"
+      "git_head": "755c6d027b131d0ebc1fb19ef5ae5ed4a902fe92",
+      "working_tree": "clean committed main source at capture; artifact bookkeeping followed",
+      "combined_source_sha256": "b1d04932013c44e19c85b7337abde5ca534c086b6f73282c6d738571d5179fdb"
     }
   ],
   "executions": [
@@ -78,16 +78,16 @@
     {"kind": "evidence-graph", "path": "evidence-graph.json", "role": "pre-GPU claim and evidence lineage", "sha256": "139f48bd6d37cab4f387d347b1b368eb8dd060bf08265dcf4e630f68f2e2d312"},
     {"kind": "reference-use-ledger", "path": "reference-use-ledger.json", "role": "procedural reference hashes and use", "sha256": "e415f79fc324b49318791bd03ea148ede798fb7d88cf1593a98421d66abfb9d1"},
     {"kind": "environment", "path": "compute-environment.json", "role": "sanitized CPU verification environment", "sha256": "a626164914e1752de3d8b822425425f5f8fe741a9ae158cf96a8f14ae782b46c"},
-    {"kind": "code-manifest", "path": "source-manifest-pre-gpu.json", "role": "exact source bytes", "sha256": "f7e3dafe19721e577a53e77d3be6764b5f8f1c9656000cecc96caa4928ce5ed0"},
-    {"kind": "execution-log", "path": "execution-log-pre-gpu.json", "role": "completed, failed, superseded, and accidental attempts", "sha256": "384fcb25e7973de6859784618903ba6aefab0a66ad9bd9add4176bb02b728e10"},
-    {"kind": "verification-log", "path": "fast-gate-pre-gpu.log", "role": "strict CPU, wheel, and public-surface gate", "sha256": "5334b52c0787e25280a52a6d2dd3ce5fa35635bf3901d73a836405dc7e89ee68"},
+    {"kind": "code-manifest", "path": "source-manifest-pre-gpu.json", "role": "exact source bytes", "sha256": "b3f2de2c491b59ee5b9ab598b01f6376087043c469fe0ca72fb60c651c5e66df"},
+    {"kind": "execution-log", "path": "execution-log-pre-gpu.json", "role": "completed, failed, superseded, and accidental attempts", "sha256": "4b1b1c9d68cace0112947ecf204c54e1779d46c5de63478efdad93eccec6498a"},
+    {"kind": "verification-log", "path": "fast-gate-pre-gpu.log", "role": "strict CPU, wheel, and public-surface gate", "sha256": "d9489d03cdef5d0f638fdf928c35198382be8436319d3ca6ccf198a100a32903"},
     {"kind": "metrics", "path": "cpu-end-to-end-benchmark-recorded.json", "role": "C2 public ingestion scope reproduction", "sha256": "f808433f7d3f2e39a3181d014704d712977d8d82da9c5f6ce42fcda52ce038f2"},
     {"kind": "metrics", "path": "relation-transport-ablation-cpu-recorded.json", "role": "C6 relation mechanics reproduction", "sha256": "c9c2ed1b0ab06e8adb32f4f6798f533a3d454a9bc657d21c13ba7b9ba1e48072"},
     {"kind": "metrics", "path": "architecture-lane-ablations-cpu-recorded.json", "role": "C6 CG12 and multiscale mechanics reproduction", "sha256": "44fc86dd74398c7b7d8e0223bd8ab2ea054341fb72c6864938a0c935df58b954"},
-    {"kind": "protocol", "path": "gpu-completion-plan-v2.json", "role": "machine-readable frozen CUDA profiler gates", "sha256": "3c0031243612546a454ee7ff54e86a15c0b9d67e090b11a01b820be461789c3f"},
-    {"kind": "progress-receipt", "path": "cpu-progress-receipt.json", "role": "immutable CPU completion and deferred-execution handoff", "sha256": "587adf7f12b71c282ddd973a8c7d0e5cfdcd84966c95476c43cf825c15627f91"},
-    {"kind": "protocol", "path": "gpu-job-packet.json", "role": "exact serialized CUDA and real-data commands with preregistration", "sha256": "28f2dac1d5bbf4e8616b6a9c911d706b6adb0e2c3fadb41cb365f3bd7094608c"},
-    {"kind": "protocol", "path": "result-adjudication-v1.json", "role": "frozen fail-closed interpretation and completion conditions", "sha256": "d43b14f086a2c85a4bc0eda9a7706da3d2cacefb25fa77f184fe777f23e5149f"}
+    {"kind": "protocol", "path": "gpu-completion-plan-v2.json", "role": "machine-readable frozen CUDA profiler gates", "sha256": "877fbddb4ccbbf8a4f159443ec3eb5a89c11dec5fa8afef4337ff71b2b3f31f4"},
+    {"kind": "progress-receipt", "path": "cpu-progress-receipt.json", "role": "immutable CPU completion and deferred-execution handoff", "sha256": "14565d3b9bb029ded04ce4711d3e2177765a53f956ed90d43fd82dbb8018a615"},
+    {"kind": "protocol", "path": "gpu-job-packet.json", "role": "exact serialized CUDA and real-data commands with preregistration", "sha256": "ebbb9b221aa4ceb0fafca316ade456ef2073792bdee3da6b8018cb80bda1b7c8"},
+    {"kind": "protocol", "path": "result-adjudication-v1.json", "role": "frozen fail-closed interpretation and completion conditions", "sha256": "b8ee5f93cef4e0e177976b8991aebe521d4b2cde3830a0863ed22d15a5f1d005"}
   ],
   "claims": [
     {"id": "C1", "text": "Source and wheel expose exactly ELA and ELAGraph and execute the public graph contract.", "evidence": ["fast-gate-pre-gpu.log", "source-manifest-pre-gpu.json", "evidence-graph.json"]},

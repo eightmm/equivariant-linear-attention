@@ -2,9 +2,9 @@
   "schema_version": 1,
   "algorithm": "sorted-path-size-sha256-v1",
   "git": {
-    "head": "29241e9c0ee1bafb5ae19b19a36d765cc9379916",
+    "head": "755c6d027b131d0ebc1fb19ef5ae5ed4a902fe92",
     "branch": "main",
-    "dirty": true
+    "dirty": false
   },
   "scope": {
     "recursive": [
@@ -29,8 +29,8 @@
       "scripts/wheel_smoke.sh"
     ]
   },
-  "file_count": 90,
-  "combined_sha256": "f77ab9347b697441e9d6a5c39fbd11772b4fe6b96aa40f74bd104556a15b124e",
+  "file_count": 91,
+  "combined_sha256": "b1d04932013c44e19c85b7337abde5ca534c086b6f73282c6d738571d5179fdb",
   "files": [
     {
       "path": "PROJECT.md",
@@ -39,8 +39,8 @@
     },
     {
       "path": "pyproject.toml",
-      "size_bytes": 664,
-      "sha256": "a94e093d1945582bd31a0beff1f8e8c45547450ff001ff5831b8c021d737bcad"
+      "size_bytes": 799,
+      "sha256": "2e892e4f681dcc19b9fadf776f9a0c65e2517328c3b617fb9b7a62af27d028d7"
     },
     {
       "path": "scripts/ablate_architecture_lanes.py",
@@ -69,8 +69,8 @@
     },
     {
       "path": "scripts/check.sh",
-      "size_bytes": 4286,
-      "sha256": "5804a3559e7916a4847d60067116f8f35f9fc7e92fc0354140219be80e5cccc3"
+      "size_bytes": 4833,
+      "sha256": "89699af4b383d19d17a6e1335b4fa404118e304dff9f5f1cdc39b05770f56590"
     },
     {
       "path": "scripts/ml_smoke.py",
@@ -154,18 +154,18 @@
     },
     {
       "path": "src/equivariant_linear_attention/graph.py",
-      "size_bytes": 37966,
-      "sha256": "82bc5625e6cafc12b7ce57a149bd5e73acc88276165d3234b9ce80bdbf5f055d"
+      "size_bytes": 39147,
+      "sha256": "662096ecb73125b04ac3060caa14bb7ae11af2fbfca086605161dfd0b5e2b3ff"
     },
     {
       "path": "src/equivariant_linear_attention/inference.py",
-      "size_bytes": 6655,
-      "sha256": "56c290e3ae7057f2f0dfdf05dab1e880f347b08e051ddecf5b08fa2babea7c94"
+      "size_bytes": 7597,
+      "sha256": "744572127197d7d14490723f627cd164d982c8f04d8d93c3c1660cb54b5e925d"
     },
     {
       "path": "src/equivariant_linear_attention/irreps.py",
-      "size_bytes": 18735,
-      "sha256": "a6142b965219b161c763603b977c76adbc44da8c88864de9bea1e0256d4dce09"
+      "size_bytes": 19431,
+      "sha256": "eaf51ac674279ba4705af07bfff0c196bbe1c9410ec6c42105cfa72b8bd12866"
     },
     {
       "path": "src/equivariant_linear_attention/kernels/__init__.py",
@@ -179,8 +179,8 @@
     },
     {
       "path": "src/equivariant_linear_attention/kernels/triton.py",
-      "size_bytes": 77098,
-      "sha256": "dd9a068be9e5623631e54bc1fe310dc8f423b5a2e591040c69cbdffa313d3056"
+      "size_bytes": 77456,
+      "sha256": "e77d3d7c4bf5ec16def1134637956547b572d5e97ef6e2f578d9e060fb8fc477"
     },
     {
       "path": "src/equivariant_linear_attention/migration.py",
@@ -194,8 +194,8 @@
     },
     {
       "path": "src/equivariant_linear_attention/model/ela.py",
-      "size_bytes": 35939,
-      "sha256": "e50bf9c7f773ee2c2d291f2a801a81378f374aba208c93eec6754e5c5787d7ed"
+      "size_bytes": 36546,
+      "sha256": "77019c8ee01e85f068f6a968de92dceb2c68dfe2a7d5e667045bd024e4cb5769"
     },
     {
       "path": "src/equivariant_linear_attention/model/runtime.py",
@@ -204,8 +204,8 @@
     },
     {
       "path": "src/equivariant_linear_attention/model/stack.py",
-      "size_bytes": 29112,
-      "sha256": "1b8d1387f202749f679169a732c46ec31a24aa43efd95062c2fbdb110a55b1d0"
+      "size_bytes": 29554,
+      "sha256": "574331f50e21087e3b1d1c9b2dc511536245e1253e96e44f17c9ac2af4fa7ec2"
     },
     {
       "path": "src/equivariant_linear_attention/nn/__init__.py",
@@ -214,8 +214,8 @@
     },
     {
       "path": "src/equivariant_linear_attention/nn/core.py",
-      "size_bytes": 41641,
-      "sha256": "76dbf2aeaca4ad2469f3798d4e35cd49a8ccbe29453e69ef4bde543fbd2f9758"
+      "size_bytes": 41643,
+      "sha256": "7826b14d6bb7bf042b5cde3773b194b4ede2985c748cfb803f962d230bffc79d"
     },
     {
       "path": "src/equivariant_linear_attention/nn/heads.py",
@@ -234,8 +234,8 @@
     },
     {
       "path": "src/equivariant_linear_attention/nn/parity.py",
-      "size_bytes": 63724,
-      "sha256": "52d789fcb703fdddd9aa69f7f2c134007ca2f9a80c667ac3019046d7fac67c63"
+      "size_bytes": 43815,
+      "sha256": "e9e6b8c826af97fbe5020c5590d0349fc2fa60a7047979b2cbb9074deb9f0d4a"
     },
     {
       "path": "src/equivariant_linear_attention/nn/pooling.py",
@@ -249,8 +249,8 @@
     },
     {
       "path": "tests/test_api_policy.py",
-      "size_bytes": 4597,
-      "sha256": "3318c7f384d36db44b26655c7e1798a6cef981ccec6a5f71560cb0209338f4eb"
+      "size_bytes": 4741,
+      "sha256": "ffe7a60db94ad43570e1bb25f661aed4d8c8c74aa30b468e8fcafa51dae6d181"
     },
     {
       "path": "tests/test_api_validation.py",
@@ -259,8 +259,8 @@
     },
     {
       "path": "tests/test_architecture_hardening.py",
-      "size_bytes": 4811,
-      "sha256": "e53168828e1b60840418a9cd19573fc1bda8976a4d6e4e1cec32a81dc6875f7d"
+      "size_bytes": 5840,
+      "sha256": "4648b46aa339e11bc96a8ad65676cc99ba1cd9236bbe59c1e337ff13a2ee0e9d"
     },
     {
       "path": "tests/test_architecture_lane_ablations.py",
@@ -289,13 +289,18 @@
     },
     {
       "path": "tests/test_canonical_equivariance.py",
-      "size_bytes": 11356,
-      "sha256": "043a621393825b9bc34f314b2b32b073133be4839894d71dab073277db960595"
+      "size_bytes": 13034,
+      "sha256": "eca4736cae9092eea3518790e651e6332fcf42e91dcdbc5794483801879e1a98"
     },
     {
       "path": "tests/test_canonical_migration.py",
-      "size_bytes": 7488,
-      "sha256": "69399763db3d41cb0aedff584362f833c954592724062c20703bed2e21937044"
+      "size_bytes": 7559,
+      "sha256": "bf97542133cc6bedc78e3d61d1b974616c1000a69b8ef338b23394670253324c"
+    },
+    {
+      "path": "tests/test_check_gate_coverage.py",
+      "size_bytes": 4018,
+      "sha256": "20d4b40270f88ff644a47b4fe8a261d298c86c0138963bdba43be23d8588b946"
     },
     {
       "path": "tests/test_completion_adjudicator.py",
@@ -319,8 +324,8 @@
     },
     {
       "path": "tests/test_elagraph_api.py",
-      "size_bytes": 6219,
-      "sha256": "e2848ba804f849ac796f114d5a6507545c7df35eb18f95fa643a0d7e955cb9b6"
+      "size_bytes": 8720,
+      "sha256": "af5a1904724e2baa2c8b6c6660c92f0c6c9752a9c038a24e20e312f1150fa24b"
     },
     {
       "path": "tests/test_equivariant_linear_attention.py",
@@ -364,8 +369,8 @@
     },
     {
       "path": "tests/test_inference.py",
-      "size_bytes": 10025,
-      "sha256": "0e3a8ba1a75089497a1d2cb7aeb32a5a19e3151c30738c847a6f1034651b33ce"
+      "size_bytes": 11822,
+      "sha256": "c48e2039e469b30528990bb9f14850ac636a46e80b67279137a4c6d502554270"
     },
     {
       "path": "tests/test_irrep_layout.py",
@@ -374,8 +379,8 @@
     },
     {
       "path": "tests/test_kernel_local.py",
-      "size_bytes": 5948,
-      "sha256": "c4cd537a660d638ea2c1df0a85bc006f022d3d3bbd38b73f62f66822ae26e777"
+      "size_bytes": 9742,
+      "sha256": "81bc8182a603589c244473e51dc6142503f95bcd6affd736c1f2f53a6291c754"
     },
     {
       "path": "tests/test_kernel_triton.py",
@@ -424,8 +429,8 @@
     },
     {
       "path": "tests/test_st5_metrics.py",
-      "size_bytes": 2650,
-      "sha256": "203e1921638dfecff9aef567a6ac54713952730fc4dc621d193962b34c0feded"
+      "size_bytes": 3990,
+      "sha256": "3d73e56a8b687f4112e5dfc499389daed741ac5d438acf1b8c80cd0427afc22b"
     },
     {
       "path": "tests/test_stagewise_coordinate_updates.py",
@@ -474,13 +479,13 @@
     },
     {
       "path": "tests/test_unified_tensor_closure.py",
-      "size_bytes": 14344,
-      "sha256": "81688ff06e252f2d155c87e3dd8891950f30a2aa77cf69037acc08b7efe2a971"
+      "size_bytes": 14639,
+      "sha256": "c196b9e1f8bcbf4326d32722166c5cc176703007290536419fe8b1003144b61a"
     },
     {
       "path": "uv.lock",
-      "size_bytes": 377502,
-      "sha256": "5658d0e6641ed037763459de40b4a485dd298ff7e52f8c38b4b2ba31b7060edd"
+      "size_bytes": 377692,
+      "sha256": "a3dd6da97b1c8b73cf51add7cd49af1329d40db5b799fb74bf4b56db9cb827a1"
     }
   ]
 }
