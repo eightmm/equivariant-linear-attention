@@ -684,6 +684,9 @@ if triton_available():
         edge = tl.program_id(0) * block_edges + tl.arange(0, block_edges)
         edge_mask = edge < num_edges
         receiver = tl.load(receiver_ptr + edge, mask=edge_mask, other=0).to(tl.int64)
+        # Promoted like ``receiver`` above: the store offset below is
+        # ``edge * num_features``, which wraps in int32 past 2^31 elements.
+        edge = edge.to(tl.int64)
         logical_block = tl.program_id(1)
         blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
         if logical_block < blocks0:
@@ -732,6 +735,9 @@ if triton_available():
         edge = tl.program_id(0) * block_edges + tl.arange(0, block_edges)
         edge_mask = edge < num_edges
         receiver = tl.load(receiver_ptr + edge, mask=edge_mask, other=0).to(tl.int64)
+        # Promoted like ``receiver`` above: the store offset below is
+        # ``edge * num_features``, which wraps in int32 past 2^31 elements.
+        edge = edge.to(tl.int64)
         logical_block = tl.program_id(1)
         blocks0: tl.constexpr = tl.cdiv(num_features0, block_features)
         blocks1: tl.constexpr = tl.cdiv(num_features1, block_features)

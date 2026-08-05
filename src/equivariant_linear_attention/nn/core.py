@@ -21,7 +21,7 @@ from .multipoles import (
     _st_orthonormal,
 )
 from .parity import (
-    ParityCompleteSE3Core,
+    _ParityCompleteSE3Base,
     _ChannelMix,
     _ParityCompleteBlock,
     _ParityState,
@@ -851,7 +851,7 @@ class _CanonicalMultipoleBlock(_ParityCompleteBlock):
         )
 
 
-class CanonicalMultipoleSE3Core(ParityCompleteSE3Core):
+class CanonicalMultipoleSE3Core(_ParityCompleteSE3Base):
     """Canonical node-multipole, tensor-routed, parity-complete SE(3) core."""
 
     def __init__(

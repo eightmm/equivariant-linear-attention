@@ -52,6 +52,7 @@ def test_complete_advanced_state_loads_without_canonical_initialization() -> Non
     receipt = load_advanced_ela_state(model, control.state_dict())
 
     assert receipt.canonical_initialized is False
+    assert receipt.router_initialized is receipt.canonical_initialized
     assert not receipt.missing_keys
     assert not receipt.unexpected_keys
 

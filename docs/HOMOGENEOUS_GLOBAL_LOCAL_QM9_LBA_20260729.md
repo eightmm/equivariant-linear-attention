@@ -1,5 +1,10 @@
 # Homogeneous Global + Local Validation (2026-07-29)
 
+> **Historical:** the reproduction commands below invoke retired experiment
+> runners that are not shipped by the current architecture-only package. See
+> `docs/EXPERIMENTS.md` for why and how to reproduce from the recorded Git
+> revision.
+
 ## Architecture under test
 
 The primary candidate in this packet is **not** LGL.  It is the homogeneous

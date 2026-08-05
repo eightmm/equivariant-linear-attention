@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from math import isfinite, sqrt
 
@@ -155,7 +156,31 @@ class ELAConfig:
                 "distinct layer boundaries"
             )
         _positive_real("max_coordinate_step", self.max_coordinate_step)
+        self._warn_on_degraded_head_count()
         self.to_advanced_config()
+
+    def _warn_on_degraded_head_count(self) -> None:
+        """Flag widths whose divisors silently shrink geometric capacity.
+
+        ``num_heads`` searches downward for a divisor of ``width``, so a width
+        that is nearly prime lands far below the intended head count -- 254
+        yields 2 heads where 256 yields 16. Nothing else signals that, and the
+        resulting model is much weaker than the neighbouring width suggests.
+        """
+
+        target = max(1, min(16, self.width // 16))
+        heads = self.num_heads
+        if heads >= target:
+            return
+        warnings.warn(
+            f"width={self.width} has no divisor near {target}, so this model "
+            f"uses {heads} geometric head(s) and local rank "
+            f"{self.local_rank}; a nearby width divisible by {target} "
+            f"(for example {self.width - self.width % target}) keeps the "
+            "intended capacity",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     @property
     def input_layout(self) -> IrrepLayout:
@@ -449,6 +474,12 @@ class _ELAEngine(nn.Module):
         if not isinstance(config, ELAConfig):
             raise TypeError("config must be an ELAConfig")
         self.config = config
+        # Layer-construction shape only. It deliberately reports
+        # ``coordinate_updates=False`` even for a coordinate-updating model,
+        # because the canonical engine drives coordinates at layer boundaries
+        # rather than inside a layer -- so its ``canonical_contract()`` says
+        # "fixed_input_geometry" regardless. Read ``describe()`` or
+        # ``updates_positions`` for what the model actually does at runtime.
         self.advanced_config = config.to_advanced_config()
         self.core = _ELACore(self.advanced_config)
         self._initialize_chiral_bridge()
@@ -515,34 +546,6 @@ class _ELAEngine(nn.Module):
     def split_output(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
         return split_irreps(self.output_irreps, value)
 
-    def _prepare_context(
-        self,
-        pos: torch.Tensor,
-        graph: Prepared3DGraph,
-    ) -> _ELALayerContext:
-        dummy = pos.new_zeros((graph.num_nodes, self.config.input_layout.dim))
-        self._validate_graph_inputs(dummy, pos, graph)
-        return self.core.prepare_context(
-            pos,
-            graph.batch,
-            graph.graph_layout,
-            graph.neighbors,
-        )
-
-    def _embed_input(
-        self,
-        node_irreps: torch.Tensor,
-        pos: torch.Tensor,
-        graph: Prepared3DGraph,
-    ) -> tuple[_ELAHiddenState, _ELALayerContext]:
-        self._validate_graph_inputs(node_irreps, pos, graph)
-        context = self.core.prepare_context(
-            pos,
-            graph.batch,
-            graph.graph_layout,
-            graph.neighbors,
-        )
-        return self.core.embed_input(node_irreps, context), context
 
     def _project_state(self, state: _ELAHiddenState) -> torch.Tensor:
         return self.core.project_state(state)

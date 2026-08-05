@@ -152,7 +152,27 @@ def _learned_model(
             layer.raw_odd_alignment.normal_(mean=-1.0, std=0.1)
             layer.raw_global_radial_alignment.normal_(mean=-1.0, std=0.1)
             layer.second_moment_chiral_mix.fill_(0.1)
+    _wake_zero_initialized(model)
     return model.eval()
+
+
+def _wake_zero_initialized(model: ELA, *, std: float = 0.05) -> int:
+    """Perturb every still-zero parameter so no lane sits out the test.
+
+    Several lanes ship zero-initialized so an untrained model starts at the
+    identity -- the tensor closure and the l=2 local score among them. Left
+    alone they emit exactly zero, so an equivariance test built on a fresh
+    model never transports anything through them and would pass even if the
+    lane were deleted. Waking them makes the test cover the whole operator.
+    """
+
+    woken = 0
+    with torch.no_grad():
+        for parameter in model.parameters():
+            if not torch.count_nonzero(parameter):
+                parameter.normal_(mean=0.0, std=std)
+                woken += 1
+    return woken
 
 
 def test_learned_ela_obeys_full_o3_and_translation() -> None:
@@ -371,3 +391,30 @@ def test_ela_keeps_batched_graphs_isolated() -> None:
         atol=2e-10,
         rtol=2e-10,
     )
+
+
+def test_learned_model_leaves_no_lane_inert() -> None:
+    """Guard the guard: the learned fixture must exercise every lane.
+
+    The tensor closure and the l=2 local score are zero-initialized, so a
+    fixture that only randomizes the local output projections transports
+    nothing through them and the O(3) tests below would still pass with those
+    modules removed.
+    """
+
+    bare = ELA(
+        input_irreps="4x0e",
+        output_irreps=FULL_IRREPS,
+        width=32,
+        depth=2,
+        cutoff=10.0,
+    ).double()
+    assert _wake_zero_initialized(bare) > 0, "expected zero-initialized lanes to exist"
+
+    model = _learned_model(width=32, depth=2)
+    inert = [
+        name
+        for name, parameter in model.named_parameters()
+        if not torch.count_nonzero(parameter)
+    ]
+    assert not inert, f"lanes still inert in the learned fixture: {inert}"

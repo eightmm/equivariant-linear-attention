@@ -281,9 +281,12 @@ def test_low_order_closure_is_parity_complete() -> None:
         heads=heads,
     )
     multipoles = _random_multipoles(nodes=nodes, rank=rank)
-    reflection = torch.diag(
-        torch.tensor([-1.0, 1.0, 1.0], dtype=torch.float64)
-    )
+    # A coordinate-aligned mirror never mixes the ST5 components, so an index
+    # ordering or basis error inside the closure products survives it. Use a
+    # generic improper rotation, matching the helper-level parity tests.
+    reflection, _ = torch.linalg.qr(torch.randn(3, 3, dtype=torch.float64))
+    if torch.linalg.det(reflection) > 0:
+        reflection[:, 0] = -reflection[:, 0]
 
     reference = closure(state, multipoles)
     transformed = closure(

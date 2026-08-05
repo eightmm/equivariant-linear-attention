@@ -1,5 +1,10 @@
 # Real-batch LBA train-step profile (2026-07-27)
 
+> **Historical:** the reproduction commands below invoke retired experiment
+> runners that are not shipped by the current architecture-only package. See
+> `docs/EXPERIMENTS.md` for why and how to reproduce from the recorded Git
+> revision.
+
 ## Result
 
 The accepted gated-plus-grouped LGL is faster than the preceding LGL on the

@@ -32,8 +32,10 @@ PY
     ran=1
   fi
 
-  if [ -x scripts/wheel_smoke.sh ] && command -v uv >/dev/null 2>&1; then
-    scripts/wheel_smoke.sh
+  # Invoked through bash so a checkout that lost the executable bit still runs
+  # the isolated wheel build/install/import instead of silently skipping it.
+  if [ -f scripts/wheel_smoke.sh ] && command -v uv >/dev/null 2>&1; then
+    bash scripts/wheel_smoke.sh
     ran=1
   fi
 
@@ -41,8 +43,9 @@ PY
     uv run python -m compileall -q "${dirs[@]}"
     ran=1
   fi
-  if [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1 &&
-    uv run ruff --version >/dev/null 2>&1; then
+  # Lint is not probed behind a silent availability test: an unresolvable ruff
+  # used to skip the whole stage while the gate still printed "ok".
+  if [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then
     uv run ruff check .
     ran=1
   fi
@@ -88,25 +91,29 @@ run_ml_smoke() {
 run_gpu() {
   export UV_LOCKED=1
   if command -v srun >/dev/null 2>&1; then
-    srun --gres=gpu:1 --time=00:10:00 uv run python -c \
+    srun --gres=gpu:1 --time=00:10:00 uv run --extra triton python -c \
       'import torch; from equivariant_linear_attention.kernels import triton_available; assert torch.cuda.is_available(), "CUDA unavailable"; assert torch.cuda.is_bf16_supported(), "CUDA BF16 unavailable"; assert triton_available(), "Triton unavailable"'
-    srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda bf16
-    srun --gres=gpu:1 --time=00:10:00 uv run python scripts/ml_smoke.py cuda auto
-    srun --gres=gpu:1 --time=00:10:00 uv run pytest -q \
+    srun --gres=gpu:1 --time=00:10:00 uv run --extra triton python scripts/ml_smoke.py cuda bf16
+    srun --gres=gpu:1 --time=00:10:00 uv run --extra triton python scripts/ml_smoke.py cuda auto
+    srun --gres=gpu:1 --time=00:10:00 uv run --extra triton pytest -q \
       tests/test_gpu_completion.py \
       tests/test_canonical_cuda.py \
       tests/test_kernel_triton_cuda.py \
-      tests/test_triton_equivariance_cuda.py
+      tests/test_triton_equivariance_cuda.py \
+      tests/test_inference.py \
+      tests/test_unified_multipole_precision.py
   else
-    uv run python -c \
+    uv run --extra triton python -c \
       'import torch; from equivariant_linear_attention.kernels import triton_available; assert torch.cuda.is_available(), "CUDA unavailable"; assert torch.cuda.is_bf16_supported(), "CUDA BF16 unavailable"; assert triton_available(), "Triton unavailable"'
-    uv run python scripts/ml_smoke.py cuda bf16
-    uv run python scripts/ml_smoke.py cuda auto
-    uv run pytest -q \
+    uv run --extra triton python scripts/ml_smoke.py cuda bf16
+    uv run --extra triton python scripts/ml_smoke.py cuda auto
+    uv run --extra triton pytest -q \
       tests/test_gpu_completion.py \
       tests/test_canonical_cuda.py \
       tests/test_kernel_triton_cuda.py \
-      tests/test_triton_equivariance_cuda.py
+      tests/test_triton_equivariance_cuda.py \
+      tests/test_inference.py \
+      tests/test_unified_multipole_precision.py
   fi
   echo "check gpu: ok"
 }

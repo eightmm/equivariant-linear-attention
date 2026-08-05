@@ -1,5 +1,11 @@
 # Architecture v3: capability and evidence boundary
 
+> **Historical:** this document is historical and superseded by
+> `docs/CANONICAL_ELA.md`. The `EquivariantAttention` base class named below is
+> listed under "Superseded public names" in
+> `docs/ARCHITECTURE_DECISION_20260731.md`; the current public surface is
+> `ELA`/`ELAGraph`.
+
 ## Current outcome
 
 Architecture v3 is implemented as an opt-in extension of

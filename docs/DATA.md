@@ -110,3 +110,8 @@ The loader relies on the already-materialized immutable Hugging Face cache in
 offline mode. The test Arrow file exists in that cache from an earlier generic
 builder preflight, but this evaluation runner neither constructs a test dataset
 object nor reads a test row or label.
+
+> **Correction (2026-08-04):** a cached test row was accidentally materialized
+> during a 2026-08-04 schema audit, contaminating the local LBA test split
+> despite the "neither constructs... nor reads" claim above. See
+> `docs/REALDATA_VALIDATION.md` for the current caveat.

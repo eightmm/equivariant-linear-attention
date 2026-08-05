@@ -102,6 +102,12 @@ class _EquivariantRMSNorm(nn.Module):
     def _work_dtype(value: torch.Tensor) -> torch.dtype:
         return torch.float64 if value.dtype == torch.float64 else torch.float32
 
+    # ``eps`` sits inside the square root, so it caps the gain this normalizer
+    # can apply to a near-zero sector at ``1/sqrt(eps)`` -- 1000 at the default
+    # 1e-6. Rescaling a small sector towards unit RMS is what a normalizer is
+    # for, so this is deliberate and not the ``1 + square`` bound used by
+    # ``_unit_ball``/``_bounded_st``, which solve the different problem of
+    # keeping an already-scaled quantity inside a ball.
     def _scalar(self, value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
         dtype = self._work_dtype(value)
         work = value.to(dtype=dtype)

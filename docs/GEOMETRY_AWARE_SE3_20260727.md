@@ -1,5 +1,10 @@
 # Sparse Geometry-Aware O(3)/SE(3) Local Attention
 
+> **Historical:** the reproduction commands below invoke retired experiment
+> runners that are not shipped by the current architecture-only package. See
+> `docs/EXPERIMENTS.md` for why and how to reproduce from the recorded Git
+> revision.
+
 ## Decision
 
 The EquiFlex-inspired geometry path is implemented as an opt-in capability and

@@ -293,3 +293,53 @@ def test_cuda_tf32_policy_is_preserved_by_default_and_explicit_when_requested() 
     finally:
         torch.backends.cuda.matmul.allow_tf32 = original_matmul
         torch.backends.cudnn.allow_tf32 = original_cudnn
+
+
+def test_prepared_inference_checkpoint_round_trips_through_a_plain_model() -> None:
+    """A prepared model must stay checkpoint-compatible with the bare model.
+
+    The wrapper holds the model as a ``self.model`` child, so an inherited
+    ``state_dict`` would prefix every key with ``model.``. Loading that back
+    into a plain ``ELA`` matches nothing, and the default ``strict=False``
+    turns the mismatch into a silent no-op that discards every weight.
+    """
+
+    model, graph = _fixture()
+    prepared = prepare_for_inference(
+        model,
+        device="cpu",
+        dtype="auto",
+        compile_model=True,
+    )
+
+    saved = prepared.state_dict()
+    assert set(saved) == set(model.state_dict())
+    assert not any(key.startswith("model.") for key in saved)
+
+    restored, _ = _fixture()
+    report = restored.load_state_dict(saved)
+    assert not report.missing_keys and not report.unexpected_keys
+
+    restored.eval()
+    with torch.no_grad():
+        assert torch.equal(model.eval()(graph).x, restored(graph).x)
+
+
+def test_prepared_inference_accepts_a_plain_model_checkpoint() -> None:
+    model, _ = _fixture()
+    prepared = prepare_for_inference(model, device="cpu", compile_model=True)
+
+    donor, _ = _fixture()
+    report = prepared.load_state_dict(donor.state_dict())
+
+    assert not report.missing_keys and not report.unexpected_keys
+    for name, parameter in prepared.model.named_parameters():
+        assert torch.equal(parameter, donor.state_dict()[name])
+
+
+def test_nested_inference_wrappers_do_not_stack_state_dict_prefixes() -> None:
+    model, _ = _fixture()
+    inner = prepare_for_inference(model, device="cpu", compile_model=True)
+    nested = _AutocastInferenceModule(inner, torch.float32)
+
+    assert set(nested.state_dict()) == set(model.state_dict())

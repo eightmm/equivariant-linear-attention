@@ -77,3 +77,41 @@ def test_st5_mse_reduction_and_validation() -> None:
     )
     with pytest.raises(ValueError, match="reduction"):
         st5_mse(prediction, target, reduction="median")
+
+
+def test_st5_norm_has_a_finite_gradient_at_the_zero_tensor() -> None:
+    """A zero tensor target is legal, so the norm must stay differentiable.
+
+    ``sqrt`` has an infinite derivative at the origin, which previously turned
+    any zero row into ``nan`` gradients for a public helper.
+    """
+
+    value = torch.zeros(4, 5, dtype=torch.float64, requires_grad=True)
+
+    gradient, = torch.autograd.grad(st5_norm(value).sum(), value)
+
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) == 0
+
+
+def test_st5_norm_values_are_unchanged_by_the_zero_guard() -> None:
+    torch.manual_seed(5)
+    value = torch.randn(6, 5, dtype=torch.float64)
+    mixed = torch.cat([value, torch.zeros(2, 5, dtype=torch.float64)])
+
+    expected = torch.sqrt(st5_inner(mixed, mixed).clamp_min(0.0))
+
+    torch.testing.assert_close(st5_norm(mixed), expected, atol=0.0, rtol=0.0)
+
+
+def test_st5_norm_keeps_finite_gradients_on_mixed_zero_and_nonzero_rows() -> None:
+    torch.manual_seed(6)
+    raw = torch.cat(
+        [torch.randn(3, 5, dtype=torch.float64), torch.zeros(3, 5, dtype=torch.float64)]
+    ).requires_grad_(True)
+
+    gradient, = torch.autograd.grad(st5_norm(raw).sum(), raw)
+
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient[3:]) == 0
+    assert torch.count_nonzero(gradient[:3]) > 0

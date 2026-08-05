@@ -273,11 +273,24 @@ def st5_inner(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
 
 
 def st5_norm(value: torch.Tensor, *, eps: float = 0.0) -> torch.Tensor:
-    """Frobenius norm of a compact symmetric-traceless tensor."""
+    """Frobenius norm of a compact symmetric-traceless tensor.
+
+    The zero tensor is a legal input -- a tensor target is frequently zero --
+    so the derivative of ``sqrt`` at the origin is masked out rather than
+    propagated. With the default ``eps=0.0`` the returned values are exactly
+    ``sqrt(<v, v>)``; only the gradient there changes, from ``nan`` to zero.
+    """
 
     if eps < 0.0:
         raise ValueError("eps must be nonnegative")
-    return torch.sqrt(st5_inner(value, value).clamp_min(0.0) + eps)
+    squared = st5_inner(value, value).clamp_min(0.0) + eps
+    if eps > 0.0:
+        return torch.sqrt(squared)
+    positive = squared > 0.0
+    # sqrt is evaluated on a strictly positive surrogate so its backward never
+    # sees zero; ``where`` then discards that branch wherever the norm is zero.
+    guarded = torch.sqrt(torch.where(positive, squared, torch.ones_like(squared)))
+    return torch.where(positive, guarded, torch.zeros_like(guarded))
 
 
 def st5_mse(

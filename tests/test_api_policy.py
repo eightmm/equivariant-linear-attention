@@ -10,6 +10,7 @@ import torch
 import equivariant_linear_attention as ela
 import equivariant_linear_attention.advanced as advanced
 import equivariant_linear_attention.geometry as geometry
+import equivariant_linear_attention.nn.parity as parity
 from equivariant_linear_attention import ELA, ELAGraph
 from equivariant_linear_attention.advanced import ELAConfig, ELAFeatures, SparseGeometry
 from equivariant_linear_attention.model.ela import ELALayer
@@ -86,6 +87,8 @@ def test_model_has_one_declared_graph_call_contract() -> None:
     assert "ELALayer" not in advanced.__all__
     assert not hasattr(advanced, "ELALayer")
     assert geometry.__all__ == []
+    assert parity.__all__ == []
+    assert not hasattr(parity, "ParityCompleteSE3Core")
 
 
 def test_advanced_configuration_still_builds_the_same_model() -> None:

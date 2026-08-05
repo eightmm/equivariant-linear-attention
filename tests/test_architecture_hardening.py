@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+import pytest
 import torch
 
 from equivariant_linear_attention import ELA, ELAGraph
@@ -120,3 +122,30 @@ def test_global_radial_shell_has_finite_double_backward_at_graph_center() -> Non
 
     assert torch.isfinite(first).all()
     assert torch.isfinite(second).all()
+
+
+@pytest.mark.parametrize("width", [32, 64, 96, 128, 160, 256])
+def test_clean_widths_keep_their_intended_head_count_silently(width: int) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        model = ELA("4x0e", width=width, depth=1, cutoff=3.0)
+
+    assert model.config.num_heads == max(1, min(16, width // 16))
+
+
+@pytest.mark.parametrize(("width", "heads"), [(130, 5), (254, 2)])
+def test_widths_without_a_near_divisor_warn_about_lost_capacity(
+    width: int,
+    heads: int,
+) -> None:
+    """A nearly-prime width silently collapses the geometric head count.
+
+    ``num_heads`` searches downward for a divisor, so width 254 lands on 2
+    heads where 256 gives 16 -- a much weaker model than the neighbouring
+    width implies, previously with no signal at all.
+    """
+
+    with pytest.warns(RuntimeWarning, match="geometric head"):
+        model = ELA("4x0e", width=width, depth=1, cutoff=3.0)
+
+    assert model.config.num_heads == heads

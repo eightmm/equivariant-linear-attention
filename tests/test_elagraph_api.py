@@ -185,3 +185,84 @@ def test_integer_semantic_order_is_accepted_by_the_public_graph() -> None:
 
     assert output.x.shape == (4, 1)
     assert torch.isfinite(output.x).all()
+
+
+def test_pickle_drops_the_private_prepared_cache_and_revalidates() -> None:
+    """A pickled graph must not smuggle the private CSR across a boundary.
+
+    ``ELAGraph`` is documented as a ``DataLoader`` sample, so with
+    ``num_workers>0`` it is pickled between processes. Default slots pickling
+    would carry the private prepared cache along and rebuild the object
+    without ever running ``__init__``, so invalid state would survive too.
+    """
+
+    import pickle
+
+    model = ELA("4x0e", width=32, depth=2, cutoff=3.0)
+    nodes = 8
+    graph = ELAGraph(
+        x=torch.randn(nodes, 4),
+        pos=torch.randn(nodes, 3) * 2.0,
+        batch=torch.zeros(nodes, dtype=torch.long),
+    )
+    model(graph)
+    assert graph._prepared_graph is not None
+
+    restored = pickle.loads(pickle.dumps(graph))
+
+    assert restored._prepared_graph is None
+    assert restored._packed_template is None
+    assert restored._assume_immutable_storage is False
+    assert torch.equal(restored.x, graph.x)
+    assert torch.equal(restored.pos, graph.pos)
+
+    with torch.no_grad():
+        assert torch.equal(model(graph).x, model(restored).x)
+
+
+def test_deepcopy_drops_the_private_prepared_cache() -> None:
+    import copy
+
+    model = ELA("4x0e", width=32, depth=2, cutoff=3.0)
+    nodes = 6
+    graph = ELAGraph(
+        x=torch.randn(nodes, 4),
+        pos=torch.randn(nodes, 3),
+        batch=torch.zeros(nodes, dtype=torch.long),
+    )
+    model(graph)
+
+    assert copy.deepcopy(graph)._prepared_graph is None
+
+
+def test_sealed_graph_does_not_carry_its_immutable_promise_through_pickle() -> None:
+    """The trusted fast path must not survive into storage it never sealed."""
+
+    import pickle
+
+    model = ELA("4x0e", width=32, depth=2, cutoff=3.0)
+    nodes = 6
+    sealed = ELAGraph(
+        x=torch.randn(nodes, 4),
+        pos=torch.randn(nodes, 3),
+        batch=torch.zeros(nodes, dtype=torch.long),
+    ).assume_immutable()
+    model(sealed)
+    assert sealed._assume_immutable_storage
+
+    assert pickle.loads(pickle.dumps(sealed))._assume_immutable_storage is False
+
+
+def test_unpickling_revalidates_and_rejects_corrupted_state() -> None:
+    import pickle
+
+    nodes = 6
+    graph = ELAGraph(
+        x=torch.randn(nodes, 4),
+        pos=torch.randn(nodes, 3),
+        batch=torch.zeros(nodes, dtype=torch.long),
+    )
+    object.__setattr__(graph, "pos", torch.randn(nodes + 3, 3))
+
+    with pytest.raises(ValueError, match=r"pos must have shape"):
+        pickle.loads(pickle.dumps(graph))

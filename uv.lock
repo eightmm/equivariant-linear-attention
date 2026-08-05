@@ -442,6 +442,9 @@ qm9 = [
     { name = "rdkit" },
     { name = "torch-geometric" },
 ]
+triton = [
+    { name = "triton", marker = "sys_platform == 'linux'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -457,8 +460,9 @@ requires-dist = [
     { name = "rdkit", marker = "extra == 'qm9'", specifier = ">=2026.3.3" },
     { name = "torch", specifier = ">=2.12.1" },
     { name = "torch-geometric", marker = "extra == 'qm9'", specifier = ">=2.8.0" },
+    { name = "triton", marker = "sys_platform == 'linux' and extra == 'triton'", specifier = ">=3.0.0" },
 ]
-provides-extras = ["qm9", "pdbbind"]
+provides-extras = ["qm9", "pdbbind", "triton"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -103,7 +103,25 @@ def _copy_model_metadata(target: nn.Module, source: nn.Module) -> None:
             setattr(target, name, getattr(source, name))
 
 
-class _CompiledCoreInferenceModule(nn.Module):
+class _TransparentStateMixin:
+    """Keep a wrapper's checkpoint identical to the model it wraps.
+
+    Both inference wrappers hold the model as a ``self.model`` child, so the
+    inherited ``state_dict`` would prefix every key with ``model.``. Loading
+    such a checkpoint back into a plain ``ELA`` matches nothing and, under the
+    default ``strict=False``, silently leaves the weights untouched. Delegating
+    both directions keeps ``prepare_for_inference`` checkpoint-compatible with
+    the unwrapped model, and keeps nested wrappers from stacking prefixes.
+    """
+
+    def state_dict(self, *args: object, **kwargs: object) -> object:
+        return self.model.state_dict(*args, **kwargs)  # type: ignore[attr-defined]
+
+    def load_state_dict(self, *args: object, **kwargs: object) -> object:
+        return self.model.load_state_dict(*args, **kwargs)  # type: ignore[attr-defined]
+
+
+class _CompiledCoreInferenceModule(_TransparentStateMixin, nn.Module):
     """Compile ELA's numerical core while leaving public graph work eager."""
 
     def __init__(self, model: nn.Module, execute: object) -> None:
@@ -138,7 +156,7 @@ class _CompiledCoreInferenceModule(nn.Module):
         return self.model._wrap_output(graph, packed, output)  # type: ignore[attr-defined]
 
 
-class _AutocastInferenceModule(nn.Module):
+class _AutocastInferenceModule(_TransparentStateMixin, nn.Module):
     def __init__(self, model: nn.Module, dtype: torch.dtype) -> None:
         super().__init__()
         self.model = model

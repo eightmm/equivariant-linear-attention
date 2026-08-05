@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 import torch
@@ -440,6 +440,33 @@ class ELAGraph:
                 raise ValueError("private prepared cache membership does not match")
             if not prepared.spec.can_reuse_positions(pos):
                 raise ValueError("private prepared cache is stale for pos")
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle the public graph only, never the private prepared cache.
+
+        ``ELAGraph`` is recommended as a ``DataLoader`` sample, so it crosses
+        process boundaries by pickle. The default slots behaviour would carry
+        the private receiver-major CSR along with it and, because ``__init__``
+        never runs on the other side, would also reconstruct without
+        revalidating. Both are dropped here: the far side rebuilds a cold
+        cache, and ``__setstate__`` re-runs validation.
+        """
+
+        return {
+            entry.name: getattr(self, entry.name)
+            for entry in fields(self)
+            if entry.init
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        for entry in fields(self):
+            if entry.init:
+                object.__setattr__(self, entry.name, state[entry.name])
+            else:
+                # A pickled graph makes no promise about the new storage, so
+                # the trusted-reuse flag resets with the rest of the cache.
+                object.__setattr__(self, entry.name, entry.default)
+        self.__post_init__()
 
     @property
     def num_nodes(self) -> int:

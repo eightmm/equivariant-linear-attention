@@ -1,5 +1,16 @@
 # ATOM3D-LBA ID30 validation study (2026-07-24)
 
+> **Correction (2026-08-04):** a cached test row was accidentally materialized
+> during a 2026-08-04 schema audit, contaminating the local LBA test split, so
+> the "test split remained unopened" claim and the "relevant affinity
+> generalization evidence" framing below no longer hold. See
+> `docs/REALDATA_VALIDATION.md` for the current caveat.
+
+> **Historical:** the reproduction commands below invoke retired experiment
+> runners that are not shipped by the current architecture-only package. See
+> `docs/EXPERIMENTS.md` for why and how to reproduce from the recorded Git
+> revision.
+
 ## Outcome
 
 The first full held-out ATOM3D-LBA experiment is complete. This replaces the

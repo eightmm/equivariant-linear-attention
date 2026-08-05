@@ -18,6 +18,10 @@ qm9 = [
 pdbbind = [
     "datasets>=4.4.1",
 ]
+# scripts/check.sh gpu activates this extra and asserts triton_available().
+triton = [
+    "triton>=3.0.0; sys_platform == 'linux'",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.3,<0.11.0"]
