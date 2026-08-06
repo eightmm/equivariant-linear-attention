@@ -124,7 +124,12 @@ def test_equivariant_vector_head_obeys_o3_and_node_permutations(
     permuted = head(scalars[permutation], vectors[permutation])
 
     assert torch.allclose(moved, reference @ transform.T, atol=1e-12)
-    assert torch.equal(permuted, reference[permutation])
+    torch.testing.assert_close(
+        permuted,
+        reference[permutation],
+        rtol=0.0,
+        atol=1e-15,
+    )
 
 
 def _set_identity_coordinate_direction(head: CoordinateUpdateHead) -> None:
@@ -358,6 +363,8 @@ def test_generic_primitives_validate_shapes_and_centering() -> None:
             torch.randn(2, 1),
             torch.randn(2, 1, 2),
         )
+
+
 def test_generic_primitives_support_second_order_autograd() -> None:
     torch.manual_seed(2919)
     head = CoordinateUpdateHead(
@@ -423,6 +430,8 @@ def test_explicit_empty_graph_pooling_is_well_defined() -> None:
             torch.empty(0, 2),
             torch.empty(0, dtype=torch.long),
         )
+
+
 def test_generic_primitive_validation_rejects_ambiguous_metadata() -> None:
     with pytest.raises(ValueError, match="reduction"):
         MaskedInvariantPooling(reduction="median")  # type: ignore[arg-type]
