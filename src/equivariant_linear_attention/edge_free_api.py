@@ -307,8 +307,13 @@ class ELA(_SparseELA):
             batch_index,
             state.even_scalar * selected_float,
         ) / selected_count.unsqueeze(-1)
-        component_gates = 2.0 * torch.sigmoid(
-            self.coordinate_component_gate(component_state)
+        raw_component_gates = self.coordinate_component_gate(component_state)
+        component_gates = torch.cat(
+            [
+                torch.tanh(raw_component_gates[:, :2]),
+                1.0 + torch.tanh(raw_component_gates[:, 2:]),
+            ],
+            dim=-1,
         )
         return _quotient_rigid_shape_step(
             raw,
