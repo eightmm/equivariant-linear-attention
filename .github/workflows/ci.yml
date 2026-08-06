@@ -26,4 +26,8 @@ jobs:
           assert ELAGraph is not None
           assert set(ela.__all__) == {"ELA", "ELAGraph"}
           PY
-      - run: scripts/check.sh fast
+      - run: uv run python -m compileall -q src scripts
+      - run: uv run ruff check .
+      - run: uv run pytest -q tests/test_edge_free_krylov.py tests/test_manifold_vnext.py
+      - run: uv run pytest -q
+      - run: uv run python scripts/ml_smoke.py
