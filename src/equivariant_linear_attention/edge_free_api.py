@@ -150,9 +150,6 @@ class ELA(_SparseELA):
                 "implicit_relation_orders": (1, 2, 3),
                 "explicit_edge_residual": True,
                 "automatic_radius_graph": False,
-                "internal_graph_ir": (
-                    "edge-free graph moments with optional explicit receiver-CSR"
-                ),
             }
         )
         return description
