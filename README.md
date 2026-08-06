@@ -35,7 +35,6 @@ model = ELA(
     "1x0e",           # output irreps
     width=128,
     depth=8,
-    cutoff=6.0,
 )
 
 graph = ELAGraph(
@@ -52,9 +51,10 @@ final_positions = out.pos        # [N, 3]
 coordinate_delta = out.delta     # [N, 3]
 ```
 
-When `edge_index` is omitted, ELA builds an exact radius graph from `pos` and the
-model cutoff. Automatic topology is directed, excludes self edges, and never
-connects different graphs.
+When `edge_index` is omitted, ELA does **not** build a radius graph. It computes
+receiver-centred relative geometric moments and applies one implicit invariant
+relation operator at Krylov orders `R`, `R²`, and `R³`. Neither an `N x N`
+attention matrix nor an `N x N x C` pair representation is materialized.
 
 ## The graph contract
 
@@ -79,9 +79,9 @@ edge_index[1] = receiver/target
 ```
 
 `batch` must be graph-major and contiguous: `0, ..., 0, 1, ..., 1, ...`. A
-missing `batch` means one graph. The numerical core converts this contract once
-to a private receiver-major packed representation; layers never re-parse user
-inputs.
+missing `batch` means one graph. Edge-free execution uses grouped node
+reductions. Explicit edges are converted once to a private receiver-major packed
+representation; layers never re-parse user inputs.
 
 ## Mini-batches
 
@@ -104,11 +104,11 @@ for graph in loader:
     loss = loss_fn(out.graph_x, graph.y)
 ```
 
-The collator concatenates nodes, offsets edges, creates `batch`, and carries
-`edge_type`, conditions, update masks, targets, and sample IDs without dummy
-padded nodes.
+The collator concatenates nodes, offsets explicit edges, creates `batch`, and
+carries `edge_type`, conditions, update masks, targets, and sample IDs without
+dummy padded nodes.
 
-For repeated execution with static topology, an explicit immutable-storage
+For repeated execution with explicit static topology, an immutable-storage
 contract enables the E-independent prepared-cache path:
 
 ```python
@@ -121,10 +121,9 @@ with torch.inference_mode():
 `assume_immutable()` clones `pos`, `edge_index`, `batch`, `edge_type`, and
 `group` before opting in. Do not mutate those returned tensors or export mutable
 aliases of them. Ordinary `ELAGraph` execution remains the safe default and
-revalidates cached topology content exactly, including storage that may be
-changed through NumPy or DLPack aliases. Seal the graph before entering
-`torch.inference_mode()`; inference tensors do not expose mutation counters, so
-sealing inside that context safely falls back to exact validation.
+revalidates explicit topology content exactly, including storage that may be
+changed through NumPy or DLPack aliases. Edge-free inputs have no discovered
+edge topology to cache.
 
 ## Coordinate updates
 
@@ -146,11 +145,11 @@ step = out.delta
 With `update_positions=False`, `out.pos` equals the input positions and
 `out.delta` is zero. With `update_positions=True`, ELA predicts a polar-vector
 step after every layer, carries the hidden state forward, and lets the next
-layer consume the updated geometry. Selected updates are centered per graph;
-the sum of all stage steps is bounded by `max_coordinate_step`. Automatic
-radius topology is rebuilt between stages when its preparation provenance no
-longer permits reuse. `graph.update_mask` selects movable nodes; unselected
-nodes receive exactly zero displacement.
+layer recompute its edge-free moments from the updated geometry. Selected
+updates are centered per graph; the sum of all stage steps is bounded by
+`max_coordinate_step`. `graph.update_mask` selects movable nodes; unselected
+nodes receive exactly zero displacement. Explicit topology, when supplied, is
+kept fixed while its geometric values are recomputed from current positions.
 
 This built-in coordinate update is for learned geometry refinement. To predict a
 flow-matching velocity without mutating coordinates, keep
@@ -216,11 +215,11 @@ and differentiate with `conservative_forces` from the advanced module. A direct
 
 ## Typed and disconnected topology
 
-Use explicit edges for bonds, meshes, temporal transitions, metal coordination,
-or other semantic relations:
+Explicit edges are optional residual structure for bonds, meshes, temporal
+transitions, metal coordination, or other semantic relations:
 
 ```python
-model = ELA("32x0e", edge_types=4)
+model = ELA("32x0e", edge_types=4, cutoff=6.0)
 
 graph = ELAGraph(
     x=x,
@@ -230,8 +229,11 @@ graph = ELAGraph(
 )
 ```
 
-`group` can split one sample into disconnected interaction components. Global
-attention and automatic local edges remain inside each component, while
+`cutoff`, `max_neighbors`, and typed radial routing apply to this explicit sparse
+residual. They do not trigger automatic neighbor discovery.
+
+`group` can split one sample into disconnected interaction components. Edge-free
+moments and implicit relation attention remain inside each component, while
 `graph_x` and `graph_sum` are still pooled per sample:
 
 ```python
@@ -240,34 +242,53 @@ graph = ELAGraph(x=x, pos=pos, batch=batch, group=component_id)
 
 ## Architecture
 
-Each layer computes an exact global linear-attention branch and an exact sparse
-short-range branch, then applies their fixed sum:
+Each layer forms all-irrep invariant query/key features once and applies the same
+implicit relation operator at three orders:
 
 $$
-M_i^\tau = G_i^\tau + L_i^\tau.
+Z_1^\tau = R V^\tau,\qquad
+Z_2^\tau = R Z_1^\tau,\qquad
+Z_3^\tau = R Z_2^\tau.
 $$
 
-The hidden carrier is parity-complete through `l=2`. Geometric multiplicity and
-local rank scale deterministically with width, so users do not choose heads,
-ranks, hidden irreps, normalization variants, or branch routers. The global
-kernel includes pseudoscalar-aware and radial routing; the local operator uses
-unit-direction angular terms, relation-conditioned radial/value transport, and
-first/second-moment chiral channels.
+A zero-initialized equivariant gate mixes the Krylov basis,
 
-No branch constructs a dense `N x N` attention matrix. For `E = O(N)` sparse
-candidates and fixed widths, stack work is `O(L(N + E))`.
+$$
+G_i^\tau = Z_{1,i}^\tau
++ g_{2,i}^{0e} Z_{2,i}^\tau
++ g_{3,i}^{0e} Z_{3,i}^\tau,
+$$
+
+and an optional explicit sparse residual is added only when `edge_index` is
+present:
+
+$$
+M_i^\tau = G_i^\tau + \mathbf 1_{\{E>0\}} L_i^\tau.
+$$
+
+The hidden carrier is parity-complete through `l=2`. Graphwise first- and
+second-order relative coordinate moments provide polar and symmetric-traceless
+geometry without enumerating pairs. Existing tensor closure then produces
+parity-valid scalar, pseudoscalar, polar, axial, and tensor interactions. The
+implicit relation uses scalar, pseudoscalar, polar/axial alignment, even/odd
+tensor alignment, and graph-centred radial features.
+
+No branch constructs a dense `N x N` attention matrix or persistent pair state.
+For width `C` and a fixed three-order basis, edge-free stack work is
+`O(L N C²)` with `O(N C + C²)` working memory. Explicit edges add an
+`O(L E C)`-type sparse residual. At fixed width and `E = O(N)`, execution remains
+linear in the number of nodes.
 
 ## Performance
 
-Topology preparation, COO-to-CSR conversion, and backend dispatch are internal.
-A fixed-position output may carry a private prepared topology for compatible
-subsequent models. Radius topology records cutoff, neighbor policy, relation
-schema, and reference positions, and is rebuilt rather than silently reused
-when stale.
+The default path has no radius search, COO construction, edge sorting, or
+neighbor rebuild. Its main operations are grouped reductions and dense
+factorized contractions. Explicit topology alone uses the private receiver-CSR
+cache and exact mutation/provenance checks.
 
 PyTorch is the canonical backend. Compile ELA through the inference helper so
-public validation, cache lookup, topology discovery, pooling, and output
-wrapping remain eager while only the private numerical core is compiled:
+public validation, cache lookup, pooling, and output wrapping remain eager while
+only the private numerical core is compiled:
 
 ```python
 from equivariant_linear_attention.inference import prepare_for_inference
@@ -280,11 +301,11 @@ with torch.inference_mode():
 Compilation is an optimization attempt, not a numerical requirement: recognized
 Dynamo/Inductor lowering failures warn once and permanently fall back to the
 exact eager core. Other runtime errors remain visible. Validate latency on the
-intended shapes and hardware.
-Triton remains an explicit memory-oriented experimental backend and is never
-selected automatically.
+intended shapes and hardware. Triton remains an explicit memory-oriented
+experimental backend and is never selected automatically.
 
-See [performance](docs/PERFORMANCE.md), [advanced configuration](docs/ADVANCED.md),
+See [edge-free Krylov ELA](docs/EDGE_FREE_KRYLOV.md),
+[performance](docs/PERFORMANCE.md), [advanced configuration](docs/ADVANCED.md),
 [task recipes](docs/TASKS.md), [real-data validation](docs/REALDATA_VALIDATION.md),
 [the architecture contract](docs/CANONICAL_ELA.md), and the
 [evidence-scoped completion checklist](docs/COMPLETION_STATUS.md).
@@ -299,5 +320,6 @@ uv run python examples/flow_matching_velocity.py
 ```
 
 The suite covers proper and improper O(3) actions, translation, node and edge
-permutations, graph isolation, coordinate double backward, topology provenance,
-ST5 tensor metrics, relation conditioning, and optional CUDA/Triton parity.
+permutations, graph isolation, edge-free moment identities, Krylov execution,
+coordinate double backward, explicit-topology provenance, ST5 tensor metrics,
+relation conditioning, and optional CUDA/Triton parity.
