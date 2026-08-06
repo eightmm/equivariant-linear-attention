@@ -94,7 +94,8 @@ def load_advanced_ela_state(
     state is discarded only after explicit opt-in. New canonical
     parity/radial/relation parameters may be absent and retain their
     deterministic initialization; every other missing or unexpected key fails
-    closed.
+    closed. Zero Krylov gates are function-preserving compatibility defaults and
+    therefore are not reported as a functional initialization event.
     """
 
     if not isinstance(model, _ELAEngine):
@@ -109,9 +110,7 @@ def load_advanced_ela_state(
     if any(not isinstance(value, torch.Tensor) for value in provided.values()):
         raise TypeError("state_dict values must be tensors")
 
-    legacy_router = {
-        key for key in provided if ".branch_fusion." in key
-    }
+    legacy_router = {key for key in provided if ".branch_fusion." in key}
     if legacy_router and not allow_drop_learned_fusion:
         raise RuntimeError(
             "checkpoint contains learned branch-fusion parameters; dropping "
@@ -124,14 +123,17 @@ def load_advanced_ela_state(
     target = model.state_dict()
     target_keys = set(target)
     provided_keys = set(provided)
+    identity_safe_missing_suffixes = (
+        ".global_krylov_gate.weight",
+        ".global_krylov_gate.bias",
+    )
     allowed_missing_suffixes = (
         ".query_odd_scalar.weight",
         ".key_odd_scalar.weight",
         ".raw_odd_alignment",
         ".global_radial_centers",
         ".raw_global_radial_alignment",
-        ".global_krylov_gate.weight",
-        ".global_krylov_gate.bias",
+        *identity_safe_missing_suffixes,
         ".relation_radial_scale",
         ".relation_value_gate",
         ".local_scale_score_mix",
@@ -144,10 +146,13 @@ def load_advanced_ela_state(
     )
     unexpected = tuple(sorted(provided_keys - target_keys))
     missing = tuple(sorted(target_keys - provided_keys))
-    invalid_missing = tuple(
+    reported_missing = tuple(
         key
         for key in missing
-        if not key.endswith(allowed_missing_suffixes)
+        if not key.endswith(identity_safe_missing_suffixes)
+    )
+    invalid_missing = tuple(
+        key for key in missing if not key.endswith(allowed_missing_suffixes)
     )
     shape_mismatches = tuple(
         key
@@ -176,10 +181,10 @@ def load_advanced_ela_state(
         raise RuntimeError("state schema changed during validated migration")
     return ELAMigrationReceipt(
         loaded_keys=len(provided),
-        missing_keys=missing,
+        missing_keys=reported_missing,
         unexpected_keys=unexpected,
         dropped_keys=tuple(sorted(legacy_router)),
-        canonical_initialized=bool(missing or legacy_router),
+        canonical_initialized=bool(reported_missing or legacy_router),
     )
 
 
