@@ -2,9 +2,7 @@ name: cpu-ci
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - agent/manifold-ela-vnext
+  pull_request:
 
 permissions:
   contents: read
