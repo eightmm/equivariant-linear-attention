@@ -11,7 +11,7 @@ from .model.ela import ELAConfig
 
 
 class ELA(_SparseELA):
-    """Public edge-free ELA with an optional explicit sparse-edge residual.
+    """The public ``ELAGraph -> ELA -> ELAGraph`` edge-free model.
 
     Omitting ``edge_index`` no longer triggers radius-graph discovery. The model
     instead uses graphwise relative geometric moments and a shared implicit
