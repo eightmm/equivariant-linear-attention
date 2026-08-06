@@ -79,7 +79,10 @@ class ELA(_SparseELA):
             return False
         if graph.neighbors.num_edges:
             return False
-        if graph.neighbors.relation_id is not None:
+        if (
+            graph.neighbors.relation_id is not None
+            and graph.neighbors.relation_id.numel()
+        ):
             return False
         if batch._trusted_prepared:
             return True
@@ -118,10 +121,16 @@ class ELA(_SparseELA):
             device=batch.positions.device,
             dtype=torch.long,
         )
+        relation_count = self.config.geometry.num_edge_relations
+        empty_relation = (
+            torch.empty(0, device=batch.positions.device, dtype=torch.long)
+            if relation_count
+            else None
+        )
         neighbors = build_receiver_csr(
             empty_edges,
             num_nodes=batch.num_nodes,
-            edge_relation_id=None,
+            edge_relation_id=empty_relation,
             prefer_int32=prefer_int32,
             build_ell=False,
         )
@@ -129,9 +138,7 @@ class ELA(_SparseELA):
             batch.interaction_batch,
             neighbors,
             graph_counts=graph_counts,
-            spec=PreparationSpec.explicit(
-                num_edge_relations=self.config.geometry.num_edge_relations
-            ),
+            spec=PreparationSpec.explicit(num_edge_relations=relation_count),
         )
         return batch._with_prepared_graph_trusted(prepared)
 
