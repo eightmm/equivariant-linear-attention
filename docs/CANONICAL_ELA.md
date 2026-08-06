@@ -22,7 +22,7 @@ where both `graph` and `out` are `ELAGraph`.
 For hidden state $h^l$, every layer first normalizes the irrep carrier,
 
 $$
-\bar h^l = \operatorname{EqRMSNorm}(h^l),
+\bar h^l = \text{EqRMSNorm}(h^l),
 $$
 
 then constructs one invariant factorized relation operator $R^l$ and reuses it
@@ -46,7 +46,7 @@ where $g_2^l$ and $g_3^l$ are invariant `0e` gates initialized to zero. An
 explicit sparse residual is evaluated only when `edge_index` is supplied:
 
 $$
-L^l = \mathbf 1_{\{E>0\}}\operatorname{SparseLocal}(\bar h^l,x,\mathcal E),
+L^l = \mathbf 1_{\{E>0\}}\text{SparseLocal}(\bar h^l,x,\mathcal E),
 \qquad
 M^l = G^l + L^l.
 $$
@@ -90,7 +90,7 @@ and
 
 $$
 Q_i=\sum_{j\ne i}w_j
-\operatorname{ST}\!\left((x_j-x_i)(x_j-x_i)^\top\right)
+\text{ST}\!\left((x_j-x_i)(x_j-x_i)^\top\right)
 $$
 
 without constructing pairs. These provide `1o` and `2e` geometry. Cross-lane
@@ -148,7 +148,7 @@ symmetric-traceless tensor $T$, the Cartesian Clebsch--Gordan projections includ
 $$
 C_1(v,T)=Tv,
 \qquad
-C_2(v,T)=\operatorname{ST}\!\left([v]_\times T-T[v]_\times\right).
+C_2(v,T)=\text{ST}\!\left([v]_\times T-T[v]_\times\right).
 $$
 
 Here $[v]_\times w=v\times w$. Polar/even and axial/odd inputs route to the
