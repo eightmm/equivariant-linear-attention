@@ -130,6 +130,8 @@ def load_advanced_ela_state(
         ".raw_odd_alignment",
         ".global_radial_centers",
         ".raw_global_radial_alignment",
+        ".global_krylov_gate.weight",
+        ".global_krylov_gate.bias",
         ".relation_radial_scale",
         ".relation_value_gate",
         ".local_scale_score_mix",
