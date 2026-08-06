@@ -82,6 +82,28 @@ def canonical_config_from_advanced(
     return candidate
 
 
+def _identity_safe_missing(key: str) -> bool:
+    """Return whether a new parameter is hidden behind a zero-output lane."""
+
+    if key.endswith(
+        (
+            ".global_krylov_gate.weight",
+            ".global_krylov_gate.bias",
+            ".latent_edge_gate.weight",
+            ".latent_edge_gate.bias",
+        )
+    ):
+        return True
+    return any(
+        fragment in key
+        for fragment in (
+            ".latent_atlas.",
+            ".third_moment_closure.",
+            ".third_moment_scale",
+        )
+    )
+
+
 def load_advanced_ela_state(
     model: _ELAEngine,
     state_dict: Mapping[str, torch.Tensor],
@@ -94,8 +116,9 @@ def load_advanced_ela_state(
     state is discarded only after explicit opt-in. New canonical
     parity/radial/relation parameters may be absent and retain their
     deterministic initialization; every other missing or unexpected key fails
-    closed. Zero Krylov gates are function-preserving compatibility defaults and
-    therefore are not reported as a functional initialization event.
+    closed. Krylov, latent-atlas, and transient-l3 parameters are protected by
+    zero-output gates or projections and therefore are not reported as a
+    functional initialization event.
     """
 
     if not isinstance(model, _ELAEngine):
@@ -123,17 +146,12 @@ def load_advanced_ela_state(
     target = model.state_dict()
     target_keys = set(target)
     provided_keys = set(provided)
-    identity_safe_missing_suffixes = (
-        ".global_krylov_gate.weight",
-        ".global_krylov_gate.bias",
-    )
     allowed_missing_suffixes = (
         ".query_odd_scalar.weight",
         ".key_odd_scalar.weight",
         ".raw_odd_alignment",
         ".global_radial_centers",
         ".raw_global_radial_alignment",
-        *identity_safe_missing_suffixes,
         ".relation_radial_scale",
         ".relation_value_gate",
         ".local_scale_score_mix",
@@ -147,12 +165,13 @@ def load_advanced_ela_state(
     unexpected = tuple(sorted(provided_keys - target_keys))
     missing = tuple(sorted(target_keys - provided_keys))
     reported_missing = tuple(
-        key
-        for key in missing
-        if not key.endswith(identity_safe_missing_suffixes)
+        key for key in missing if not _identity_safe_missing(key)
     )
     invalid_missing = tuple(
-        key for key in missing if not key.endswith(allowed_missing_suffixes)
+        key
+        for key in missing
+        if not _identity_safe_missing(key)
+        and not key.endswith(allowed_missing_suffixes)
     )
     shape_mismatches = tuple(
         key
