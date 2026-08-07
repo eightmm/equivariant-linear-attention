@@ -1,4 +1,4 @@
-"""One complete edge-free ELA layer."""
+"""One tensor-fused edge-free ELA layer."""
 
 from __future__ import annotations
 
@@ -10,12 +10,7 @@ from torch import nn
 from .closure import EquivariantClosure
 from .geometry import AdaptiveMomentBank, GeometryContext, MomentFeatures
 from .ops import bounded_scalar, bounded_st, unit_ball
-from .relation import (
-    KrylovMixer,
-    SelfAdjointRelation,
-    ValueProjection,
-    orthogonalize,
-)
+from .relation import KrylovMixer, SelfAdjointRelation, orthogonalize
 from .state import ChannelMix, EquivariantRMSNorm, ParityState, state_invariants
 
 
@@ -58,7 +53,9 @@ class EquivariantFeedForward(nn.Module):
     def forward(self, state: ParityState) -> ParityState:
         invariants = state_invariants(state, self.eps)
         gates = 2.0 * torch.sigmoid(self.gates(invariants)).reshape(
-            state.num_nodes, 5, self.num_heads
+            state.num_nodes,
+            5,
+            self.num_heads,
         )
         odd = gates[:, 0] * self.odd(state.odd_scalar)
         polar = gates[:, 1, :, None] * (
@@ -88,7 +85,7 @@ class EquivariantFeedForward(nn.Module):
 
 
 class EdgeFreeELALayer(nn.Module):
-    """Adaptive moments + self-adjoint relation + orthogonal Krylov + closure."""
+    """Compact moments + one fused PSD relation + orthogonal Krylov + closure."""
 
     def __init__(
         self,
@@ -120,10 +117,6 @@ class EdgeFreeELALayer(nn.Module):
             rank=moment_rank,
             eps=eps,
         )
-        self.values = ValueProjection(
-            scalar_width=scalar_width,
-            num_heads=num_heads,
-        )
         self.relation = SelfAdjointRelation(
             scalar_width=scalar_width,
             num_heads=num_heads,
@@ -153,8 +146,12 @@ class EdgeFreeELALayer(nn.Module):
     def forward(self, state: ParityState, geometry: GeometryContext) -> LayerOutput:
         normalized = self.attention_norm(state)
         moments = self.moments(normalized.even_scalar, geometry)
-        factors = self.relation.build(normalized, geometry)
-        value = self.values(normalized)
+        value, content_feature = self.relation.project(normalized)
+        factors = self.relation.build(
+            normalized,
+            geometry,
+            content_feature=content_feature,
+        )
         order_one = self.relation.apply(factors, value)
         order_two_raw = self.relation.apply(factors, order_one)
         order_two = orthogonalize(

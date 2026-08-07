@@ -16,7 +16,9 @@ def orthogonal(*, reflection: bool, seed: int = 123) -> torch.Tensor:
     return value
 
 
-def transform_irreps(value: torch.Tensor, layout, transform: torch.Tensor) -> torch.Tensor:
+def transform_irreps(
+    value: torch.Tensor, layout, transform: torch.Tensor
+) -> torch.Tensor:
     determinant = torch.linalg.det(transform)
     blocks = split_irreps(layout, value)
     output: dict[str, torch.Tensor] = {}

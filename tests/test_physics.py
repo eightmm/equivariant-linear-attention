@@ -11,7 +11,9 @@ from equivariant_linear_attention.advanced import (
 
 def test_energy_head_and_conservative_forces() -> None:
     generator = torch.Generator().manual_seed(501)
-    positions = torch.randn(5, 3, generator=generator, dtype=torch.float64, requires_grad=True)
+    positions = torch.randn(
+        5, 3, generator=generator, dtype=torch.float64, requires_grad=True
+    )
     scalar = positions.square().sum(dim=-1, keepdim=True).expand(-1, 4)
     head = ScalarEnergyHead(4).double()
     batch = torch.tensor([0, 0, 0, 1, 1])

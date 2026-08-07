@@ -21,7 +21,9 @@ class EquivariantVectorHead(nn.Module):
         zero_init: bool = False,
     ) -> None:
         super().__init__()
-        hidden_channels = max(16, scalar_channels) if hidden_channels is None else hidden_channels
+        hidden_channels = (
+            max(16, scalar_channels) if hidden_channels is None else hidden_channels
+        )
         self.scalar_channels = scalar_channels
         self.vector_channels = vector_channels
         self.output_channels = output_channels

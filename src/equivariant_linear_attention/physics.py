@@ -12,9 +12,13 @@ from .nn.pooling import MaskedInvariantPooling
 
 
 class ScalarEnergyHead(nn.Module):
-    def __init__(self, scalar_channels: int, *, hidden_channels: int | None = None) -> None:
+    def __init__(
+        self, scalar_channels: int, *, hidden_channels: int | None = None
+    ) -> None:
         super().__init__()
-        hidden_channels = max(8, scalar_channels) if hidden_channels is None else hidden_channels
+        hidden_channels = (
+            max(8, scalar_channels) if hidden_channels is None else hidden_channels
+        )
         self.scalar_channels = scalar_channels
         self.node_energy = nn.Sequential(
             nn.Linear(scalar_channels, hidden_channels),
@@ -36,7 +40,9 @@ class ScalarEnergyHead(nn.Module):
         mask: torch.Tensor | None = None,
         num_graphs: int | None = None,
     ) -> torch.Tensor:
-        return self.pool(self.node_energies(scalars), batch, mask=mask, num_graphs=num_graphs)
+        return self.pool(
+            self.node_energies(scalars), batch, mask=mask, num_graphs=num_graphs
+        )
 
 
 def conservative_forces(

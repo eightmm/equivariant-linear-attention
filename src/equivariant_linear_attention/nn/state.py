@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import sqrt
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from ..irreps import IrrepLayout, pack_irreps, split_irreps
@@ -11,9 +12,11 @@ from .ops import bounded_scalar, bounded_st, st_square, unit_ball
 
 
 class ChannelMix(nn.Module):
-    """Learned mixing on multiplicity axes, shared across irrep components."""
+    """GEMM-backed mixing on multiplicity axes, shared across irrep components."""
 
-    def __init__(self, in_channels: int, out_channels: int, *, zero_init: bool = False) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, *, zero_init: bool = False
+    ) -> None:
         super().__init__()
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -26,7 +29,49 @@ class ChannelMix(nn.Module):
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         if value.shape[1] != self.in_channels:
             raise ValueError(f"value multiplicity must be {self.in_channels}")
-        return torch.einsum("oi,ni...->no...", self.weight.to(dtype=value.dtype), value)
+        # Move multiplicity to the final dimension so F.linear lowers to GEMM
+        # for scalars, vectors, and tensors without separate einsum kernels.
+        mixed = F.linear(
+            value.movedim(1, -1),
+            self.weight.to(dtype=value.dtype),
+        )
+        return mixed.movedim(-1, 1)
+
+
+class PairedChannelMix(nn.Module):
+    """Apply two independent parity-preserving channel maps in one batched GEMM."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, *, zero_init: bool = False
+    ) -> None:
+        super().__init__()
+        self.in_channels = int(in_channels)
+        self.out_channels = int(out_channels)
+        self.weight = nn.Parameter(torch.empty(2, out_channels, in_channels))
+        if zero_init:
+            nn.init.zeros_(self.weight)
+        else:
+            nn.init.normal_(self.weight, std=1.0 / sqrt(max(1, in_channels)))
+
+    def forward(
+        self,
+        first: torch.Tensor,
+        second: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if first.shape != second.shape:
+            raise ValueError("paired channel inputs must have identical shapes")
+        if first.shape[1] != self.in_channels:
+            raise ValueError(f"value multiplicity must be {self.in_channels}")
+        stacked = torch.stack((first, second), dim=0)
+        moved = stacked.movedim(2, -1)
+        flat = moved.reshape(2, -1, self.in_channels)
+        output = torch.bmm(
+            flat,
+            self.weight.to(dtype=first.dtype).transpose(1, 2),
+        )
+        output = output.reshape(2, *moved.shape[1:-1], self.out_channels)
+        output = output.movedim(-1, 2)
+        return output[0], output[1]
 
 
 @dataclass(frozen=True)
@@ -64,12 +109,16 @@ class ParityState:
 
     def scale(self, scalar: torch.Tensor | float) -> ParityState:
         if isinstance(scalar, torch.Tensor):
+
             def apply(value: torch.Tensor) -> torch.Tensor:
                 suffix = (1,) * (value.ndim - scalar.ndim)
                 return value * scalar.reshape(*scalar.shape, *suffix)
+
         else:
+
             def apply(value: torch.Tensor) -> torch.Tensor:
                 return value * float(scalar)
+
         return ParityState(*(apply(value) for value in self.as_tuple()))
 
     def as_tuple(self) -> tuple[torch.Tensor, ...]:
@@ -94,7 +143,9 @@ class ParityState:
 
 
 class InputProjection(nn.Module):
-    def __init__(self, layout: IrrepLayout, *, scalar_width: int, num_heads: int) -> None:
+    def __init__(
+        self, layout: IrrepLayout, *, scalar_width: int, num_heads: int
+    ) -> None:
         super().__init__()
         self.layout = layout
         self.scalar_width = scalar_width
@@ -136,7 +187,9 @@ class InputProjection(nn.Module):
 
 
 class OutputProjection(nn.Module):
-    def __init__(self, layout: IrrepLayout, *, scalar_width: int, num_heads: int) -> None:
+    def __init__(
+        self, layout: IrrepLayout, *, scalar_width: int, num_heads: int
+    ) -> None:
         super().__init__()
         self.layout = layout
         modules: dict[str, nn.Module] = {}
@@ -144,7 +197,9 @@ class OutputProjection(nn.Module):
             name = str(block.irrep)
             in_channels = scalar_width if name == "0e" else num_heads
             if block.irrep.degree == 0:
-                modules[name] = nn.Linear(in_channels, block.multiplicity, bias=name == "0e")
+                modules[name] = nn.Linear(
+                    in_channels, block.multiplicity, bias=name == "0e"
+                )
             elif block.irrep.degree in {1, 2}:
                 modules[name] = ChannelMix(in_channels, block.multiplicity)
             else:
@@ -164,7 +219,9 @@ class OutputProjection(nn.Module):
         for block in self.layout.blocks:
             name = str(block.irrep)
             if block.irrep.degree == 0:
-                output[name] = self.projectors[name](source[name].squeeze(-1)).unsqueeze(-1)
+                output[name] = self.projectors[name](
+                    source[name].squeeze(-1)
+                ).unsqueeze(-1)
             else:
                 output[name] = self.projectors[name](source[name])
         return pack_irreps(self.layout, output)
@@ -182,7 +239,9 @@ class EquivariantRMSNorm(nn.Module):
         self.odd_tensor_gain = nn.Parameter(torch.ones(num_heads))
 
     def forward(self, state: ParityState) -> ParityState:
-        dtype = torch.float64 if state.even_scalar.dtype == torch.float64 else torch.float32
+        dtype = (
+            torch.float64 if state.even_scalar.dtype == torch.float64 else torch.float32
+        )
 
         def scalar(value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
             work = value.to(dtype=dtype)
@@ -192,12 +251,16 @@ class EquivariantRMSNorm(nn.Module):
         def vector(value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
             work = value.to(dtype=dtype)
             rms = torch.sqrt(work.square().mean(dim=-1, keepdim=True) + self.eps)
-            return (work / rms * gain.to(dtype=dtype)[None, :, None]).to(dtype=value.dtype)
+            return (work / rms * gain.to(dtype=dtype)[None, :, None]).to(
+                dtype=value.dtype
+            )
 
         def tensor(value: torch.Tensor, gain: torch.Tensor) -> torch.Tensor:
             work = value.to(dtype=dtype)
             rms = torch.sqrt(st_square(work).unsqueeze(-1) / 5.0 + self.eps)
-            return (work / rms * gain.to(dtype=dtype)[None, :, None]).to(dtype=value.dtype)
+            return (work / rms * gain.to(dtype=dtype)[None, :, None]).to(
+                dtype=value.dtype
+            )
 
         return ParityState(
             scalar(state.even_scalar, self.even_gain),
@@ -228,6 +291,7 @@ __all__ = [
     "EquivariantRMSNorm",
     "InputProjection",
     "OutputProjection",
+    "PairedChannelMix",
     "ParityState",
     "state_invariants",
 ]

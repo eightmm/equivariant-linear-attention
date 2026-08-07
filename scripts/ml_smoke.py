@@ -28,13 +28,17 @@ def main() -> None:
         group=torch.tensor([0, 0, 1, 1, 0, 0, 0, 1, 1]),
         condition=torch.randn(2, 3, dtype=torch.float64),
         order=torch.linspace(0.0, 1.0, 9, dtype=torch.float64).unsqueeze(-1),
-        update_mask=torch.tensor([True, True, False, False, True, True, True, True, True]),
+        update_mask=torch.tensor(
+            [True, True, False, False, True, True, True, True, True]
+        ),
     )
     output = model(graph)
     assert output.graph_x is not None and output.delta is not None
     loss = output.graph_x.square().mean() + output.delta.square().mean()
     loss.backward()
-    gradients = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
+    gradients = [
+        p.grad for p in model.parameters() if p.requires_grad and p.grad is not None
+    ]
     if not gradients or not all(torch.isfinite(g).all() for g in gradients):
         raise RuntimeError("non-finite or missing gradients")
     print("ml_smoke: ok")

@@ -27,7 +27,9 @@ def quotient_rigid_shape_step(
     mask = selected.to(dtype=raw.dtype).unsqueeze(-1)
     selected_count_raw = torch.bincount(index[selected], minlength=num_segments)
     selected_count = selected_count_raw.clamp_min(1).to(dtype=raw.dtype)
-    center = segment_sum(positions * mask, index, num_segments) / selected_count[:, None]
+    center = (
+        segment_sum(positions * mask, index, num_segments) / selected_count[:, None]
+    )
     translation = segment_sum(raw * mask, index, num_segments) / selected_count[:, None]
     relative = (positions - center[index]) * mask
     centered_velocity = (raw - translation[index]) * mask
@@ -110,9 +112,13 @@ class QuotientCoordinateUpdate(nn.Module):
         natural = torch.linalg.solve(metric, raw.unsqueeze(-1)).squeeze(-1)
 
         mask = selected.to(dtype=state.even_scalar.dtype).unsqueeze(-1)
-        selected_count = torch.bincount(index[selected], minlength=num_segments).clamp_min(1)
+        selected_count = torch.bincount(
+            index[selected], minlength=num_segments
+        ).clamp_min(1)
         component_state = segment_sum(state.even_scalar * mask, index, num_segments)
-        component_state = component_state / selected_count.to(dtype=state.even_scalar.dtype)[:, None]
+        component_state = (
+            component_state / selected_count.to(dtype=state.even_scalar.dtype)[:, None]
+        )
         raw_gate = self.component_gate(component_state)
         component_gates = torch.cat(
             (torch.tanh(raw_gate[:, :2]), 1.0 + torch.tanh(raw_gate[:, 2:])), dim=-1

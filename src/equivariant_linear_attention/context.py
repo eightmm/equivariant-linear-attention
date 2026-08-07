@@ -16,12 +16,19 @@ class ELAFeatures:
     order_dim: int = 0
 
     def __post_init__(self) -> None:
-        for name, value in (("condition_dim", self.condition_dim), ("order_dim", self.order_dim)):
+        for name, value in (
+            ("condition_dim", self.condition_dim),
+            ("order_dim", self.order_dim),
+        ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a nonnegative integer")
 
     def order_bands(self, width: int) -> int:
-        return 0 if self.order_dim == 0 else max(2, min(16, width // max(8, 2 * self.order_dim)))
+        return (
+            0
+            if self.order_dim == 0
+            else max(2, min(16, width // max(8, 2 * self.order_dim)))
+        )
 
     def encoded_dim(self, width: int) -> int:
         return self.condition_dim + 2 * self.order_dim * self.order_bands(width)
@@ -32,7 +39,9 @@ class FourierOrderEncoder(nn.Module):
         super().__init__()
         self.order_dim = order_dim
         self.num_bands = num_bands
-        self.register_buffer("frequencies", 2.0 ** torch.arange(num_bands, dtype=torch.float32))
+        self.register_buffer(
+            "frequencies", 2.0 ** torch.arange(num_bands, dtype=torch.float32)
+        )
 
     @property
     def output_dim(self) -> int:
@@ -41,7 +50,9 @@ class FourierOrderEncoder(nn.Module):
     def forward(self, order: torch.Tensor) -> torch.Tensor:
         if order.ndim != 2 or order.shape[-1] != self.order_dim:
             raise ValueError(f"order must have shape (N,{self.order_dim})")
-        phase = order[..., None] * self.frequencies.to(device=order.device, dtype=order.dtype)
+        phase = order[..., None] * self.frequencies.to(
+            device=order.device, dtype=order.dtype
+        )
         return torch.cat((torch.sin(phase), torch.cos(phase)), dim=-1).flatten(1)
 
 
@@ -58,12 +69,16 @@ class InvariantContextEncoder(nn.Module):
         encoded = features.encoded_dim(width)
         self.projection: nn.Module | None = None
         if encoded:
-            self.projection = nn.Sequential(nn.Linear(encoded, width), nn.SiLU(), nn.Linear(width, width))
+            self.projection = nn.Sequential(
+                nn.Linear(encoded, width), nn.SiLU(), nn.Linear(width, width)
+            )
 
     def forward(self, graph: ELAGraph) -> torch.Tensor | None:
         if self.projection is None:
             if graph.condition is not None or graph.order is not None:
-                raise ValueError("graph context was supplied but the model declares none")
+                raise ValueError(
+                    "graph context was supplied but the model declares none"
+                )
             return None
         parts: list[torch.Tensor] = []
         if self.features.condition_dim:
