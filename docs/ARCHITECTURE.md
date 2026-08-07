@@ -44,7 +44,7 @@ and reflections.
 Attention scope is the interaction segment
 
 $$
-g=\operatorname{unique}(\mathrm{batch},\mathrm{group}),
+g=\mathrm{unique}(\mathrm{batch},\mathrm{group}),
 $$
 
 one segment per (graph, component) pair; without `group` the segment is
@@ -88,7 +88,7 @@ the radius).
 Each layer learns positive source lanes `r = 1..R` from invariants,
 
 $$
-w_{ir}=\operatorname{softplus}\!\big[(W_c H_i^{0e}+W_\rho\,\rho_i)/\tau_r\big]+\epsilon,
+w_{ir}=\mathrm{softplus}\!\big[(W_c H_i^{0e}+W_\rho\,\rho_i)/\tau_r\big]+\epsilon,
 \qquad
 \rho_i=\Big(\lVert\hat x_i\rVert^2,\ \log(1+\lVert\hat x_i\rVert^2),\
 \tfrac{\lVert\hat x_i\rVert^2}{1+\lVert\hat x_i\rVert^2}\Big),
@@ -117,10 +117,10 @@ and the self term cancels identically for `k >= 1`. The angular content
 decomposes as
 
 $$
-\operatorname{Sym}^1=1o,\quad
-\operatorname{Sym}^2=0e\oplus2e,\quad
-\operatorname{Sym}^3=1o\oplus3o,\quad
-\operatorname{Sym}^4=0e\oplus2e\oplus4e.
+\mathrm{Sym}^1=1o,\quad
+\mathrm{Sym}^2=0e\oplus2e,\quad
+\mathrm{Sym}^3=1o\oplus3o,\quad
+\mathrm{Sym}^4=0e\oplus2e\oplus4e.
 $$
 
 The extracted carriers are: `m1 -> 1o`; `m2 -> 0e` (trace) and `2e` (ST);
@@ -133,7 +133,7 @@ a_r=m_{1,r}\times m_{1,r+1}\ (1e),
 \qquad
 a_r\cdot m_{1,r+2}\ (0o),
 \qquad
-\operatorname{ST}\!\big(m_{1,r+2}\otimes a_r\big)\ (2o),
+\mathrm{ST}\!\big(m_{1,r+2}\otimes a_r\big)\ (2o),
 $$
 
 with lane indices cyclic. All moment outputs pass through the bounded
@@ -187,7 +187,7 @@ Invariant logits `l_i = W h_i + W_rho rho_i` define a two-pass partition
 of unity over `K` charts. First pass:
 
 $$
-A^{(0)}=\operatorname{softmax}(\ell),
+A^{(0)}=\mathrm{softmax}(\ell),
 $$
 
 then one packed reduction of the assignment against the degree-two basis
@@ -195,8 +195,8 @@ then one packed reduction of the assignment against the degree-two basis
 `Sigma_k`, and a regularized SPD metric
 
 $$
-G_k=\Sigma_k+\operatorname{softplus}(r_k)\,
-\max\!\Big(\tfrac{\operatorname{tr}\Sigma_k}{3},1\Big)\,I.
+G_k=\Sigma_k+\mathrm{softplus}(r_k)\,
+\max\!\Big(\tfrac{\mathrm{tr}\Sigma_k}{3},1\Big)\,I.
 $$
 
 Mahalanobis distances refine the assignment with a mass-balance term:
@@ -204,14 +204,14 @@ Mahalanobis distances refine the assignment with a mass-balance term:
 $$
 d^2_{ik}=(\hat x_i-\mu_k)^\top G_k^{-1}(\hat x_i-\mu_k)\ \ (\text{clamped to }[0,64]),
 \qquad
-A=\operatorname{softmax}\!\big(\ell-s_k\,d^2_{ik}-\tfrac14\log n_k\big).
+A=\mathrm{softmax}\!\big(\ell-s_k\,d^2_{ik}-\tfrac14\log n_k\big).
 $$
 
 Statistics and metrics are recomputed from the refined assignment, the
 metric is trace-normalized, and an effective dimension
 
 $$
-d^{\mathrm{eff}}_k=\frac{(\operatorname{tr}\Sigma_k)^2}{\lVert\Sigma_k\rVert_F^2}
+d^{\mathrm{eff}}_k=\frac{(\mathrm{tr}\Sigma_k)^2}{\lVert\Sigma_k\rVert_F^2}
 \in[1,3],
 \qquad
 w_{hk}=\sigma\big(b_{hk}+s_{hk}(d^{\mathrm{eff}}_k-2)\big)
@@ -222,7 +222,7 @@ sets per-head chart weights. The atlas factor and induced relation are
 $$
 \Phi^a_{i,h,k}=A_{ik}\sqrt{w_{hk}/n_k},
 \qquad
-K^{\mathrm{atlas}}=A\,\operatorname{diag}(w/n)\,A^\top,
+K^{\mathrm{atlas}}=A\,\mathrm{diag}(w/n)\,A^\top,
 $$
 
 symmetric, PSD, and rank-bounded by the chart count. The node metric
@@ -262,9 +262,9 @@ invariant inner product (the mean of the six normalized sector inner
 products):
 
 $$
-B_2=\operatorname{normalize}\big(Z_2-\operatorname{proj}_{Z_1}Z_2\big),
+B_2=\mathrm{normalize}\big(Z_2-\mathrm{proj}_{Z_1}Z_2\big),
 \qquad
-B_3=\operatorname{normalize}\big(Z_3-\operatorname{proj}_{Z_1}Z_3-\operatorname{proj}_{B_2}Z_3\big),
+B_3=\mathrm{normalize}\big(Z_3-\mathrm{proj}_{Z_1}Z_3-\mathrm{proj}_{B_2}Z_3\big),
 $$
 
 where projection coefficients are segment-level invariant ratios and
@@ -274,7 +274,7 @@ a learned low-order spectral filter,
 $$
 \mathrm{msg}=Z_1+c_2B_2+c_3B_3,
 \qquad
-(c_2,c_3)=\tanh\!\big(W\cdot\operatorname{mean}_g H^{0e}\big)
+(c_2,c_3)=\tanh\!\big(W\cdot\mathrm{mean}_g H^{0e}\big)
 $$
 
 per head, zero-initialized. This is one relational algebra, not three
@@ -334,8 +334,8 @@ and joins the residual stream through a learned scalar scale.
 The invariant vector
 
 $$
-u_i=\big[H^{0e},\ |H^{0o}|,\ \operatorname{rms}(H^{1o}),\
-\operatorname{rms}(H^{1e}),\ \lVert H^{2e}\rVert/\sqrt5,\
+u_i=\big[H^{0e},\ |H^{0o}|,\ \mathrm{rms}(H^{1o}),\
+\mathrm{rms}(H^{1e}),\ \lVert H^{2e}\rVert/\sqrt5,\
 \lVert H^{2o}\rVert/\sqrt5\big]\in\mathbb R^{C+5H}
 $$
 
@@ -345,9 +345,9 @@ start). Each geometric sector receives a parity-cross term through
 pseudoscalar multiplication,
 
 $$
-H^{1o}\leftarrow g\big(\operatorname{mix}(H^{1o})+H^{0o}\operatorname{mix}(H^{1e})\big),
+H^{1o}\leftarrow g\big(\mathrm{mix}(H^{1o})+H^{0o}\mathrm{mix}(H^{1e})\big),
 \qquad
-H^{2e}\leftarrow g\big(\operatorname{mix}(H^{2e})+H^{0o}\operatorname{mix}(H^{2o})\big),
+H^{2e}\leftarrow g\big(\mathrm{mix}(H^{2e})+H^{0o}\mathrm{mix}(H^{2o})\big),
 $$
 
 and symmetrically for `1e`, `2o`, using only invariant coefficients.
@@ -365,7 +365,7 @@ $$
 Per segment, over the selected (movable) nodes:
 
 $$
-t=\operatorname{mean}\widetilde v,
+t=\mathrm{mean}\widetilde v,
 \qquad
 r_i=x_i-\bar x,
 \qquad
