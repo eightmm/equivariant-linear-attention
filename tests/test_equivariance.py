@@ -47,7 +47,9 @@ def test_node_permutation_equivariance() -> None:
                 group=group[permutation],
             )
         )
-    torch.testing.assert_close(moved.x, reference.x[permutation], atol=4e-10, rtol=4e-10)
+    torch.testing.assert_close(
+        moved.x, reference.x[permutation], atol=4e-10, rtol=4e-10
+    )
 
 
 def test_interaction_components_are_isolated() -> None:

@@ -1,4 +1,4 @@
-"""Canonical edge-free equivariant linear-attention model."""
+"""Canonical tensor-fused edge-free equivariant linear-attention model."""
 
 from __future__ import annotations
 
@@ -97,7 +97,9 @@ class ELAConfig:
             "persistent_irreps": "0e + 0o + 1o + 1e + 2e + 2o",
             "relative_moment_order": 4,
             "transient_irreps": ("3o", "4e"),
-            "relation_operator": "self_adjoint_content_gram_plus_mercer_plus_spd_atlas",
+            "relation_operator": "single_fused_self_adjoint_gram_factor",
+            "relation_value_layout": "packed_all_irreps",
+            "coordinate_basis": "35d_compact_symmetric_degree_0_to_4",
             "krylov_basis": "three_term_graphwise_irrep_orthogonal",
             "coordinate_manifold": "natural_gradient_SE3_quotient_plus_shape",
             "explicit_edges": False,
@@ -133,39 +135,42 @@ class ELA(nn.Module):
             update_positions=update_positions,
             max_coordinate_step=max_coordinate_step,
         )
-        c = self.config
+        config = self.config
         self.input_projection = InputProjection(
-            c.input_layout,
-            scalar_width=c.width,
-            num_heads=c.num_heads,
+            config.input_layout,
+            scalar_width=config.width,
+            num_heads=config.num_heads,
         )
-        self.context_encoder = InvariantContextEncoder(features=c.features, width=c.width)
-        block_scale = 0.1 / sqrt(c.depth)
+        self.context_encoder = InvariantContextEncoder(
+            features=config.features,
+            width=config.width,
+        )
+        block_scale = 0.1 / sqrt(config.depth)
         self.layers = nn.ModuleList(
             [
                 EdgeFreeELALayer(
-                    scalar_width=c.width,
-                    num_heads=c.num_heads,
-                    moment_rank=c.moment_rank,
-                    relation_width=c.relation_width,
-                    num_charts=c.num_charts,
+                    scalar_width=config.width,
+                    num_heads=config.num_heads,
+                    moment_rank=config.moment_rank,
+                    relation_width=config.relation_width,
+                    num_charts=config.num_charts,
                     residual_scale=block_scale,
-                    eps=c.eps,
+                    eps=config.eps,
                 )
-                for _ in range(c.depth)
+                for _ in range(config.depth)
             ]
         )
         self.output_projection = OutputProjection(
-            c.output_layout,
-            scalar_width=c.width,
-            num_heads=c.num_heads,
+            config.output_layout,
+            scalar_width=config.width,
+            num_heads=config.num_heads,
         )
         self.coordinate_update: QuotientCoordinateUpdate | None = None
-        if c.update_positions:
+        if config.update_positions:
             self.coordinate_update = QuotientCoordinateUpdate(
-                scalar_width=c.width,
-                num_heads=c.num_heads,
-                eps=c.eps,
+                scalar_width=config.width,
+                num_heads=config.num_heads,
+                eps=config.eps,
             )
 
     @classmethod
@@ -213,7 +218,7 @@ class ELA(nn.Module):
             "order_dim": self.config.features.order_dim,
             "update_positions": self.updates_positions,
             "max_coordinate_step": self.config.max_coordinate_step,
-            "num_parameters": sum(p.numel() for p in self.parameters()),
+            "num_parameters": sum(parameter.numel() for parameter in self.parameters()),
             **self.config.contract(),
         }
 
@@ -249,36 +254,47 @@ class ELA(nn.Module):
 
         batch = graph.batch_index
         interactions, num_interactions, interaction_counts = interaction_index(
-            batch, graph.group
+            batch,
+            graph.group,
         )
         positions = graph.pos
         state = self._initial_state(graph)
         total_delta = torch.zeros_like(positions)
-        stage_step = self.config.max_coordinate_step / self.config.depth
 
-        for layer in self.layers:
+        if self.coordinate_update is None:
+            # Coordinates are immutable, so their compact monomial basis and all
+            # component metadata are shared by every layer.
             geometry = GeometryContext.build(
                 positions,
                 interactions,
                 num_segments=num_interactions,
                 eps=self.config.eps,
             )
-            output = layer(state, geometry)
-            state = output.state
-            if self.coordinate_update is None:
-                continue
-            delta = self.coordinate_update(
-                state,
-                positions,
-                interactions,
-                num_segments=num_interactions,
-                counts=interaction_counts,
-                node_metric=output.node_metric,
-                update_mask=graph.update_mask,
-                max_step=stage_step,
-            )
-            positions = positions + delta
-            total_delta = total_delta + delta
+            for layer in self.layers:
+                state = layer(state, geometry).state
+        else:
+            stage_step = self.config.max_coordinate_step / self.config.depth
+            for layer in self.layers:
+                geometry = GeometryContext.build(
+                    positions,
+                    interactions,
+                    num_segments=num_interactions,
+                    eps=self.config.eps,
+                )
+                output = layer(state, geometry)
+                state = output.state
+                delta = self.coordinate_update(
+                    state,
+                    positions,
+                    interactions,
+                    num_segments=num_interactions,
+                    counts=interaction_counts,
+                    node_metric=output.node_metric,
+                    update_mask=graph.update_mask,
+                    max_step=stage_step,
+                )
+                positions = positions + delta
+                total_delta = total_delta + delta
 
         node_output = self.output_projection(state)
         graph_sum = segment_sum(node_output, batch, graph.num_graphs)

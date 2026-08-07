@@ -1,4 +1,4 @@
-"""Parity-complete retained and transient tensor closure."""
+"""Parity-complete retained closure with compact transient l=3/l=4 tensors."""
 
 from __future__ import annotations
 
@@ -10,20 +10,51 @@ from .ops import (
     bounded_scalar,
     bounded_st,
     matrix_to_st,
-    st_commutator_vector,
     st_cross,
     st_inner,
-    st_jordan_product,
     st_to_matrix,
+    stf3_contract_st,
+    stf3_contract_vector,
+    stf4_contract_st,
+    stf4_contract_st_vector,
     unit_ball,
-    vector_tensor_l1_l2,
 )
 from .relation import RelationMessage
 from .state import ChannelMix, ParityState
 
 
+def _commutator_vector(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    commutator = left @ right - right @ left
+    return torch.stack(
+        (commutator[..., 2, 1], commutator[..., 0, 2], commutator[..., 1, 0]),
+        dim=-1,
+    )
+
+
+def _jordan_st(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    return matrix_to_st(0.5 * (left @ right + right @ left))
+
+
+def _vector_tensor_from_matrix(
+    vector: torch.Tensor,
+    tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    l1 = torch.einsum("...ab,...b->...a", tensor, vector)
+    x, y, z = vector.unbind(dim=-1)
+    zero = torch.zeros_like(x)
+    cross = torch.stack(
+        (
+            torch.stack((zero, -z, y), dim=-1),
+            torch.stack((z, zero, -x), dim=-1),
+            torch.stack((-y, x, zero), dim=-1),
+        ),
+        dim=-2,
+    )
+    return l1, matrix_to_st(cross @ tensor - tensor @ cross)
+
+
 class EquivariantClosure(nn.Module):
-    """All retained l<=2 couplings plus transient l=3/l=4 contractions."""
+    """All retained l<=2 couplings plus compact transient l=3/l=4 paths."""
 
     def __init__(
         self,
@@ -115,35 +146,52 @@ class EquivariantClosure(nn.Module):
             + self.odd_invariant(torch.cat((pa, eo / 5.0), dim=-1))
         )
 
-        polar_cross = torch.cross(state.polar_vector, message.axial_vector, dim=-1)
-        polar_commutator = st_commutator_vector(state.even_tensor, message.odd_tensor)
-        polar_l1_a, polar_l2_a = vector_tensor_l1_l2(
-            state.polar_vector, message.even_tensor
+        # Convert each ST carrier to a matrix once, then reuse it across every
+        # retained Clebsch-Gordan path in this closure.
+        state_even_matrix = st_to_matrix(state.even_tensor)
+        state_odd_matrix = st_to_matrix(state.odd_tensor)
+        message_even_matrix = st_to_matrix(message.even_tensor)
+        message_odd_matrix = st_to_matrix(message.odd_tensor)
+
+        polar_l1_a, odd_l2_a = _vector_tensor_from_matrix(
+            state.polar_vector,
+            message_even_matrix,
         )
-        polar_l1_b, polar_l2_b = vector_tensor_l1_l2(
-            state.axial_vector, message.odd_tensor
+        polar_l1_b, odd_l2_b = _vector_tensor_from_matrix(
+            state.axial_vector,
+            message_odd_matrix,
         )
+        axial_l1_a, even_l2_a = _vector_tensor_from_matrix(
+            state.axial_vector,
+            message_even_matrix,
+        )
+        axial_l1_b, even_l2_b = _vector_tensor_from_matrix(
+            state.polar_vector,
+            message_odd_matrix,
+        )
+
         polar = (
             self.message_polar(message.polar_vector)
             + self.moment_polar(moments.polar)
             + self.polar_mix(
-                polar_cross + polar_commutator + polar_l1_a + polar_l1_b
+                torch.cross(state.polar_vector, message.axial_vector, dim=-1)
+                + _commutator_vector(state_even_matrix, message_odd_matrix)
+                + polar_l1_a
+                + polar_l1_b
             )
         )
-
         axial = (
             self.message_axial(message.axial_vector)
             + self.moment_axial(moments.axial)
             + self.axial_mix(
                 torch.cross(state.polar_vector, message.polar_vector, dim=-1)
                 + torch.cross(state.axial_vector, message.axial_vector, dim=-1)
-                + st_commutator_vector(state.even_tensor, message.even_tensor)
-                + st_commutator_vector(state.odd_tensor, message.odd_tensor)
-                + vector_tensor_l1_l2(state.axial_vector, message.even_tensor)[0]
-                + vector_tensor_l1_l2(state.polar_vector, message.odd_tensor)[0]
+                + _commutator_vector(state_even_matrix, message_even_matrix)
+                + _commutator_vector(state_odd_matrix, message_odd_matrix)
+                + axial_l1_a
+                + axial_l1_b
             )
         )
-
         even_tensor = (
             self.message_even_tensor(message.even_tensor)
             + self.moment_even_tensor(moments.even_tensor)
@@ -151,10 +199,10 @@ class EquivariantClosure(nn.Module):
             + self.even_tensor_mix(
                 st_cross(state.polar_vector, message.polar_vector)
                 + st_cross(state.axial_vector, message.axial_vector)
-                + st_jordan_product(state.even_tensor, message.even_tensor)
-                + st_jordan_product(state.odd_tensor, message.odd_tensor)
-                + vector_tensor_l1_l2(state.axial_vector, message.even_tensor)[1]
-                + vector_tensor_l1_l2(state.polar_vector, message.odd_tensor)[1]
+                + _jordan_st(state_even_matrix, message_even_matrix)
+                + _jordan_st(state_odd_matrix, message_odd_matrix)
+                + even_l2_a
+                + even_l2_b
             )
         )
         odd_tensor = (
@@ -163,69 +211,43 @@ class EquivariantClosure(nn.Module):
             + self.odd_tensor_mix(
                 st_cross(state.polar_vector, message.axial_vector)
                 + st_cross(state.axial_vector, message.polar_vector)
-                + st_jordan_product(state.even_tensor, message.odd_tensor)
-                + st_jordan_product(state.odd_tensor, message.even_tensor)
-                + polar_l2_a
-                + polar_l2_b
+                + _jordan_st(state_even_matrix, message_odd_matrix)
+                + _jordan_st(state_odd_matrix, message_even_matrix)
+                + odd_l2_a
+                + odd_l2_b
             )
         )
 
         third = self.third_mix(moments.third_tensor)
         third_polar = self.third_polar(state.polar_vector)
         third_axial = self.third_axial(state.axial_vector)
-        third_even_matrix = st_to_matrix(self.third_even_tensor(state.even_tensor))
-        third_odd_matrix = st_to_matrix(self.third_odd_tensor(state.odd_tensor))
-        polar = polar + self.third_polar_out(
-            torch.einsum("nrabc,nrbc->nra", third, third_even_matrix)
-        )
-        axial = axial + self.third_axial_out(
-            torch.einsum("nrabc,nrbc->nra", third, third_odd_matrix)
-        )
+        third_even_tensor = self.third_even_tensor(state.even_tensor)
+        third_odd_tensor = self.third_odd_tensor(state.odd_tensor)
+        polar = polar + self.third_polar_out(stf3_contract_st(third, third_even_tensor))
+        axial = axial + self.third_axial_out(stf3_contract_st(third, third_odd_tensor))
         even_tensor = even_tensor + self.third_even_out(
-            matrix_to_st(torch.einsum("nrabc,nrc->nrab", third, third_polar))
+            stf3_contract_vector(third, third_polar)
         )
         odd_tensor = odd_tensor + self.third_odd_out(
-            matrix_to_st(torch.einsum("nrabc,nrc->nrab", third, third_axial))
+            stf3_contract_vector(third, third_axial)
         )
 
         fourth = self.fourth_mix(moments.fourth_rank4)
         fourth_polar = self.fourth_polar(state.polar_vector)
         fourth_axial = self.fourth_axial(state.axial_vector)
-        fourth_even_matrix = st_to_matrix(self.fourth_even_tensor(state.even_tensor))
-        fourth_odd_matrix = st_to_matrix(self.fourth_odd_tensor(state.odd_tensor))
-        even_tensor = even_tensor + self.fourth_even_out(
-            matrix_to_st(torch.einsum("nrabcd,nrcd->nrab", fourth, fourth_even_matrix))
-        )
-        odd_tensor = odd_tensor + self.fourth_odd_out(
-            matrix_to_st(torch.einsum("nrabcd,nrcd->nrab", fourth, fourth_odd_matrix))
-        )
+        fourth_even_tensor = self.fourth_even_tensor(state.even_tensor)
+        fourth_odd_tensor = self.fourth_odd_tensor(state.odd_tensor)
+        even_fourth = stf4_contract_st(fourth, fourth_even_tensor)
+        odd_fourth = stf4_contract_st(fourth, fourth_odd_tensor)
+        even_tensor = even_tensor + self.fourth_even_out(even_fourth)
+        odd_tensor = odd_tensor + self.fourth_odd_out(odd_fourth)
         polar = polar + self.fourth_polar_out(
-            torch.einsum(
-                "nrabcd,nrbc,nrd->nra",
-                fourth,
-                fourth_even_matrix,
-                fourth_polar,
-            )
-            + torch.einsum(
-                "nrabcd,nrbc,nrd->nra",
-                fourth,
-                fourth_odd_matrix,
-                fourth_axial,
-            )
+            stf4_contract_st_vector(fourth, fourth_even_tensor, fourth_polar)
+            + stf4_contract_st_vector(fourth, fourth_odd_tensor, fourth_axial)
         )
         axial = axial + self.fourth_axial_out(
-            torch.einsum(
-                "nrabcd,nrbc,nrd->nra",
-                fourth,
-                fourth_even_matrix,
-                fourth_axial,
-            )
-            + torch.einsum(
-                "nrabcd,nrbc,nrd->nra",
-                fourth,
-                fourth_odd_matrix,
-                fourth_polar,
-            )
+            stf4_contract_st_vector(fourth, fourth_even_tensor, fourth_axial)
+            + stf4_contract_st_vector(fourth, fourth_odd_tensor, fourth_polar)
         )
 
         return ParityState(

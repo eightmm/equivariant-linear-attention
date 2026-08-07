@@ -1,23 +1,28 @@
-"""Edge-free relative moments through fourth order."""
+"""Edge-free relative moments through fourth order in compact symmetric bases."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import comb
 
 import torch
 from torch import nn
 
 from .ops import (
+    SYMMETRIC_DEGREE_SLICES,
+    SYMMETRIC_EXPONENTS,
+    bounded_compact_stf3,
+    bounded_compact_stf4,
     bounded_scalar,
     bounded_st,
-    bounded_stf3,
-    bounded_stf4,
     centered_geometry,
+    compact_stf3,
+    compact_stf4,
     matrix_to_st,
     segment_sum,
     st_cross,
-    stf3,
-    stf4,
+    symmetric2_to_matrix,
+    symmetric_monomials,
     work_dtype,
 )
 
@@ -27,6 +32,7 @@ class GeometryContext:
     positions: torch.Tensor
     centered: torch.Tensor
     normalized: torch.Tensor
+    monomials: torch.Tensor
     radius: torch.Tensor
     index: torch.Tensor
     num_segments: int
@@ -47,10 +53,13 @@ class GeometryContext:
             num_segments,
             eps=eps,
         )
+        basis_dtype = work_dtype(normalized)
+        monomials = symmetric_monomials(normalized.to(dtype=basis_dtype))
         return cls(
             positions=positions,
             centered=centered,
             normalized=normalized,
+            monomials=monomials,
             radius=radius,
             index=index.to(dtype=torch.long),
             num_segments=num_segments,
@@ -73,7 +82,9 @@ class MomentFeatures:
     fourth_rank4: torch.Tensor
 
 
-def _powers(position: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def _powers(
+    position: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     p2 = torch.einsum("na,nb->nab", position, position)
     p3 = torch.einsum("na,nb,nc->nabc", position, position, position)
     p4 = torch.einsum("na,nb,nc,nd->nabcd", position, position, position, position)
@@ -86,10 +97,11 @@ def explicit_centered_moments(
     index: torch.Tensor,
     num_segments: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Exact weighted means of ``(x_j-x_i)^k`` for k=1..4.
+    """Reference full-Cartesian weighted moments through order four.
 
-    ``weight`` has shape ``(N,R)`` and is source-only. The identities are exact
-    for those separable weights and use only graphwise raw sums.
+    This function is retained as an oracle for mathematical tests. The model
+    executes :func:`compact_centered_moments`, which uses one packed reduction
+    over the 35 independent symmetric monomials.
     """
 
     dtype = work_dtype(position, weight)
@@ -101,8 +113,16 @@ def explicit_centered_moments(
     s0 = segment_sum(w, index, num_segments)[index]
     s1 = segment_sum(w[..., None] * p1[:, None, :], index, num_segments)[index]
     s2 = segment_sum(w[..., None, None] * p2[:, None, :, :], index, num_segments)[index]
-    s3 = segment_sum(w[..., None, None, None] * p3[:, None, :, :, :], index, num_segments)[index]
-    s4 = segment_sum(w[..., None, None, None, None] * p4[:, None, :, :, :, :], index, num_segments)[index]
+    s3 = segment_sum(
+        w[..., None, None, None] * p3[:, None, :, :, :],
+        index,
+        num_segments,
+    )[index]
+    s4 = segment_sum(
+        w[..., None, None, None, None] * p4[:, None, :, :, :, :],
+        index,
+        num_segments,
+    )[index]
 
     xr = x[:, None, :]
     x2 = p2[:, None, :, :]
@@ -110,14 +130,12 @@ def explicit_centered_moments(
     x4 = p4[:, None, :, :, :, :]
 
     m1 = s1 - s0[..., None] * xr
-
     m2 = (
         s2
         - torch.einsum("nra,nrb->nrab", xr, s1)
         - torch.einsum("nra,nrb->nrab", s1, xr)
         + s0[..., None, None] * x2
     )
-
     first3 = (
         torch.einsum("nra,nrbc->nrabc", xr, s2)
         + torch.einsum("nrb,nrac->nrabc", xr, s2)
@@ -129,7 +147,6 @@ def explicit_centered_moments(
         + torch.einsum("nrb,nrc,nra->nrabc", xr, xr, s1)
     )
     m3 = s3 - first3 + second3 - s0[..., None, None, None] * x3
-
     first4 = (
         torch.einsum("nra,nrbcd->nrabcd", xr, s3)
         + torch.einsum("nrb,nracd->nrabcd", xr, s3)
@@ -153,15 +170,113 @@ def explicit_centered_moments(
     m4 = s4 - first4 + second4 - third4 + s0[..., None, None, None, None] * x4
 
     denominator = s0.clamp_min(torch.finfo(dtype).eps)
-    m1 = m1 / denominator[..., None]
-    m2 = m2 / denominator[..., None, None]
-    m3 = m3 / denominator[..., None, None, None]
-    m4 = m4 / denominator[..., None, None, None, None]
-    return s0, m1, m2, m3, m4
+    return (
+        s0,
+        m1 / denominator[..., None],
+        m2 / denominator[..., None, None],
+        m3 / denominator[..., None, None, None],
+        m4 / denominator[..., None, None, None, None],
+    )
+
+
+def _translation_table() -> tuple[tuple[int, ...], ...]:
+    exponent_to_index = {
+        exponent: index for index, exponent in enumerate(SYMMETRIC_EXPONENTS)
+    }
+    target: list[int] = []
+    source: list[int] = []
+    shift: list[int] = []
+    coefficient: list[float] = []
+    for target_index, alpha in enumerate(SYMMETRIC_EXPONENTS):
+        for beta_x in range(alpha[0] + 1):
+            for beta_y in range(alpha[1] + 1):
+                for beta_z in range(alpha[2] + 1):
+                    beta = (beta_x, beta_y, beta_z)
+                    delta = (
+                        alpha[0] - beta_x,
+                        alpha[1] - beta_y,
+                        alpha[2] - beta_z,
+                    )
+                    target.append(target_index)
+                    source.append(exponent_to_index[beta])
+                    shift.append(exponent_to_index[delta])
+                    sign = -1.0 if sum(delta) % 2 else 1.0
+                    coefficient.append(
+                        sign
+                        * comb(alpha[0], beta_x)
+                        * comb(alpha[1], beta_y)
+                        * comb(alpha[2], beta_z)
+                    )
+    return tuple(target), tuple(source), tuple(shift), tuple(coefficient)
+
+
+(
+    _TRANSLATION_TARGET,
+    _TRANSLATION_SOURCE,
+    _TRANSLATION_SHIFT,
+    _TRANSLATION_COEFFICIENT,
+) = _translation_table()
+
+
+def _compact_centered_core(
+    monomials: torch.Tensor,
+    weight: torch.Tensor,
+    index: torch.Tensor,
+    num_segments: int,
+    *,
+    target_index: torch.Tensor,
+    source_index: torch.Tensor,
+    shift_index: torch.Tensor,
+    coefficient: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    dtype = work_dtype(monomials, weight)
+    basis = monomials.to(dtype=dtype)
+    source_weight = weight.to(dtype=dtype)
+    index = index.to(dtype=torch.long)
+    raw = segment_sum(
+        source_weight[..., None] * basis[:, None, :],
+        index,
+        num_segments,
+    )[index]
+    contribution = (
+        raw[:, :, source_index]
+        * basis[:, shift_index].unsqueeze(1)
+        * coefficient.to(dtype=dtype).reshape(1, 1, -1)
+    )
+    scatter_index = target_index.reshape(1, 1, -1).expand(
+        raw.shape[0],
+        raw.shape[1],
+        -1,
+    )
+    centered = raw.new_zeros(raw.shape).scatter_add(2, scatter_index, contribution)
+    mass = raw[..., 0].clamp_min(torch.finfo(dtype).eps)
+    return mass, centered / mass[..., None]
+
+
+def compact_centered_moments(
+    position: torch.Tensor,
+    weight: torch.Tensor,
+    index: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Exact compact moments via one reduction over 35 symmetric monomials."""
+
+    monomials = symmetric_monomials(position.to(dtype=work_dtype(position, weight)))
+    device = position.device
+    return _compact_centered_core(
+        monomials,
+        weight,
+        index,
+        num_segments,
+        target_index=torch.tensor(_TRANSLATION_TARGET, device=device, dtype=torch.long),
+        source_index=torch.tensor(_TRANSLATION_SOURCE, device=device, dtype=torch.long),
+        shift_index=torch.tensor(_TRANSLATION_SHIFT, device=device, dtype=torch.long),
+        coefficient=torch.tensor(_TRANSLATION_COEFFICIENT, device=device),
+    )
 
 
 class AdaptiveMomentBank(nn.Module):
-    """Learn separable positive source lanes and exact moments through order four."""
+    """Learn source lanes and compute exact compact moments through order four."""
 
     def __init__(self, *, scalar_width: int, rank: int, eps: float) -> None:
         super().__init__()
@@ -172,27 +287,96 @@ class AdaptiveMomentBank(nn.Module):
         self.content_weight = nn.Linear(scalar_width, rank)
         self.radial_weight = nn.Linear(3, rank, bias=False)
         self.raw_temperature = nn.Parameter(torch.zeros(rank))
+        self.register_buffer(
+            "translation_target",
+            torch.tensor(_TRANSLATION_TARGET, dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "translation_source",
+            torch.tensor(_TRANSLATION_SOURCE, dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "translation_shift",
+            torch.tensor(_TRANSLATION_SHIFT, dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "translation_coefficient",
+            torch.tensor(_TRANSLATION_COEFFICIENT, dtype=torch.float32),
+            persistent=False,
+        )
 
-    def forward(self, scalar: torch.Tensor, geometry: GeometryContext) -> MomentFeatures:
+    def forward(
+        self, scalar: torch.Tensor, geometry: GeometryContext
+    ) -> MomentFeatures:
         radius2 = geometry.normalized.square().sum(dim=-1)
-        radial = torch.stack((radius2, torch.log1p(radius2), radius2 / (1.0 + radius2)), dim=-1)
+        radial = torch.stack(
+            (radius2, torch.log1p(radius2), radius2 / (1.0 + radius2)),
+            dim=-1,
+        )
         temperature = torch.nn.functional.softplus(self.raw_temperature) + 0.25
-        log_weight = (self.content_weight(scalar) + self.radial_weight(radial)) / temperature
+        log_weight = (
+            self.content_weight(scalar)
+            + self.radial_weight(radial.to(dtype=scalar.dtype))
+        ) / temperature
         weight = torch.nn.functional.softplus(log_weight) + self.eps
-        mass, m1, m2, m3, m4 = explicit_centered_moments(
-            geometry.normalized,
+        mass, centered = _compact_centered_core(
+            geometry.monomials,
             weight,
             geometry.index,
             geometry.num_segments,
+            target_index=self.translation_target,
+            source_index=self.translation_source,
+            shift_index=self.translation_shift,
+            coefficient=self.translation_coefficient,
         )
 
-        trace2 = m2.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / 3.0
-        even_tensor = matrix_to_st(m2)
-        third_tensor = bounded_stf3(stf3(m3), self.eps)
-        fourth_scalar = torch.einsum("...aabb->...", m4) / 5.0
-        fourth_trace = torch.einsum("...aabc->...bc", m4)
-        fourth_tensor = matrix_to_st(fourth_trace)
-        fourth_rank4 = bounded_stf4(stf4(m4), self.eps)
+        m1 = centered[..., SYMMETRIC_DEGREE_SLICES[1]]
+        m2 = centered[..., SYMMETRIC_DEGREE_SLICES[2]]
+        m3 = centered[..., SYMMETRIC_DEGREE_SLICES[3]]
+        m4 = centered[..., SYMMETRIC_DEGREE_SLICES[4]]
+
+        second_matrix = symmetric2_to_matrix(m2)
+        trace2 = second_matrix.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / 3.0
+        even_tensor = matrix_to_st(second_matrix)
+        third_tensor = bounded_compact_stf3(compact_stf3(m3), self.eps)
+
+        (
+            xxxx,
+            xxxy,
+            xxxz,
+            xxyy,
+            xxyz,
+            xxzz,
+            xyyy,
+            xyyz,
+            xyzz,
+            xzzz,
+            yyyy,
+            yyyz,
+            yyzz,
+            yzzz,
+            zzzz,
+        ) = m4.unbind(dim=-1)
+        trace_xx = xxxx + xxyy + xxzz
+        trace_xy = xxxy + xyyy + xyzz
+        trace_xz = xxxz + xyyz + xzzz
+        trace_yy = xxyy + yyyy + yyzz
+        trace_yz = xxyz + yyyz + yzzz
+        trace_zz = xxzz + yyzz + zzzz
+        fourth_trace_matrix = torch.stack(
+            (
+                torch.stack((trace_xx, trace_xy, trace_xz), dim=-1),
+                torch.stack((trace_xy, trace_yy, trace_yz), dim=-1),
+                torch.stack((trace_xz, trace_yz, trace_zz), dim=-1),
+            ),
+            dim=-2,
+        )
+        fourth_scalar = (xxxx + yyyy + zzzz + 2.0 * (xxyy + xxzz + yyzz)) / 5.0
+        fourth_tensor = matrix_to_st(fourth_trace_matrix)
+        fourth_rank4 = bounded_compact_stf4(compact_stf4(m4), self.eps)
 
         second = m1.roll(1, dims=1)
         third = m1.roll(2, dims=1)
@@ -204,7 +388,8 @@ class AdaptiveMomentBank(nn.Module):
             polar=m1,
             second_scalar=bounded_scalar(trace2, self.eps),
             even_tensor=bounded_st(even_tensor, self.eps),
-            axial=axis_bounded(axial, self.eps),
+            axial=axial
+            / torch.sqrt(1.0 + axial.square().sum(dim=-1, keepdim=True) + self.eps),
             odd_scalar=bounded_scalar(odd_scalar, self.eps),
             odd_tensor=bounded_st(odd_tensor, self.eps),
             third_tensor=third_tensor,
@@ -214,13 +399,10 @@ class AdaptiveMomentBank(nn.Module):
         )
 
 
-def axis_bounded(value: torch.Tensor, eps: float) -> torch.Tensor:
-    return value / torch.sqrt(1.0 + value.square().sum(dim=-1, keepdim=True) + eps)
-
-
 __all__ = [
     "AdaptiveMomentBank",
     "GeometryContext",
     "MomentFeatures",
+    "compact_centered_moments",
     "explicit_centered_moments",
 ]

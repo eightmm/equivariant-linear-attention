@@ -12,7 +12,9 @@ from equivariant_linear_attention.nn.relation import (
 from equivariant_linear_attention.nn.state import ParityState
 
 
-def _state(nodes: int, width: int, heads: int, generator: torch.Generator) -> ParityState:
+def _state(
+    nodes: int, width: int, heads: int, generator: torch.Generator
+) -> ParityState:
     return ParityState(
         torch.randn(nodes, width, generator=generator, dtype=torch.float64),
         torch.randn(nodes, heads, generator=generator, dtype=torch.float64),
@@ -23,7 +25,9 @@ def _state(nodes: int, width: int, heads: int, generator: torch.Generator) -> Pa
     )
 
 
-def _message(nodes: int, heads: int, dim: int, generator: torch.Generator) -> RelationMessage:
+def _message(
+    nodes: int, heads: int, dim: int, generator: torch.Generator
+) -> RelationMessage:
     return RelationMessage(
         torch.randn(nodes, heads, dim, generator=generator, dtype=torch.float64),
         torch.randn(nodes, heads, generator=generator, dtype=torch.float64),
@@ -65,11 +69,19 @@ def test_relation_operator_is_symmetric_psd_and_matches_dense_action() -> None:
             content_matrix = content @ content.T / factors.content_trace[graph, head]
             mercer_matrix = mercer @ mercer.T / factors.mercer_trace[graph, head]
             assignment = factors.atlas.assignment[selected]
-            atlas_matrix = assignment @ torch.diag(
-                factors.atlas.chart_weight[graph, head] / factors.atlas.mass[graph]
-            ) @ assignment.T
+            atlas_matrix = (
+                assignment
+                @ torch.diag(
+                    factors.atlas.chart_weight[graph, head] / factors.atlas.mass[graph]
+                )
+                @ assignment.T
+            )
             weight = factors.mixture[graph, head]
-            dense = weight[0] * content_matrix + weight[1] * mercer_matrix + weight[2] * atlas_matrix
+            dense = (
+                weight[0] * content_matrix
+                + weight[1] * mercer_matrix
+                + weight[2] * atlas_matrix
+            )
             torch.testing.assert_close(dense, dense.T, atol=2e-12, rtol=0.0)
             eigenvalue = torch.linalg.eigvalsh(dense)
             assert float(eigenvalue.detach().min()) >= -2e-10
@@ -93,7 +105,9 @@ def test_graphwise_irrep_orthogonalization() -> None:
     )
     inner = message_inner(first, output)
     graph_inner = inner.new_zeros(2, 2).index_add(0, index, inner)
-    torch.testing.assert_close(graph_inner, torch.zeros_like(graph_inner), atol=2e-9, rtol=0.0)
+    torch.testing.assert_close(
+        graph_inner, torch.zeros_like(graph_inner), atol=2e-9, rtol=0.0
+    )
 
 
 def test_atlas_assignment_is_rotation_invariant_and_metric_equivariant() -> None:

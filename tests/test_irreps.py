@@ -43,5 +43,7 @@ def test_st5_roundtrip_and_invariant_loss() -> None:
     matrix = torch.randn(6, 3, 3, dtype=torch.float64)
     compact = matrix_to_st5(matrix)
     restored = st5_to_matrix(compact)
-    torch.testing.assert_close(restored.diagonal(dim1=-2, dim2=-1).sum(-1), torch.zeros(6, dtype=torch.float64))
+    torch.testing.assert_close(
+        restored.diagonal(dim1=-2, dim2=-1).sum(-1), torch.zeros(6, dtype=torch.float64)
+    )
     assert float(st5_mse(compact, compact)) == 0.0

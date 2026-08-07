@@ -9,13 +9,17 @@ from equivariant_linear_attention.nn.manifold import quotient_rigid_shape_step
 
 
 @pytest.mark.parametrize("reflection", [False, True])
-def test_quotient_step_removes_full_rigid_gauge_and_is_o3_equivariant(reflection: bool) -> None:
+def test_quotient_step_removes_full_rigid_gauge_and_is_o3_equivariant(
+    reflection: bool,
+) -> None:
     generator = torch.Generator().manual_seed(401)
     index = torch.tensor([0, 0, 0, 0, 1, 1, 1])
     counts = torch.tensor([4, 3])
     positions = torch.randn(7, 3, generator=generator, dtype=torch.float64)
     centers = torch.stack([positions[index == graph].mean(0) for graph in range(2)])
-    translation = torch.tensor([[0.3, -0.1, 0.2], [-0.2, 0.4, 0.1]], dtype=torch.float64)
+    translation = torch.tensor(
+        [[0.3, -0.1, 0.2], [-0.2, 0.4, 0.1]], dtype=torch.float64
+    )
     angular = torch.tensor([[0.1, -0.2, 0.3], [-0.3, 0.2, 0.1]], dtype=torch.float64)
     relative = positions - centers[index]
     raw = translation[index] + torch.cross(angular[index], relative, dim=-1)
@@ -32,7 +36,9 @@ def test_quotient_step_removes_full_rigid_gauge_and_is_o3_equivariant(reflection
         max_step=100.0,
         eps=1e-12,
     )
-    torch.testing.assert_close(reference, torch.zeros_like(reference), atol=3e-10, rtol=0.0)
+    torch.testing.assert_close(
+        reference, torch.zeros_like(reference), atol=3e-10, rtol=0.0
+    )
 
     transform = orthogonal(reflection=reflection, seed=403)
     moved = quotient_rigid_shape_step(
@@ -91,7 +97,9 @@ def test_coordinate_update_mask_bound_and_double_backward() -> None:
     with torch.no_grad():
         assert model.coordinate_update is not None
         model.coordinate_update.vector.base_weight.fill_(0.25)
-    pos = torch.randn(6, 3, generator=generator, dtype=torch.float64, requires_grad=True)
+    pos = torch.randn(
+        6, 3, generator=generator, dtype=torch.float64, requires_grad=True
+    )
     mask = torch.tensor([True, True, True, False, False, False])
     output = model(
         ELAGraph(
@@ -102,7 +110,10 @@ def test_coordinate_update_mask_bound_and_double_backward() -> None:
     )
     assert output.delta is not None
     assert torch.count_nonzero(output.delta[~mask]) == 0
-    assert float(torch.linalg.vector_norm(output.delta.detach(), dim=-1).max()) <= 0.2000001
+    assert (
+        float(torch.linalg.vector_norm(output.delta.detach(), dim=-1).max())
+        <= 0.2000001
+    )
     loss = output.x.square().sum() + output.pos.square().sum()
     gradient = torch.autograd.grad(loss, pos, create_graph=True)[0]
     second = torch.autograd.grad(gradient.square().sum(), pos)[0]

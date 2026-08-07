@@ -38,7 +38,11 @@ class MaskedInvariantPooling(nn.Module):
         index = batch.to(dtype=torch.long)
         inferred = 0 if index.numel() == 0 else int(index.max().item()) + 1
         num_graphs = inferred if num_graphs is None else num_graphs
-        selected = torch.ones(value.shape[0], dtype=torch.bool, device=value.device) if mask is None else mask
+        selected = (
+            torch.ones(value.shape[0], dtype=torch.bool, device=value.device)
+            if mask is None
+            else mask
+        )
         if selected.dtype != torch.bool or selected.shape != (value.shape[0],):
             raise ValueError("mask must be boolean with shape (N,)")
         selected_index = index[selected]

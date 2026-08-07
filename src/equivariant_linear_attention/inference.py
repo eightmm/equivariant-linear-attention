@@ -1,4 +1,4 @@
-"""Inference helper for the edge-free model."""
+"""Inference helper for the tensor-fused edge-free model."""
 
 from __future__ import annotations
 
@@ -23,7 +23,12 @@ def prepare_for_inference(
     if device is not None or dtype is not None:
         model = model.to(device=device, dtype=dtype)
     model.eval()
-    return torch.compile(model, **({} if compile_kwargs is None else compile_kwargs)) if compile_model else model
+    if not compile_model:
+        return model
+    kwargs = {"dynamic": True}
+    if compile_kwargs is not None:
+        kwargs.update(compile_kwargs)
+    return torch.compile(model, **kwargs)
 
 
 __all__ = ["prepare_for_inference"]

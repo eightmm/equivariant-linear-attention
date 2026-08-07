@@ -18,7 +18,11 @@ class Irrep:
     parity: str
 
     def __post_init__(self) -> None:
-        if isinstance(self.degree, bool) or not isinstance(self.degree, int) or self.degree < 0:
+        if (
+            isinstance(self.degree, bool)
+            or not isinstance(self.degree, int)
+            or self.degree < 0
+        ):
             raise ValueError("irrep degree must be a nonnegative integer")
         if self.parity not in {"e", "o"}:
             raise ValueError("irrep parity must be 'e' or 'o'")
@@ -74,10 +78,14 @@ class IrrepLayout:
         for block in tuple(self.blocks):
             if not isinstance(block, IrrepBlock):
                 raise TypeError("irrep layout blocks must be IrrepBlock instances")
-            multiplicities[block.irrep] = multiplicities.get(block.irrep, 0) + block.multiplicity
+            multiplicities[block.irrep] = (
+                multiplicities.get(block.irrep, 0) + block.multiplicity
+            )
         canonical = tuple(
             IrrepBlock(multiplicities[irrep], irrep)
-            for irrep in sorted(multiplicities, key=lambda item: (item.degree, item.parity))
+            for irrep in sorted(
+                multiplicities, key=lambda item: (item.degree, item.parity)
+            )
         )
         object.__setattr__(self, "blocks", canonical)
 
@@ -136,7 +144,9 @@ class IrrepLayout:
         return " + ".join(str(block) for block in self.blocks) if self.blocks else "0"
 
 
-def split_irreps(layout: str | IrrepLayout, value: torch.Tensor) -> dict[str, torch.Tensor]:
+def split_irreps(
+    layout: str | IrrepLayout, value: torch.Tensor
+) -> dict[str, torch.Tensor]:
     parsed = IrrepLayout.parse(layout)
     if value.shape[-1] != parsed.dim:
         raise ValueError(f"value final dimension must be {parsed.dim}")
@@ -148,7 +158,9 @@ def split_irreps(layout: str | IrrepLayout, value: torch.Tensor) -> dict[str, to
     }
 
 
-def pack_irreps(layout: str | IrrepLayout, blocks: Mapping[str, torch.Tensor]) -> torch.Tensor:
+def pack_irreps(
+    layout: str | IrrepLayout, blocks: Mapping[str, torch.Tensor]
+) -> torch.Tensor:
     parsed = IrrepLayout.parse(layout)
     expected = {str(block.irrep) for block in parsed.blocks}
     if set(blocks) != expected:
@@ -313,7 +325,9 @@ class TensorProductPlan:
             and c.irrep.parity == _product_parity(a.irrep, b.irrep)
         )
         if output is not None and output_layout.blocks and not paths:
-            raise ValueError("requested output violates angular-momentum or parity selection")
+            raise ValueError(
+                "requested output violates angular-momentum or parity selection"
+            )
         return cls(left_layout, right_layout, output_layout, paths)
 
     @property
@@ -332,10 +346,16 @@ class CartesianIrreps:
         if isinstance(spec, CartesianIrreps):
             return spec
         layout = IrrepLayout.parse(spec)
-        unsupported = [b for b in layout.blocks if str(b.irrep) not in {"0e", "1o", "2e"}]
+        unsupported = [
+            b for b in layout.blocks if str(b.irrep) not in {"0e", "1o", "2e"}
+        ]
         if unsupported:
             raise ValueError("CartesianIrreps supports only 0e, 1o, and 2e")
-        return cls(layout.multiplicity("0e"), layout.multiplicity("1o"), layout.multiplicity("2e"))
+        return cls(
+            layout.multiplicity("0e"),
+            layout.multiplicity("1o"),
+            layout.multiplicity("2e"),
+        )
 
     @property
     def dim(self) -> int:

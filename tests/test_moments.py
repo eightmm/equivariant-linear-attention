@@ -37,19 +37,20 @@ def test_exact_relative_moments_match_pair_oracle_through_order_four() -> None:
                 expected[receiver] += weight[sender].reshape(
                     weight.shape[1], *((1,) * order)
                 ) * _outer_power(displacement, order).unsqueeze(0)
-            expected[receiver] /= denominator.reshape(
-                weight.shape[1], *((1,) * order)
-            )
+            expected[receiver] /= denominator.reshape(weight.shape[1], *((1,) * order))
         torch.testing.assert_close(actual, expected, atol=2e-12, rtol=2e-12)
 
 
 def test_stf3_and_stf4_are_trace_free() -> None:
     generator = torch.Generator().manual_seed(103)
     rank3 = torch.randn(4, 3, 3, 3, generator=generator, dtype=torch.float64)
-    rank3 = sum(
-        rank3.permute(0, *(axis + 1 for axis in permutation))
-        for permutation in itertools.permutations(range(3))
-    ) / 6.0
+    rank3 = (
+        sum(
+            rank3.permute(0, *(axis + 1 for axis in permutation))
+            for permutation in itertools.permutations(range(3))
+        )
+        / 6.0
+    )
     projected3 = stf3(rank3)
     torch.testing.assert_close(
         torch.einsum("...aac->...c", projected3),
@@ -59,10 +60,13 @@ def test_stf3_and_stf4_are_trace_free() -> None:
     )
 
     rank4 = torch.randn(4, 3, 3, 3, 3, generator=generator, dtype=torch.float64)
-    rank4 = sum(
-        rank4.permute(0, *(axis + 1 for axis in permutation))
-        for permutation in itertools.permutations(range(4))
-    ) / 24.0
+    rank4 = (
+        sum(
+            rank4.permute(0, *(axis + 1 for axis in permutation))
+            for permutation in itertools.permutations(range(4))
+        )
+        / 24.0
+    )
     projected4 = stf4(rank4)
     torch.testing.assert_close(
         torch.einsum("...aakl->...kl", projected4),
@@ -87,5 +91,7 @@ def test_adaptive_moment_bank_is_translation_invariant() -> None:
     )
     reference = bank(scalar, geometry)
     moved = bank(scalar, shifted)
-    for left, right in zip(reference.__dict__.values(), moved.__dict__.values(), strict=True):
+    for left, right in zip(
+        reference.__dict__.values(), moved.__dict__.values(), strict=True
+    ):
         torch.testing.assert_close(left, right, atol=2e-11, rtol=2e-11)

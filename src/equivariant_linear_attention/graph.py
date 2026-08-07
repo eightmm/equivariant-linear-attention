@@ -33,7 +33,9 @@ def _index(name: str, value: torch.Tensor, nodes: int, device: torch.device) -> 
         raise ValueError(f"{name} values must be nonnegative")
 
 
-def _graph_condition(value: torch.Tensor, *, num_graphs: int, device: torch.device) -> torch.Tensor:
+def _graph_condition(
+    value: torch.Tensor, *, num_graphs: int, device: torch.device
+) -> torch.Tensor:
     _floating("condition", value)
     if value.device != device:
         raise ValueError("condition and x must share one device")
@@ -91,7 +93,9 @@ class ELAGraph:
         if self.x.device != self.pos.device:
             raise ValueError("x and pos must share one device")
         nodes = self.x.shape[0]
-        _, graphs, _ = canonical_batch(self.batch, num_nodes=nodes, device=self.x.device)
+        _, graphs, _ = canonical_batch(
+            self.batch, num_nodes=nodes, device=self.x.device
+        )
         if self.batch is not None:
             _index("batch", self.batch, nodes, self.x.device)
         if self.group is not None:
@@ -105,7 +109,9 @@ class ELAGraph:
             if self.order.device != self.x.device:
                 raise ValueError("order and x must share one device")
         if self.update_mask is not None:
-            if self.update_mask.dtype != torch.bool or self.update_mask.shape != (nodes,):
+            if self.update_mask.dtype != torch.bool or self.update_mask.shape != (
+                nodes,
+            ):
                 raise ValueError("update_mask must be boolean with shape (N,)")
             if self.update_mask.device != self.x.device:
                 raise ValueError("update_mask and x must share one device")
@@ -146,7 +152,9 @@ class ELAGraph:
     def condition_matrix(self) -> torch.Tensor | None:
         if self.condition is None:
             return None
-        return _graph_condition(self.condition, num_graphs=self.num_graphs, device=self.x.device)
+        return _graph_condition(
+            self.condition, num_graphs=self.num_graphs, device=self.x.device
+        )
 
     def with_output(
         self,
@@ -157,7 +165,9 @@ class ELAGraph:
         graph_sum: torch.Tensor,
         delta: torch.Tensor,
     ) -> ELAGraph:
-        return replace(self, x=x, pos=pos, graph_x=graph_x, graph_sum=graph_sum, delta=delta)
+        return replace(
+            self, x=x, pos=pos, graph_x=graph_x, graph_sum=graph_sum, delta=delta
+        )
 
     def to(self, *args: Any, **kwargs: Any) -> ELAGraph:
         x = self.x.to(*args, **kwargs)
@@ -213,7 +223,11 @@ class ELAGraph:
         has_order = any(g.order is not None for g in values)
         has_mask = any(g.update_mask is not None for g in values)
         has_target = any(g.y is not None for g in values)
-        for flag, attr in ((has_condition, "condition"), (has_order, "order"), (has_target, "y")):
+        for flag, attr in (
+            (has_condition, "condition"),
+            (has_order, "order"),
+            (has_target, "y"),
+        ):
             if flag and any(getattr(g, attr) is None for g in values):
                 raise ValueError(f"{attr} must be present on every collated graph")
 
@@ -225,7 +239,11 @@ class ELAGraph:
             positions.append(graph.pos)
             batches.append(local_batch + offset)
             if has_group:
-                groups.append(graph.group.to(dtype=torch.long) if graph.group is not None else torch.zeros_like(local_batch))
+                groups.append(
+                    graph.group.to(dtype=torch.long)
+                    if graph.group is not None
+                    else torch.zeros_like(local_batch)
+                )
             if has_condition:
                 assert graph.condition_matrix is not None
                 conditions.append(graph.condition_matrix)
@@ -233,7 +251,11 @@ class ELAGraph:
                 assert graph.order is not None
                 orders.append(graph.order)
             if has_mask:
-                masks.append(graph.update_mask if graph.update_mask is not None else torch.ones(graph.num_nodes, dtype=torch.bool, device=device))
+                masks.append(
+                    graph.update_mask
+                    if graph.update_mask is not None
+                    else torch.ones(graph.num_nodes, dtype=torch.bool, device=device)
+                )
             if has_target:
                 assert graph.y is not None
                 targets.append(graph.y)
