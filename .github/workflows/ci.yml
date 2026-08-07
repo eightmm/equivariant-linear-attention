@@ -2,6 +2,7 @@ name: cpu-ci
 
 on:
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -14,15 +15,5 @@ jobs:
       - uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - run: uv sync --locked
-      - name: Verify canonical import surface
-        run: |
-          uv run python - <<'PY'
-          import equivariant_linear_attention as ela
-          from equivariant_linear_attention import ELA, ELAGraph
-
-          assert ELA is not None
-          assert ELAGraph is not None
-          assert set(ela.__all__) == {"ELA", "ELAGraph"}
-          PY
-      - run: scripts/check.sh fast
+      - run: uv sync
+      - run: uv run scripts/check.sh

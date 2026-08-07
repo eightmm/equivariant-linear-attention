@@ -1,8 +1,0 @@
-{
-  "public_sha256": "c349985162e1fa21e06d1c22c664245ad2c3a9bd820fe03cf459b52bba211e5b",
-  "replacement_count": 6,
-  "row_count": 6,
-  "schema_version": 1,
-  "source_sha256": "c95d178f2f614a4049e9bca70aac48fffcd299180f17dd686f5b58159bd16089",
-  "transformation": "Replace the exact machine-local repository-root prefix only in command arguments; preserve every note, metric, hash, status, and row."
-}

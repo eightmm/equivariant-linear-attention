@@ -1,6 +1,7 @@
-"""Advanced configuration and mathematical helpers for ELA."""
+"""Advanced mathematical helpers for ELA."""
 
-from .context import ELAContext, ELAFeatures, FourierOrderEncoder, OrderContext
+from .context import ELAFeatures, FourierOrderEncoder
+from .inference import prepare_for_inference
 from .irreps import (
     CartesianIrreps,
     Irrep,
@@ -17,27 +18,25 @@ from .irreps import (
     st5_norm,
     st5_to_matrix,
 )
-from .model.ela import ELAConfig, SparseGeometry
+from .model import ELAConfig
 from .physics import DirectVectorForceHead, ScalarEnergyHead, conservative_forces
 
 __all__ = [
     "CartesianIrreps",
     "DirectVectorForceHead",
     "ELAConfig",
-    "ELAContext",
     "ELAFeatures",
     "FourierOrderEncoder",
     "Irrep",
     "IrrepBlock",
     "IrrepLayout",
-    "OrderContext",
     "ScalarEnergyHead",
-    "SparseGeometry",
     "TensorProductPath",
     "TensorProductPlan",
     "conservative_forces",
     "matrix_to_st5",
     "pack_irreps",
+    "prepare_for_inference",
     "project_symmetric_traceless",
     "split_irreps",
     "st5_inner",

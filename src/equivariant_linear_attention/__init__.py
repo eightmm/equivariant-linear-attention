@@ -1,6 +1,6 @@
-"""Canonical public API: one model and one graph type."""
+"""Public API for the canonical edge-free ELA architecture."""
 
-from .api import ELA
 from .graph import ELAGraph
+from .model import ELA
 
 __all__ = ["ELA", "ELAGraph"]

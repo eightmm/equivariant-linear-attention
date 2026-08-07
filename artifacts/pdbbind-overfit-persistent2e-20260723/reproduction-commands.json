@@ -1,9 +1,0 @@
-{
-  "install": "uv sync --locked --extra qm9 --extra pdbbind",
-  "dry_run": "uv run --locked --extra qm9 --extra pdbbind python scripts/run_registered_pdbbind_overfit.py artifacts/pdbbind-overfit-persistent2e-20260723/registered-result.json --dry-run",
-  "cpu_smoke": "uv run --locked --extra qm9 --extra pdbbind python scripts/run_registered_pdbbind_overfit.py artifacts/pdbbind-overfit-persistent2e-20260723/cpu-smoke-result.json --device cpu --max-steps 1 --budget-seconds 180 --eval-interval 1",
-  "registered_cuda": "uv run --locked --extra qm9 --extra pdbbind python scripts/run_registered_pdbbind_overfit.py artifacts/pdbbind-overfit-persistent2e-20260723/registered-result.json",
-  "cpu_fallback_used": "uv run --locked --extra qm9 --extra pdbbind python scripts/run_registered_pdbbind_overfit.py artifacts/pdbbind-overfit-persistent2e-20260723/cpu-fallback-result.json --device cpu",
-  "fast_verification": "scripts/check.sh fast",
-  "gpu_verification_attempted": "scripts/check.sh gpu"
-}
