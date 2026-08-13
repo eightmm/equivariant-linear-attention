@@ -59,6 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip", type=float, default=10.0, help="grad-norm clip (0 = off)")
     parser.add_argument("--node-budget", type=int, default=12000)
     parser.add_argument(
+        "--density-bandwidths",
+        default="",
+        help="comma-separated Angstrom bandwidths for the in-model node-linear"
+        " soft neighbour-count channel; empty disables it",
+    )
+    parser.add_argument(
         "--num-local-charts",
         type=int,
         default=16,
@@ -274,6 +280,9 @@ def main() -> None:
         width=args.width,
         depth=args.depth,
         num_local_charts=args.num_local_charts,
+        density_bandwidths=tuple(
+            float(value) for value in args.density_bandwidths.split(",") if value
+        ),
     ).to(args.device)
     runner = torch.compile(model, dynamic=True) if args.compile else model
     optimizer = torch.optim.AdamW(

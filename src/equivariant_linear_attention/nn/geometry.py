@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import comb
+from math import comb, factorial
 
 import torch
 from torch import nn
 
 from .ops import (
     SYMMETRIC_DEGREE_SLICES,
+    SYMMETRIC_DEGREES,
     SYMMETRIC_EXPONENTS,
+    SYMMETRIC_MULTINOMIAL_SQRT,
     bounded_compact_stf3,
     bounded_compact_stf4,
     bounded_scalar,
@@ -71,6 +73,84 @@ def greedy_farthest_seeds(
         )
     spacing2 = segment_mean(nearest2, index, num_segments).clamp_min(eps)
     return torch.stack(seeds, dim=1), spacing2
+
+
+def chart_density(
+    positions: torch.Tensor,
+    index: torch.Tensor,
+    num_segments: int,
+    *,
+    num_charts: int,
+    bandwidths: tuple[float, ...],
+    length_scale: float,
+    seed_sharpness: float = 16.0,
+    assignment_scale: float = 3.0,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Node-linear soft neighbour counts at fixed Angstrom bandwidths.
+
+    Returns ``log1p`` of ``sum_j k(i,j)`` for each bandwidth, where ``k`` is
+    the chart-recentered truncated-Gaussian kernel. Because the kernel is a
+    feature inner product, the row sum is one segment reduction rather than a
+    pairwise scan, so this is an ``O(N G)`` in-model replacement for the dense
+    ``O(N^2)`` neighbour counts that the offline diagnostic feature used.
+
+    Charts come from geometry alone, so the channel is available whether or
+    not the local relation sector is enabled.
+    """
+
+    dtype = work_dtype(positions)
+    position = positions.to(dtype=dtype)
+    index = index.to(dtype=torch.long)
+    center = segment_mean(position, index, num_segments)
+    absolute = (position - center[index]) / float(length_scale)
+    seeds, spacing2 = greedy_farthest_seeds(
+        absolute,
+        index,
+        num_segments,
+        num_seeds=num_charts,
+        sharpness=seed_sharpness,
+        eps=eps,
+    )
+    delta = absolute[:, None, :] - seeds.detach()[index]
+    distance2 = delta.square().sum(dim=-1)
+    assignment = torch.softmax(
+        -assignment_scale * distance2 / spacing2.detach()[index, None],
+        dim=-1,
+    )
+    weight = torch.sqrt(assignment + eps)
+    monomials = symmetric_monomials(delta.reshape(-1, 3)).reshape(
+        delta.shape[0], delta.shape[1], -1
+    )
+    degree = torch.tensor(SYMMETRIC_DEGREES, device=position.device, dtype=dtype)
+    degree_factorial = torch.tensor(
+        tuple(float(factorial(value)) for value in SYMMETRIC_DEGREES),
+        device=position.device,
+        dtype=dtype,
+    )
+    multinomial = torch.tensor(
+        SYMMETRIC_MULTINOMIAL_SQRT, device=position.device, dtype=dtype
+    )
+
+    channels: list[torch.Tensor] = []
+    for bandwidth in bandwidths:
+        gamma = 0.5 / (float(bandwidth) / float(length_scale)) ** 2
+        coefficient = (
+            torch.sqrt((2.0 * gamma) ** degree / degree_factorial) * multinomial
+        )
+        feature = (
+            weight[..., None]
+            * torch.exp(-gamma * distance2)[..., None]
+            * coefficient
+            * monomials
+        )
+        summary = segment_sum(feature, index, num_segments)
+        total = (feature * summary[index]).sum(dim=(-2, -1))
+        # The Gram row sum includes the node's own term; a neighbour count
+        # must not.
+        total = total - feature.square().sum(dim=(-2, -1))
+        channels.append(torch.log1p(total.clamp_min(0.0)))
+    return torch.stack(channels, dim=-1)
 
 
 @dataclass(frozen=True)
@@ -497,6 +577,7 @@ __all__ = [
     "AdaptiveMomentBank",
     "GeometryContext",
     "MomentFeatures",
+    "chart_density",
     "compact_centered_moments",
     "explicit_centered_moments",
     "greedy_farthest_seeds",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention.nn.geometry import GeometryContext
+from equivariant_linear_attention.nn.geometry import GeometryContext, chart_density
 from equivariant_linear_attention.nn.relation import (
     LocalChartMercer,
     RelationMessage,
@@ -292,3 +292,43 @@ def test_chart_seeds_stay_inside_their_own_segment() -> None:
     torch.testing.assert_close(
         geometry.chart_seeds[0], isolated.chart_seeds[0], atol=1e-9, rtol=1e-9
     )
+
+
+def test_chart_density_is_invariant_and_node_linear_in_form() -> None:
+    generator = torch.Generator().manual_seed(223)
+    nodes = 300
+    index = torch.zeros(nodes, dtype=torch.long)
+    position = 12.0 * torch.randn(nodes, 3, generator=generator, dtype=torch.float64)
+    bandwidths = (3.5, 5.0)
+    reference = chart_density(
+        position, index, 1, num_charts=8, bandwidths=bandwidths, length_scale=10.0
+    )
+    assert reference.shape == (nodes, len(bandwidths))
+    assert bool(reference.isfinite().all()) and bool((reference >= 0.0).all())
+
+    q, _ = torch.linalg.qr(torch.randn(3, 3, generator=generator, dtype=torch.float64))
+    if torch.linalg.det(q) > 0:
+        q[:, 0].neg_()
+    moved = chart_density(
+        position @ q.T + torch.tensor([5.0, 1.0, -3.0], dtype=torch.float64),
+        index,
+        1,
+        num_charts=8,
+        bandwidths=bandwidths,
+        length_scale=10.0,
+    )
+    torch.testing.assert_close(moved, reference, atol=1e-9, rtol=1e-9)
+
+    permutation = torch.randperm(nodes, generator=generator)
+    permuted = chart_density(
+        position[permutation], index, 1, num_charts=8,
+        bandwidths=bandwidths, length_scale=10.0,
+    )
+    torch.testing.assert_close(permuted, reference[permutation], atol=1e-9, rtol=1e-9)
+
+    # Denser structures must report higher counts at fixed bandwidth.
+    sparse = chart_density(
+        3.0 * position, index, 1, num_charts=8,
+        bandwidths=bandwidths, length_scale=10.0,
+    )
+    assert float(sparse.mean()) < float(reference.mean())

@@ -11,7 +11,7 @@ from torch import nn
 from ..context import ELAFeatures, InvariantContextEncoder
 from ..graph import ELAGraph
 from ..irreps import IrrepLayout, split_irreps
-from ..nn.geometry import GeometryContext
+from ..nn.geometry import GeometryContext, chart_density
 from ..nn.layer import EdgeFreeELALayer
 from ..nn.manifold import QuotientCoordinateUpdate
 from ..nn.ops import interaction_index, segment_count, segment_sum
@@ -46,6 +46,8 @@ class ELAConfig:
     max_coordinate_step: float = 0.25
     num_local_charts: int = 16
     length_scale: float = 10.0
+    density_bandwidths: tuple[float, ...] = ()
+    density_charts: int = 16
 
     def __post_init__(self) -> None:
         _positive_integer("width", self.width)
@@ -64,6 +66,12 @@ class ELAConfig:
         if self.num_local_charts < 0:
             raise ValueError("num_local_charts must be non-negative")
         _positive_real("length_scale", self.length_scale)
+        if not isinstance(self.density_bandwidths, tuple):
+            raise TypeError("density_bandwidths must be a tuple")
+        for bandwidth in self.density_bandwidths:
+            _positive_real("density_bandwidth", bandwidth)
+        if self.density_bandwidths:
+            _positive_integer("density_charts", self.density_charts)
         if self.input_layout.max_degree > 2 or self.output_layout.max_degree > 2:
             raise ValueError("persistent input and output irreps must have l<=2")
 
@@ -120,6 +128,7 @@ class ELAConfig:
             "derived_num_charts": self.num_charts,
             "num_local_charts": self.num_local_charts,
             "length_scale": self.length_scale,
+            "density_bandwidths": self.density_bandwidths,
         }
 
 
@@ -139,6 +148,8 @@ class ELA(nn.Module):
         max_coordinate_step: float = 0.25,
         num_local_charts: int = 16,
         length_scale: float = 10.0,
+        density_bandwidths: tuple[float, ...] = (),
+        density_charts: int = 16,
     ) -> None:
         super().__init__()
         self.config = ELAConfig(
@@ -151,6 +162,8 @@ class ELA(nn.Module):
             max_coordinate_step=max_coordinate_step,
             num_local_charts=num_local_charts,
             length_scale=length_scale,
+            density_bandwidths=tuple(density_bandwidths),
+            density_charts=density_charts,
         )
         config = self.config
         self.input_projection = InputProjection(
@@ -183,6 +196,14 @@ class ELA(nn.Module):
             scalar_width=config.width,
             num_heads=config.num_heads,
         )
+        self.density_projection: nn.Linear | None = None
+        if config.density_bandwidths:
+            self.density_projection = nn.Linear(
+                len(config.density_bandwidths), config.width
+            )
+            # Start as an exact no-op so the channel has to earn its use.
+            nn.init.zeros_(self.density_projection.weight)
+            nn.init.zeros_(self.density_projection.bias)
         self.coordinate_update: QuotientCoordinateUpdate | None = None
         if config.update_positions:
             self.coordinate_update = QuotientCoordinateUpdate(
@@ -206,6 +227,8 @@ class ELA(nn.Module):
             max_coordinate_step=config.max_coordinate_step,
             num_local_charts=config.num_local_charts,
             length_scale=config.length_scale,
+            density_bandwidths=config.density_bandwidths,
+            density_charts=config.density_charts,
         )
 
     @property
@@ -250,9 +273,14 @@ class ELA(nn.Module):
             f"update_positions={self.updates_positions}"
         )
 
-    def _initial_state(self, graph: ELAGraph) -> ParityState:
+    def _initial_state(
+        self, graph: ELAGraph, density: torch.Tensor | None = None
+    ) -> ParityState:
         state = self.input_projection(graph.x)
         context = self.context_encoder(graph)
+        if density is not None and self.density_projection is not None:
+            projected = self.density_projection(density.to(dtype=state.even_scalar.dtype))
+            context = projected if context is None else context + projected
         if context is None:
             return state
         return ParityState(
@@ -278,7 +306,18 @@ class ELA(nn.Module):
             graph.group,
         )
         positions = graph.pos
-        state = self._initial_state(graph)
+        density = None
+        if self.config.density_bandwidths:
+            density = chart_density(
+                positions,
+                interactions,
+                num_segments=num_interactions,
+                num_charts=self.config.density_charts,
+                bandwidths=self.config.density_bandwidths,
+                length_scale=self.config.length_scale,
+                eps=self.config.eps,
+            )
+        state = self._initial_state(graph, density)
         total_delta = torch.zeros_like(positions)
 
         if self.coordinate_update is None:
