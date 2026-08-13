@@ -9,6 +9,7 @@ from torch import nn
 
 from .closure import EquivariantClosure
 from .geometry import AdaptiveMomentBank, GeometryContext, MomentFeatures
+from .local_geometry import LocalMercerMomentBank, LocalMomentFusion
 from .ops import bounded_scalar, bounded_st, unit_ball
 from .relation import KrylovMixer, SelfAdjointRelation, orthogonalize
 from .state import ChannelMix, EquivariantRMSNorm, ParityState, state_invariants
@@ -85,7 +86,7 @@ class EquivariantFeedForward(nn.Module):
 
 
 class EdgeFreeELALayer(nn.Module):
-    """Compact moments + one fused PSD relation + orthogonal Krylov + closure."""
+    """Global/local moments + one fused PSD relation + Krylov + closure."""
 
     def __init__(
         self,
@@ -117,6 +118,12 @@ class EdgeFreeELALayer(nn.Module):
             rank=moment_rank,
             eps=eps,
         )
+        self.local_moments = LocalMercerMomentBank(
+            scalar_width=scalar_width,
+            rank=moment_rank,
+            eps=eps,
+        )
+        self.moment_fusion = LocalMomentFusion(rank=moment_rank)
         self.relation = SelfAdjointRelation(
             scalar_width=scalar_width,
             num_heads=num_heads,
@@ -145,7 +152,9 @@ class EdgeFreeELALayer(nn.Module):
 
     def forward(self, state: ParityState, geometry: GeometryContext) -> LayerOutput:
         normalized = self.attention_norm(state)
-        moments = self.moments(normalized.even_scalar, geometry)
+        global_moments = self.moments(normalized.even_scalar, geometry)
+        local_moments = self.local_moments(normalized.even_scalar, geometry)
+        moments = self.moment_fusion(global_moments, local_moments)
         value, content_feature = self.relation.project(normalized)
         factors = self.relation.build(
             normalized,
