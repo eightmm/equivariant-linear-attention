@@ -89,6 +89,12 @@ from graphwise raw sums. Individual pairs, triangles, and higher tuples are
 never materialized. The moments provide directional, anisotropic, chiral,
 third-order, and fourth-order geometry in node-linear memory.
 
+Each layer also builds degree-two Gaussian Mercer density moments. Their scalar
+kernel decays with receiver-source separation, so local `m1/m2`, angle-like
+pair correlations, and parity-odd chirality complement the segment-global
+order-four bank without constructing a neighbour graph or an `N x N` matrix.
+The local path is zero-gated at initialization.
+
 ## Self-adjoint relation operator
 
 A layer builds one invariant positive-semidefinite relation as a convex mixture
@@ -149,7 +155,8 @@ $$
 O(NC+C^2+NK)
 $$
 
-working memory. No stored object scales as `N^2`.
+working memory. The local branch adds `O(N R P B)` with fixed `P=B=10` and
+moment rank `R <= 12`. No stored object scales as `N^2`.
 
 ## Validation
 
@@ -158,8 +165,10 @@ uv run scripts/check.sh
 ```
 
 The suite covers proper and improper O(3) actions, translations, permutations,
-component isolation, exact moments through order four, PSD/self-adjoint
-relations, orthogonal Krylov construction, atlas metrics, quotient coordinate
-updates, second-order autograd, mixed-irrep I/O, and graph collation.
+component isolation, exact moments through order four, soft-local Mercer
+moments, PSD/self-adjoint relations, orthogonal Krylov construction, atlas
+metrics, quotient coordinate updates, second-order autograd, mixed-irrep I/O,
+and graph collation.
 
-See [the mathematical architecture](docs/ARCHITECTURE.md).
+See [the mathematical architecture](docs/ARCHITECTURE.md) and the
+[soft-local geometry derivation](docs/LOCAL_GEOMETRY.md).
