@@ -1,4 +1,4 @@
-"""One tensor-fused edge-free ELA layer."""
+"""One ELA layer: pointwise local jets, global relation, and feed-forward."""
 
 from __future__ import annotations
 
@@ -8,11 +8,13 @@ import torch
 from torch import nn
 
 from .closure import EquivariantClosure
+from .equivariant_ffn import EquivariantFeedForward
 from .geometry import AdaptiveMomentBank, GeometryContext, MomentFeatures
-from .local_geometry import LocalMercerMomentBank, LocalMomentFusion
-from .ops import bounded_scalar, bounded_st, unit_ball
+from .local_closure import LocalEquivariantClosure
+from .local_geometry import PointwiseLocalGeometry
+from .local_support import LocalSupport
 from .relation import KrylovMixer, SelfAdjointRelation, orthogonalize
-from .state import ChannelMix, EquivariantRMSNorm, ParityState, state_invariants
+from .state import EquivariantRMSNorm, ParityState
 
 
 @dataclass(frozen=True)
@@ -22,71 +24,8 @@ class LayerOutput:
     moments: MomentFeatures
 
 
-class EquivariantFeedForward(nn.Module):
-    def __init__(self, *, scalar_width: int, num_heads: int, eps: float) -> None:
-        super().__init__()
-        hidden = max(64, 2 * scalar_width)
-        invariant_width = scalar_width + 5 * num_heads
-        self.even = nn.Sequential(
-            nn.Linear(invariant_width, hidden),
-            nn.SiLU(),
-            nn.Linear(hidden, scalar_width),
-        )
-        self.gates = nn.Sequential(
-            nn.Linear(invariant_width, hidden),
-            nn.SiLU(),
-            nn.Linear(hidden, 5 * num_heads),
-        )
-        nn.init.zeros_(self.gates[-1].weight)
-        nn.init.zeros_(self.gates[-1].bias)
-        self.odd = ChannelMix(num_heads, num_heads)
-        self.polar = ChannelMix(num_heads, num_heads)
-        self.axial = ChannelMix(num_heads, num_heads)
-        self.even_tensor = ChannelMix(num_heads, num_heads)
-        self.odd_tensor = ChannelMix(num_heads, num_heads)
-        self.polar_cross = ChannelMix(num_heads, num_heads)
-        self.axial_cross = ChannelMix(num_heads, num_heads)
-        self.even_tensor_cross = ChannelMix(num_heads, num_heads)
-        self.odd_tensor_cross = ChannelMix(num_heads, num_heads)
-        self.num_heads = num_heads
-        self.eps = float(eps)
-
-    def forward(self, state: ParityState) -> ParityState:
-        invariants = state_invariants(state, self.eps)
-        gates = 2.0 * torch.sigmoid(self.gates(invariants)).reshape(
-            state.num_nodes,
-            5,
-            self.num_heads,
-        )
-        odd = gates[:, 0] * self.odd(state.odd_scalar)
-        polar = gates[:, 1, :, None] * (
-            self.polar(state.polar_vector)
-            + state.odd_scalar[..., None] * self.polar_cross(state.axial_vector)
-        )
-        axial = gates[:, 2, :, None] * (
-            self.axial(state.axial_vector)
-            + state.odd_scalar[..., None] * self.axial_cross(state.polar_vector)
-        )
-        even_tensor = gates[:, 3, :, None] * (
-            self.even_tensor(state.even_tensor)
-            + state.odd_scalar[..., None] * self.even_tensor_cross(state.odd_tensor)
-        )
-        odd_tensor = gates[:, 4, :, None] * (
-            self.odd_tensor(state.odd_tensor)
-            + state.odd_scalar[..., None] * self.odd_tensor_cross(state.even_tensor)
-        )
-        return ParityState(
-            bounded_scalar(self.even(invariants), self.eps),
-            bounded_scalar(odd, self.eps),
-            unit_ball(polar, self.eps),
-            unit_ball(axial, self.eps),
-            bounded_st(even_tensor, self.eps),
-            bounded_st(odd_tensor, self.eps),
-        )
-
-
 class EdgeFreeELALayer(nn.Module):
-    """Global/local moments + one fused PSD relation + Krylov + closure."""
+    """Pointwise local analysis followed by one global self-adjoint operator."""
 
     def __init__(
         self,
@@ -98,32 +37,54 @@ class EdgeFreeELALayer(nn.Module):
         num_charts: int,
         residual_scale: float,
         eps: float,
+        local_probe_rank: int | None = None,
+        local_scales: int = 3,
+        local_points: int | None = None,
+        local_chunk_size: int = 128,
     ) -> None:
         super().__init__()
         if scalar_width % num_heads:
             raise ValueError("scalar_width must be divisible by num_heads")
         self.eps = float(eps)
+        probe_rank = (
+            max(2, min(8, scalar_width // 32))
+            if local_probe_rank is None
+            else int(local_probe_rank)
+        )
+        point_count = (
+            max(8, min(32, scalar_width // 4))
+            if local_points is None
+            else int(local_points)
+        )
+        self.local_norm = EquivariantRMSNorm(
+            scalar_width=scalar_width, num_heads=num_heads, eps=eps
+        )
         self.attention_norm = EquivariantRMSNorm(
-            scalar_width=scalar_width,
-            num_heads=num_heads,
-            eps=eps,
+            scalar_width=scalar_width, num_heads=num_heads, eps=eps
         )
         self.ffn_norm = EquivariantRMSNorm(
+            scalar_width=scalar_width, num_heads=num_heads, eps=eps
+        )
+        self.local_geometry = PointwiseLocalGeometry(
+            scalar_width=scalar_width,
+            moment_rank=moment_rank,
+            probe_rank=probe_rank,
+            num_scales=local_scales,
+            max_points=point_count,
+            chunk_size=local_chunk_size,
+            eps=eps,
+        )
+        self.local_closure = LocalEquivariantClosure(
             scalar_width=scalar_width,
             num_heads=num_heads,
+            moment_rank=moment_rank,
+            probe_rank=probe_rank,
+            num_scales=local_scales,
             eps=eps,
         )
         self.moments = AdaptiveMomentBank(
-            scalar_width=scalar_width,
-            rank=moment_rank,
-            eps=eps,
+            scalar_width=scalar_width, rank=moment_rank, eps=eps
         )
-        self.local_moments = LocalMercerMomentBank(
-            scalar_width=scalar_width,
-            rank=moment_rank,
-            eps=eps,
-        )
-        self.moment_fusion = LocalMomentFusion(rank=moment_rank)
         self.relation = SelfAdjointRelation(
             scalar_width=scalar_width,
             num_heads=num_heads,
@@ -131,10 +92,7 @@ class EdgeFreeELALayer(nn.Module):
             num_charts=num_charts,
             eps=eps,
         )
-        self.krylov = KrylovMixer(
-            scalar_width=scalar_width,
-            num_heads=num_heads,
-        )
+        self.krylov = KrylovMixer(scalar_width=scalar_width, num_heads=num_heads)
         self.closure = EquivariantClosure(
             scalar_width=scalar_width,
             num_heads=num_heads,
@@ -143,23 +101,31 @@ class EdgeFreeELALayer(nn.Module):
             eps=eps,
         )
         self.ffn = EquivariantFeedForward(
-            scalar_width=scalar_width,
-            num_heads=num_heads,
-            eps=eps,
+            scalar_width=scalar_width, num_heads=num_heads, eps=eps
+        )
+        self.local_scale = nn.Parameter(
+            torch.tensor(max(0.01, 0.25 * float(residual_scale)))
         )
         self.attention_scale = nn.Parameter(torch.tensor(float(residual_scale)))
         self.ffn_scale = nn.Parameter(torch.tensor(float(residual_scale)))
 
-    def forward(self, state: ParityState, geometry: GeometryContext) -> LayerOutput:
+    def forward(
+        self,
+        state: ParityState,
+        geometry: GeometryContext,
+        support: LocalSupport | None = None,
+    ) -> LayerOutput:
+        local_state = self.local_norm(state)
+        local = self.local_geometry(local_state.even_scalar, geometry, support)
+        state = state.add(
+            self.local_closure(local_state, local).scale(self.local_scale)
+        )
+
         normalized = self.attention_norm(state)
-        global_moments = self.moments(normalized.even_scalar, geometry)
-        local_moments = self.local_moments(normalized.even_scalar, geometry)
-        moments = self.moment_fusion(global_moments, local_moments)
+        moments = self.moments(normalized.even_scalar, geometry)
         value, content_feature = self.relation.project(normalized)
         factors = self.relation.build(
-            normalized,
-            geometry,
-            content_feature=content_feature,
+            normalized, geometry, content_feature=content_feature
         )
         order_one = self.relation.apply(factors, value)
         order_two_raw = self.relation.apply(factors, order_one)
@@ -181,16 +147,12 @@ class EdgeFreeELALayer(nn.Module):
             eps=self.eps,
         )
         message = self.krylov(
-            normalized,
-            order_one,
-            order_two,
-            order_three,
-            geometry,
+            normalized, order_one, order_two, order_three, geometry
         )
-        attention_delta = self.closure(normalized, message, moments)
-        state = state.add(attention_delta.scale(self.attention_scale))
-        ffn_delta = self.ffn(self.ffn_norm(state))
-        state = state.add(ffn_delta.scale(self.ffn_scale))
+        state = state.add(
+            self.closure(normalized, message, moments).scale(self.attention_scale)
+        )
+        state = state.add(self.ffn(self.ffn_norm(state)).scale(self.ffn_scale))
         return LayerOutput(
             state=state,
             node_metric=factors.atlas.node_metric,
