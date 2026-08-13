@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-11",
+  "dataset": "ATOM3D Protein Structure Ranking",
+  "source_record": "https://zenodo.org/records/4915648",
+  "split": "split-by-year",
+  "source_archive_hash": null,
+  "source_archive_hash_limitation": "The downloaded archive is not retained as a single local file; identity is bounded by the split metadata and prepared-shard hashes below.",
+  "split_metadata": {
+    "README.md": "0910413ba3c5a6a772f667c1595cb088789e581ca6ae9175b618dcc5bbd0b74b",
+    "indices/train_indices.txt": "9d642ef7363aaa59ebe699ed8bbc6baf37bf50e4a630f0d38c8667605098b043",
+    "indices/val_indices.txt": "d0c2def3bd698d917fc09771792a4a067f966a08ffa0f97932ca2cfb2bb14227",
+    "indices/test_indices.txt": "f000f5f76552769c6329562423ac45106e940844326ec5e5fbe8b017c192c499",
+    "targets/train.txt": "f7e0f1b5a50cabc78ba4834decf8df49aba7bd69c00bbf44d12990c3e05c1b34",
+    "targets/val.txt": "968440397eaf304bb1eea5ad1b96106dbf008a25f57a24b1983ea2d471511c41",
+    "targets/test.txt": "36acdd8c4184bdb5f6af83da2bcbb43ff8abb9170d39f294e3fe656e67326e9a"
+  },
+  "prepared_shards": {
+    "train.pt": "01580f914a3077cd8893c3a2cc0d3fcf8858437a0786e65bf5cd8911b2fe99d7",
+    "val.pt": "4f53168967112a89a549729b13d50c7def3a29691534908ecdbe328d70313b77",
+    "test.pt": "aa4f2dae1172c6adcc7da094fbc9608008439ae47e434c2bcc6462d0dc27cb6f",
+    "local_train.pt": "45469562664d8e3d7b8cbba9a94b72475ce63cc0f6171e67932ea76c76da4925",
+    "local_val.pt": "0244dbd7b323ffa9cd74539ea50f2359b5cf01317d3981d66b6e0ba47e0e8c9f",
+    "local_test.pt": "5453aa255f715b3804e5d24bd33ada488170bfe20ce78fc3ee4e4776ec54aa01"
+  },
+  "split_fingerprints": {
+    "train": {
+      "rows": 25400,
+      "unique_ids": 25400,
+      "id_sha256": "d62fa1c9ee6ebb09743d5324c1ac2a7fa55d872225875c9ee273b1e7b72eba18",
+      "unique_targets": 508,
+      "target_sha256": "c327125c257a6aefc4a39d02e344fbe488421fa7fa84512dea0fc73ca99929e8"
+    },
+    "val": {
+      "rows": 2800,
+      "unique_ids": 2800,
+      "id_sha256": "b145700a551b2c1e5062038fc226cbb96817588eaeaa496eabc0ff2495f6d972",
+      "unique_targets": 56,
+      "target_sha256": "2cab3eff875b28681e58895723ca63e55ba3b221740c99bf759ad5a9ac2827da"
+    },
+    "test": {
+      "rows": 16014,
+      "unique_ids": 16014,
+      "id_sha256": "706da7cec4fa056b04d81e6c5192cc0b63fda1d211a3556fa0336eb9cf636129",
+      "unique_targets": 85,
+      "target_sha256": "6735b1fd2728a625095087d17252c9a6007e2acfd3eb535dc881e4a3cac2100b"
+    }
+  },
+  "leakage_check": {
+    "tool": "oms data-manifest schema 3",
+    "manifest_name": "atom3d-psr-split-by-year",
+    "exact_decoy_id_overlap": false,
+    "target_id_overlap": false,
+    "checked_at": "2026-08-11"
+  }
+}
