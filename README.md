@@ -89,11 +89,11 @@ from graphwise raw sums. Individual pairs, triangles, and higher tuples are
 never materialized. The moments provide directional, anisotropic, chiral,
 third-order, and fourth-order geometry in node-linear memory.
 
-Each layer also builds degree-two Gaussian Mercer density moments. Their scalar
-kernel decays with receiver-source separation, so local `m1/m2`, angle-like
-pair correlations, and parity-odd chirality complement the segment-global
-order-four bank without constructing a neighbour graph or an `N x N` matrix.
-The local path is zero-gated at initialization.
+Each layer also builds degree-two Gaussian-Mercer density moments. Their
+positive low-rank kernel provides Gaussian-like soft spatial support, so local
+`m1/m2`, angle-like pair correlations, and parity-odd chirality complement the
+segment-global order-four bank without constructing a neighbour graph or an
+`N x N` matrix. The local path is zero-gated at initialization.
 
 ## Self-adjoint relation operator
 
