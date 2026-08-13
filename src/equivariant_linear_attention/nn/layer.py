@@ -95,6 +95,7 @@ class EdgeFreeELALayer(nn.Module):
         moment_rank: int,
         relation_width: int,
         num_charts: int,
+        num_local_charts: int = 0,
         residual_scale: float,
         eps: float,
     ) -> None:
@@ -122,6 +123,7 @@ class EdgeFreeELALayer(nn.Module):
             num_heads=num_heads,
             feature_width=relation_width,
             num_charts=num_charts,
+            num_local_charts=num_local_charts,
             eps=eps,
         )
         self.krylov = KrylovMixer(

@@ -73,6 +73,18 @@ def segment_mean(
     )
 
 
+def segment_softmax(
+    value: torch.Tensor, index: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    index = index.to(dtype=torch.long)
+    maximum = value.new_zeros((num_segments,)).scatter_reduce(
+        0, index, value, reduce="amax", include_self=False
+    )
+    shifted = torch.exp(value - maximum[index])
+    total = segment_sum(shifted, index, num_segments)
+    return shifted / total.clamp_min(torch.finfo(value.dtype).tiny)[index]
+
+
 def canonical_batch(
     batch: torch.Tensor | None,
     *,
@@ -623,6 +635,7 @@ __all__ = [
     "positive_feature",
     "segment_count",
     "segment_mean",
+    "segment_softmax",
     "segment_sum",
     "st_commutator_vector",
     "st_cross",

@@ -19,12 +19,58 @@ from .ops import (
     compact_stf3,
     compact_stf4,
     matrix_to_st,
+    segment_mean,
+    segment_softmax,
     segment_sum,
     st_cross,
     symmetric2_to_matrix,
     symmetric_monomials,
     work_dtype,
 )
+
+
+def greedy_farthest_seeds(
+    position: torch.Tensor,
+    index: torch.Tensor,
+    num_segments: int,
+    *,
+    num_seeds: int,
+    sharpness: float,
+    eps: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Soft farthest-point seeds, one spread set of chart anchors per segment.
+
+    A differentiable, O(3)-equivariant relaxation of greedy k-means++ seeding:
+    each seed is the soft-argmax-weighted mean of the positions farthest from
+    every seed chosen so far. Scores are invariant and normalized by the
+    segment's mean square radius, so the sharpness is scale-free; the weighted
+    mean of positions carries the rotation. Learned chart logits alone leave
+    charts clustered near the centroid, which caps the local kernel's
+    selectivity; these seeds supply the spatial spread instead.
+
+    Also returns the mean square distance from a node to its nearest seed,
+    which is the natural unit of chart spacing. Expressing the assignment
+    sharpness in that unit keeps the partition equally soft on compact and on
+    grossly expanded structures, instead of collapsing to a few hard cells
+    whenever a decoy is broken.
+    """
+
+    scale = segment_mean(
+        position.square().sum(dim=-1), index, num_segments
+    ).clamp_min(eps)[index]
+    seeds: list[torch.Tensor] = []
+    nearest2: torch.Tensor | None = None
+    for slot in range(num_seeds):
+        score = position.square().sum(dim=-1) if slot == 0 else nearest2
+        weight = segment_softmax(sharpness * score / scale, index, num_segments)
+        seed = segment_sum(weight[:, None] * position, index, num_segments)
+        seeds.append(seed)
+        distance2 = (position - seed[index]).square().sum(dim=-1)
+        nearest2 = (
+            distance2 if nearest2 is None else torch.minimum(nearest2, distance2)
+        )
+    spacing2 = segment_mean(nearest2, index, num_segments).clamp_min(eps)
+    return torch.stack(seeds, dim=1), spacing2
 
 
 @dataclass(frozen=True)
@@ -37,6 +83,10 @@ class GeometryContext:
     index: torch.Tensor
     num_segments: int
     counts: torch.Tensor
+    absolute: torch.Tensor
+    absolute_radius2: torch.Tensor
+    chart_seeds: torch.Tensor | None = None
+    chart_spacing2: torch.Tensor | None = None
 
     @classmethod
     def build(
@@ -46,6 +96,9 @@ class GeometryContext:
         *,
         num_segments: int,
         eps: float,
+        length_scale: float = 10.0,
+        num_seeds: int = 0,
+        seed_sharpness: float = 16.0,
     ) -> GeometryContext:
         centered, radius, normalized = centered_geometry(
             positions,
@@ -55,16 +108,61 @@ class GeometryContext:
         )
         basis_dtype = work_dtype(normalized)
         monomials = symmetric_monomials(normalized.to(dtype=basis_dtype))
+        absolute = centered / float(length_scale)
+        long_index = index.to(dtype=torch.long)
+        chart_seeds = None
+        chart_spacing2 = None
+        if num_seeds > 0:
+            # Seeds are a geometric prior, not a learned quantity: detaching
+            # keeps the soft-argmax construction out of the backward pass.
+            chart_seeds, chart_spacing2 = greedy_farthest_seeds(
+                absolute,
+                long_index,
+                num_segments,
+                num_seeds=num_seeds,
+                sharpness=seed_sharpness,
+                eps=eps,
+            )
+            chart_seeds = chart_seeds.detach()
+            chart_spacing2 = chart_spacing2.detach()
         return cls(
             positions=positions,
             centered=centered,
             normalized=normalized,
             monomials=monomials,
             radius=radius,
-            index=index.to(dtype=torch.long),
+            index=long_index,
             num_segments=num_segments,
-            counts=torch.bincount(index.to(dtype=torch.long), minlength=num_segments),
+            counts=torch.bincount(long_index, minlength=num_segments),
+            absolute=absolute,
+            absolute_radius2=absolute.square().sum(dim=-1),
+            chart_seeds=chart_seeds,
+            chart_spacing2=chart_spacing2,
         )
+
+
+def radial_invariants(geometry: GeometryContext, dtype: torch.dtype) -> torch.Tensor:
+    """Six invariant radial channels: unit-free shape plus absolute scale.
+
+    The absolute channels are bounded or log-slow: broken structures reach
+    per-node absolute radius^2 of ~5e4 (length-scale units), so a raw channel
+    would saturate downstream softmax gates before learning.
+    """
+
+    normalized2 = geometry.normalized.square().sum(dim=-1).to(dtype=dtype)
+    absolute2 = geometry.absolute_radius2.to(dtype=dtype)
+    absolute = torch.sqrt(absolute2 + 1e-12)
+    return torch.stack(
+        (
+            normalized2,
+            torch.log1p(normalized2),
+            normalized2 / (1.0 + normalized2),
+            torch.log1p(absolute2),
+            absolute2 / (1.0 + absolute2),
+            absolute / (1.0 + absolute),
+        ),
+        dim=-1,
+    )
 
 
 @dataclass(frozen=True)
@@ -285,7 +383,7 @@ class AdaptiveMomentBank(nn.Module):
         self.rank = rank
         self.eps = float(eps)
         self.content_weight = nn.Linear(scalar_width, rank)
-        self.radial_weight = nn.Linear(3, rank, bias=False)
+        self.radial_weight = nn.Linear(6, rank, bias=False)
         self.raw_temperature = nn.Parameter(torch.zeros(rank))
         self.register_buffer(
             "translation_target",
@@ -311,11 +409,7 @@ class AdaptiveMomentBank(nn.Module):
     def forward(
         self, scalar: torch.Tensor, geometry: GeometryContext
     ) -> MomentFeatures:
-        radius2 = geometry.normalized.square().sum(dim=-1)
-        radial = torch.stack(
-            (radius2, torch.log1p(radius2), radius2 / (1.0 + radius2)),
-            dim=-1,
-        )
+        radial = radial_invariants(geometry, scalar.dtype)
         temperature = torch.nn.functional.softplus(self.raw_temperature) + 0.25
         log_weight = (
             self.content_weight(scalar)
@@ -405,4 +499,6 @@ __all__ = [
     "MomentFeatures",
     "compact_centered_moments",
     "explicit_centered_moments",
+    "greedy_farthest_seeds",
+    "radial_invariants",
 ]

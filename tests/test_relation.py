@@ -4,6 +4,7 @@ import torch
 
 from equivariant_linear_attention.nn.geometry import GeometryContext
 from equivariant_linear_attention.nn.relation import (
+    LocalChartMercer,
     RelationMessage,
     SelfAdjointRelation,
     message_inner,
@@ -151,4 +152,143 @@ def test_atlas_assignment_is_rotation_invariant_and_metric_equivariant() -> None
         expected_metric,
         atol=4e-10,
         rtol=4e-10,
+    )
+
+
+def test_local_chart_mercer_matches_truncated_gaussian_pou_kernel() -> None:
+    generator = torch.Generator().manual_seed(211)
+    nodes, width, heads, charts = 9, 16, 2, 3
+    index = torch.tensor([0, 0, 0, 0, 0, 1, 1, 1, 1])
+    geometry = GeometryContext.build(
+        4.0 * torch.randn(nodes, 3, generator=generator, dtype=torch.float64),
+        index,
+        num_segments=2,
+        eps=1e-10,
+        length_scale=10.0,
+    )
+    state = _state(nodes, width, heads, generator)
+    local = LocalChartMercer(
+        scalar_width=width,
+        num_heads=heads,
+        num_charts=charts,
+        eps=1e-10,
+    ).double()
+    assignment, delta, gamma = local.charts(state, geometry)
+    feature = local.features(assignment, delta, gamma)
+    torch.testing.assert_close(feature, local(state, geometry))
+
+    for head in range(heads):
+        g = gamma[head]
+        for i in range(nodes):
+            for j in range(nodes):
+                if index[i] != index[j]:
+                    continue
+                expected = torch.zeros((), dtype=torch.float64)
+                for chart in range(charts):
+                    di = delta[i, head, chart]
+                    dj = delta[j, head, chart]
+                    z = 2.0 * g * di.dot(dj)
+                    expected = expected + (
+                        torch.sqrt(assignment[i, head, chart] + local.eps)
+                        * torch.sqrt(assignment[j, head, chart] + local.eps)
+                        * torch.exp(-g * (di.dot(di) + dj.dot(dj)))
+                        * (1.0 + z + 0.5 * z.square())
+                    )
+                actual = feature[i, head].dot(feature[j, head])
+                torch.testing.assert_close(actual, expected, atol=1e-12, rtol=1e-12)
+
+
+def test_relation_with_local_sector_is_symmetric_psd() -> None:
+    generator = torch.Generator().manual_seed(213)
+    nodes, width, heads = 8, 16, 2
+    index = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+    geometry = GeometryContext.build(
+        5.0 * torch.randn(nodes, 3, generator=generator, dtype=torch.float64),
+        index,
+        num_segments=2,
+        eps=1e-10,
+    )
+    state = _state(nodes, width, heads, generator)
+    relation = SelfAdjointRelation(
+        scalar_width=width,
+        num_heads=heads,
+        feature_width=5,
+        num_charts=3,
+        num_local_charts=4,
+        eps=1e-10,
+    ).double()
+    factors = relation.build(state, geometry)
+    assert factors.local_feature is not None
+    assert factors.mixture.shape[-1] == 4
+    for graph in range(2):
+        selected = index == graph
+        for head in range(heads):
+            feature = factors.feature[selected, head]
+            operator = feature @ feature.T
+            torch.testing.assert_close(operator, operator.T)
+            eigenvalues = torch.linalg.eigvalsh(operator)
+            assert eigenvalues.min() >= -1e-10
+
+
+def test_chart_seeds_are_equivariant_and_spread() -> None:
+    generator = torch.Generator().manual_seed(217)
+    nodes, seeds = 400, 16
+    index = torch.zeros(nodes, dtype=torch.long)
+    direction = torch.randn(nodes, 3, generator=generator, dtype=torch.float64)
+    direction = direction / direction.norm(dim=-1, keepdim=True)
+    radius = 20.0 * torch.rand(nodes, generator=generator, dtype=torch.float64) ** (
+        1.0 / 3.0
+    )
+    position = radius[:, None] * direction
+
+    reference = GeometryContext.build(
+        position, index, num_segments=1, eps=1e-10, num_seeds=seeds
+    )
+    q, _ = torch.linalg.qr(torch.randn(3, 3, generator=generator, dtype=torch.float64))
+    if torch.linalg.det(q) > 0:
+        q[:, 0].neg_()
+    moved = GeometryContext.build(
+        position @ q.T + torch.tensor([4.0, -7.0, 2.0], dtype=torch.float64),
+        index,
+        num_segments=1,
+        eps=1e-10,
+        num_seeds=seeds,
+    )
+    assert reference.chart_seeds is not None and moved.chart_seeds is not None
+    torch.testing.assert_close(
+        moved.chart_seeds, reference.chart_seeds @ q.T, atol=1e-9, rtol=1e-9
+    )
+
+    permutation = torch.randperm(nodes, generator=generator)
+    permuted = GeometryContext.build(
+        position[permutation], index, num_segments=1, eps=1e-10, num_seeds=seeds
+    )
+    torch.testing.assert_close(
+        permuted.chart_seeds, reference.chart_seeds, atol=1e-9, rtol=1e-9
+    )
+
+    # The seeds exist to spread charts through the structure: learned logits
+    # alone left chart centres clustered near the centroid.
+    centre = reference.chart_seeds.mean(dim=1, keepdim=True)
+    dispersion = (
+        (reference.chart_seeds - centre).square().sum(dim=-1).mean().sqrt()
+    )
+    structure = reference.absolute.square().sum(dim=-1).mean().sqrt()
+    assert dispersion > 0.5 * structure
+
+
+def test_chart_seeds_stay_inside_their_own_segment() -> None:
+    generator = torch.Generator().manual_seed(219)
+    index = torch.tensor([0] * 200 + [1] * 200)
+    first = torch.randn(200, 3, generator=generator, dtype=torch.float64)
+    second = 3.0 * torch.randn(200, 3, generator=generator, dtype=torch.float64)
+    geometry = GeometryContext.build(
+        torch.cat((first, second)), index, num_segments=2, eps=1e-10, num_seeds=8
+    )
+    assert geometry.chart_seeds is not None
+    isolated = GeometryContext.build(first, torch.zeros(200, dtype=torch.long),
+                                     num_segments=1, eps=1e-10, num_seeds=8)
+    assert isolated.chart_seeds is not None
+    torch.testing.assert_close(
+        geometry.chart_seeds[0], isolated.chart_seeds[0], atol=1e-9, rtol=1e-9
     )

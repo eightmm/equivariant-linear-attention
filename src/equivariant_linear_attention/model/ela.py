@@ -44,6 +44,8 @@ class ELAConfig:
     features: ELAFeatures = field(default_factory=ELAFeatures)
     update_positions: bool = False
     max_coordinate_step: float = 0.25
+    num_local_charts: int = 16
+    length_scale: float = 10.0
 
     def __post_init__(self) -> None:
         _positive_integer("width", self.width)
@@ -55,6 +57,13 @@ class ELAConfig:
         if not isinstance(self.update_positions, bool):
             raise TypeError("update_positions must be a bool")
         _positive_real("max_coordinate_step", self.max_coordinate_step)
+        if isinstance(self.num_local_charts, bool) or not isinstance(
+            self.num_local_charts, int
+        ):
+            raise TypeError("num_local_charts must be an integer")
+        if self.num_local_charts < 0:
+            raise ValueError("num_local_charts must be non-negative")
+        _positive_real("length_scale", self.length_scale)
         if self.input_layout.max_degree > 2 or self.output_layout.max_degree > 2:
             raise ValueError("persistent input and output irreps must have l<=2")
 
@@ -102,11 +111,15 @@ class ELAConfig:
             "coordinate_basis": "35d_compact_symmetric_degree_0_to_4",
             "krylov_basis": "three_term_graphwise_irrep_orthogonal",
             "coordinate_manifold": "natural_gradient_SE3_quotient_plus_shape",
+            "local_relation": "chart_recentered_degree2_truncated_gaussian_mercer",
+            "local_chart_seeding": "equivariant_soft_farthest_point",
             "explicit_edges": False,
             "pair_state": False,
             "derived_num_heads": self.num_heads,
             "derived_moment_rank": self.moment_rank,
             "derived_num_charts": self.num_charts,
+            "num_local_charts": self.num_local_charts,
+            "length_scale": self.length_scale,
         }
 
 
@@ -124,6 +137,8 @@ class ELA(nn.Module):
         order_dim: int = 0,
         update_positions: bool = False,
         max_coordinate_step: float = 0.25,
+        num_local_charts: int = 16,
+        length_scale: float = 10.0,
     ) -> None:
         super().__init__()
         self.config = ELAConfig(
@@ -134,6 +149,8 @@ class ELA(nn.Module):
             features=ELAFeatures(condition_dim=condition_dim, order_dim=order_dim),
             update_positions=update_positions,
             max_coordinate_step=max_coordinate_step,
+            num_local_charts=num_local_charts,
+            length_scale=length_scale,
         )
         config = self.config
         self.input_projection = InputProjection(
@@ -154,6 +171,7 @@ class ELA(nn.Module):
                     moment_rank=config.moment_rank,
                     relation_width=config.relation_width,
                     num_charts=config.num_charts,
+                    num_local_charts=config.num_local_charts,
                     residual_scale=block_scale,
                     eps=config.eps,
                 )
@@ -186,6 +204,8 @@ class ELA(nn.Module):
             order_dim=config.features.order_dim,
             update_positions=config.update_positions,
             max_coordinate_step=config.max_coordinate_step,
+            num_local_charts=config.num_local_charts,
+            length_scale=config.length_scale,
         )
 
     @property
@@ -269,6 +289,8 @@ class ELA(nn.Module):
                 interactions,
                 num_segments=num_interactions,
                 eps=self.config.eps,
+                length_scale=self.config.length_scale,
+                num_seeds=self.config.num_local_charts,
             )
             for layer in self.layers:
                 state = layer(state, geometry).state
@@ -280,6 +302,8 @@ class ELA(nn.Module):
                     interactions,
                     num_segments=num_interactions,
                     eps=self.config.eps,
+                    length_scale=self.config.length_scale,
+                    num_seeds=self.config.num_local_charts,
                 )
                 output = layer(state, geometry)
                 state = output.state
