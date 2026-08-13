@@ -74,7 +74,8 @@ def build_local_support(
     source = torch.cat(source_parts, dim=0)
     receiver = torch.cat(receiver_parts, dim=0)
     displacement = coordinate[source] - coordinate[receiver]
-    distance = torch.linalg.vector_norm(displacement, dim=-1)
+    norm_eps = max(float(eps), torch.finfo(coordinate.dtype).eps)
+    distance = torch.sqrt(displacement.square().sum(dim=-1) + norm_eps * norm_eps)
     return LocalSupport(source, receiver, displacement, distance, scale)
 
 

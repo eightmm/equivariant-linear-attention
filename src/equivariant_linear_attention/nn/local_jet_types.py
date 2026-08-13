@@ -24,7 +24,7 @@ class LocalFeatureJet:
 
 def decode_local_jet(
     coefficient: torch.Tensor,
-    factor: torch.Tensor,
+    system: torch.Tensor,
     scale: torch.Tensor,
     *,
     eps: float,
@@ -54,9 +54,13 @@ def decode_local_jet(
     wavelet_hessian = matrix_to_st(
         normalized_hessian[:, :-1] - normalized_hessian[:, 1:]
     )
-    diagonal = factor.diagonal(dim1=-2, dim2=-1).clamp_min(eps)
-    ratio = (diagonal.amax(dim=-1) / diagonal.amin(dim=-1)).square()
-    confidence = torch.exp(-torch.log1p((ratio - 1.0).clamp_min(0.0)) / 8.0)
+
+    trace = system.diagonal(dim1=-2, dim2=-1).sum(dim=-1)
+    frobenius_square = system.square().sum(dim=(-2, -1))
+    dimension = float(system.shape[-1])
+    confidence = (
+        trace.square() / (dimension * frobenius_square + eps)
+    ).clamp(0.0, 1.0)
     return LocalFeatureJet(
         bounded_scalar(value, eps),
         unit_ball(gradient, eps),

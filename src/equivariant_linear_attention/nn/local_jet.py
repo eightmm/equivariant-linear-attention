@@ -35,7 +35,7 @@ class ReproducingLocalJet(nn.Module):
         self.probe = nn.Linear(scalar_width, probe_rank, bias=False)
         desired = torch.linspace(0.35, 0.95, num_scales)
         self.raw_scale = nn.Parameter(_logit((desired - 0.15) / 0.85))
-        self.raw_ridge = nn.Parameter(torch.full((num_scales,), -8.0))
+        self.raw_ridge = nn.Parameter(torch.full((num_scales,), -2.0))
 
     def forward(
         self,
@@ -75,9 +75,10 @@ class ReproducingLocalJet(nn.Module):
             + self.eps
         )
         identity = torch.eye(_BASIS_SIZE, device=gram.device, dtype=gram.dtype)
-        factor = torch.linalg.cholesky(gram + ridge[..., None, None] * identity)
+        system = gram + ridge[..., None, None] * identity
+        factor = torch.linalg.cholesky(system)
         coefficient = torch.cholesky_solve(right, factor)
-        return decode_local_jet(coefficient, factor, scale, eps=self.eps)
+        return decode_local_jet(coefficient, system, scale, eps=self.eps)
 
 
 __all__ = ["ReproducingLocalJet"]
