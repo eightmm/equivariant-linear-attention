@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+
 from equivariant_linear_attention.nn.geometry import GeometryContext
 from equivariant_linear_attention.nn.local_jet import ReproducingLocalJet
 from equivariant_linear_attention.nn.local_support import build_local_support
