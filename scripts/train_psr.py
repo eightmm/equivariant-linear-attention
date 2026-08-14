@@ -71,6 +71,16 @@ def parse_args() -> argparse.Namespace:
         help="chart count of the local chart-recentered Mercer relation;"
         " 0 disables the sector and leaves absolute-scale features only",
     )
+    parser.add_argument(
+        "--local-points",
+        type=int,
+        default=0,
+        help="neighbours per node for the NON-CANONICAL pointwise local-jet"
+        " branch; 0 disables it and keeps the model edge-free. Above 0 the model"
+        " builds a transient kNN support (inferred edges, gather/scatter, O(kN)"
+        " memory, per-segment Python loop) and is a hard-cutoff upper-bound"
+        " diagnostic only; see docs/LOCALITY_TRACK.md",
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--limit", type=int, default=0, help="graphs per split (0 = all)")
@@ -283,6 +293,7 @@ def main() -> None:
         density_bandwidths=tuple(
             float(value) for value in args.density_bandwidths.split(",") if value
         ),
+        local_points=args.local_points,
     ).to(args.device)
     runner = torch.compile(model, dynamic=True) if args.compile else model
     optimizer = torch.optim.AdamW(

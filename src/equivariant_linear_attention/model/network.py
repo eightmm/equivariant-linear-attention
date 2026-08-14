@@ -12,6 +12,7 @@ from ..graph import ELAGraph
 from ..irreps import IrrepLayout, split_irreps
 from ..nn.geometry import GeometryContext, chart_density
 from ..nn.layer import EdgeFreeELALayer
+from ..nn.local_support import LocalSupport, build_local_support
 from ..nn.manifold import QuotientCoordinateUpdate
 from ..nn.ops import interaction_index, segment_count, segment_sum
 from ..nn.state import InputProjection, OutputProjection, ParityState
@@ -36,6 +37,7 @@ class ELA(nn.Module):
         length_scale: float = 10.0,
         density_bandwidths: tuple[float, ...] = (),
         density_charts: int = 16,
+        local_points: int = 0,
     ) -> None:
         super().__init__()
         self.config = ELAConfig(
@@ -50,6 +52,7 @@ class ELA(nn.Module):
             length_scale=length_scale,
             density_bandwidths=tuple(density_bandwidths),
             density_charts=density_charts,
+            local_points=local_points,
         )
         config = self.config
         self.input_projection = InputProjection(
@@ -73,6 +76,10 @@ class ELA(nn.Module):
                     num_local_charts=config.num_local_charts,
                     residual_scale=block_scale,
                     eps=config.eps,
+                    local_points=config.local_points,
+                    local_probe_rank=config.local_probe_rank,
+                    local_scales=config.local_scales,
+                    local_chunk_size=config.local_chunk_size,
                 )
                 for _ in range(config.depth)
             ]
@@ -115,6 +122,7 @@ class ELA(nn.Module):
             length_scale=config.length_scale,
             density_bandwidths=config.density_bandwidths,
             density_charts=config.density_charts,
+            local_points=config.local_points,
         )
 
     @property
@@ -178,6 +186,18 @@ class ELA(nn.Module):
             state.odd_tensor,
         )
 
+    def _local_support(self, geometry: GeometryContext) -> LocalSupport | None:
+        """Transient kNN support for the non-canonical local-jet branch."""
+
+        if not self.config.uses_local_jet:
+            return None
+        return build_local_support(
+            geometry,
+            max_points=self.config.local_points,
+            chunk_size=self.config.local_chunk_size,
+            eps=self.config.eps,
+        )
+
     def forward(self, graph: ELAGraph) -> ELAGraph:
         if not isinstance(graph, ELAGraph):
             raise TypeError("ELA accepts exactly one ELAGraph")
@@ -207,8 +227,9 @@ class ELA(nn.Module):
         total_delta = torch.zeros_like(positions)
 
         if self.coordinate_update is None:
-            # Coordinates are immutable, so their compact monomial basis and all
-            # component metadata are shared by every layer.
+            # Coordinates are immutable, so their compact monomial basis, all
+            # component metadata, and the transient local support are shared by
+            # every layer.
             geometry = GeometryContext.build(
                 positions,
                 interactions,
@@ -217,8 +238,9 @@ class ELA(nn.Module):
                 length_scale=self.config.length_scale,
                 num_seeds=self.config.num_local_charts,
             )
+            support = self._local_support(geometry)
             for layer in self.layers:
-                state = layer(state, geometry).state
+                state = layer(state, geometry, support).state
         else:
             stage_step = self.config.max_coordinate_step / self.config.depth
             for layer in self.layers:
@@ -230,7 +252,7 @@ class ELA(nn.Module):
                     length_scale=self.config.length_scale,
                     num_seeds=self.config.num_local_charts,
                 )
-                output = layer(state, geometry)
+                output = layer(state, geometry, self._local_support(geometry))
                 state = output.state
                 delta = self.coordinate_update(
                     state,

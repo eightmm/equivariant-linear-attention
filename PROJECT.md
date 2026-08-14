@@ -36,6 +36,10 @@ translation/rotation/shape decomposition.
 
 ## Non-negotiable invariants
 
+These hold for the canonical configuration, which is the default one
+(`local_points=0`). They are what the architecture is for, and no default may
+be changed in a way that breaks them.
+
 - no explicit or inferred edges;
 - no dense `N x N` matrix;
 - no pair or tuple hidden state;
@@ -45,6 +49,25 @@ translation/rotation/shape decomposition.
 - exact interaction-component isolation;
 - node-linear memory at fixed representation order;
 - one PyTorch implementation without PyG, DGL, Triton, or custom kernels.
+
+## Non-canonical diagnostic path
+
+`local_points > 0` enables a pointwise local-jet branch that is explicitly
+**not** part of the architecture. It exists for one purpose: to measure the
+hard-cutoff upper bound that the edge-free sectors are trying to reach.
+
+It breaks the invariants above and the breakage is not repairable within them.
+Each layer's support is a bounded k-nearest-neighbour set built by a
+per-segment `cdist` and `topk`, which means inferred edges, a sparse
+gather/scatter path, and `O(kN)` transient pair memory. The per-segment Python
+loop also defeats batching, so it is slow; that is not being fixed, because
+speed is not what the path is for.
+
+Nothing is constructed when it is off, so the default model's parameter set is
+exactly the canonical one. `describe()` reports `canonical_edge_free_path` and
+`transient_local_support` so a checkpoint can never be silently mistaken for
+the canonical model. Results produced with it must be labelled as such and must
+not be reported as edge-free ELA results. See `docs/LOCALITY_TRACK.md`.
 
 ## Current empirical validation
 

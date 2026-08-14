@@ -36,6 +36,16 @@ def _positive_real(name: str, value: object) -> float:
 
 @dataclass(frozen=True, slots=True)
 class ELAConfig:
+    """Public configuration.
+
+    ``local_points`` selects the non-canonical pointwise local-jet branch and
+    defaults to zero, which disables it. At zero the model is exactly the
+    canonical edge-free operator; above zero each layer builds a transient
+    bounded k-nearest-neighbour support, which is an inferred edge set and a
+    gather/scatter path. It exists to measure the hard-cutoff upper bound, not
+    as a production path. See ``docs/LOCALITY_TRACK.md``.
+    """
+
     input_irreps: str
     output_irreps: str = "1x0e"
     width: int = 128
@@ -47,6 +57,7 @@ class ELAConfig:
     length_scale: float = 10.0
     density_bandwidths: tuple[float, ...] = ()
     density_charts: int = 16
+    local_points: int = 0
 
     def __post_init__(self) -> None:
         _positive_integer("width", self.width)
@@ -66,6 +77,7 @@ class ELAConfig:
             _positive_real("density_bandwidth", bandwidth)
         if self.density_bandwidths:
             _positive_integer("density_charts", self.density_charts)
+        _non_negative_integer("local_points", self.local_points)
         if self.input_layout.max_degree > 2 or self.output_layout.max_degree > 2:
             raise ValueError("persistent input and output irreps must have l<=2")
 
@@ -98,6 +110,22 @@ class ELAConfig:
         return max(2, min(8, self.width // 24))
 
     @property
+    def uses_local_jet(self) -> bool:
+        return self.local_points > 0
+
+    @property
+    def local_probe_rank(self) -> int:
+        return max(2, min(8, self.width // 32))
+
+    @property
+    def local_scales(self) -> int:
+        return 3
+
+    @property
+    def local_chunk_size(self) -> int:
+        return 128
+
+    @property
     def eps(self) -> float:
         return 1e-8
 
@@ -123,6 +151,12 @@ class ELAConfig:
             "num_local_charts": self.num_local_charts,
             "length_scale": self.length_scale,
             "density_bandwidths": self.density_bandwidths,
+            "canonical_edge_free_path": not self.uses_local_jet,
+            "transient_local_support": self.uses_local_jet,
+            "local_points": self.local_points,
+            "local_support": (
+                "transient_bounded_wendland_knn" if self.uses_local_jet else "none"
+            ),
         }
 
 

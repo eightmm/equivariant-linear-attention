@@ -47,28 +47,54 @@ scale-only ablation is available.
 ## Deliberately excluded
 
 Branch `agent/local-geometry-mercer`, draft PR #7, holds a second and
-incompatible attack on the same problem. It is kept as an experiment
-track and is not a merge candidate.
-
-Its later half (`29dba5e`..`3cef4f9`) builds a genuine compactly
-supported local geometry: per-segment `cdist` plus `topk` produce a kNN
+incompatible attack on the same problem. Its later half
+(`29dba5e`..`3cef4f9`) builds a genuine compactly supported local
+geometry: per-segment `cdist` plus `topk` produce a kNN
 `(source, receiver)` support, and on top of it sit Wendland C2 windows,
 central cumulants through order four, a reproducing local jet, and a
 local body algebra. It is conceptually richer than the Mercer sector and
 has real hard cutoffs.
 
-It is excluded because a kNN support is an edge list, which breaks three
-non-negotiable invariants at once: no explicit or inferred edges, no
-sparse gather/scatter path, and node-linear memory (the support is
-`O(kN)` pairs). The per-segment Python loop also defeats batching. There
-is no contract-preserving adaptation of it; adopting it would be a
-decision to change the contract. Its value here is as an upper bound: it
-measures what a hard cutoff buys, which is the number the edge-free
-sectors have to chase.
+It cannot be the canonical path, because a kNN support is an edge list,
+which breaks three non-negotiable invariants at once: no explicit or
+inferred edges, no sparse gather/scatter path, and node-linear memory
+(the support is `O(kN)` pairs). The per-segment Python loop also defeats
+batching. There is no contract-preserving adaptation of it.
+
+It is therefore integrated behind `local_points`, default `0`, and
+declared non-canonical in `PROJECT.md`. At the default nothing is
+constructed: a default-config model has the same 202 `state_dict`
+tensors, the same 109641 parameters, and bit-identical seeded forward
+output as before the integration. Its value is as an upper bound, which
+is the number the edge-free sectors have to chase; `train_psr.py
+--local-points K` makes that measurable.
 
 The model refactor on that branch (`model/config.py`, `model/network.py`,
-`nn/equivariant_ffn.py`) is excluded with it, having arrived inside the
-same phase entangled with pointwise-support caching.
+`nn/equivariant_ffn.py`) came with it, re-derived from this repository's
+`ela.py` rather than taken as-is, and landed as a separate
+behavior-preserving commit.
+
+### What was not taken
+
+The branch head is red, and three artefacts there are abandoned
+work-in-progress rather than finished work.
+
+- `nn/local_projection_v2.py` reads `body.fourth_scalar`, which
+  `LocalBodyFeatures` does not define. Nothing imports it, so it has
+  never executed. `local_projection.py` is the live implementation and
+  is what was ported; it runs correctly at every width tried, including
+  the default `width=128` where `moment_rank=8` and `body_rank=6`
+  differ, which is the case the abandoned rewrite was meant to address.
+- `tests/test_local_projection.py` imports `LocalCumulants`, a type
+  that was never implemented, and constructs it with a `scale` field
+  that `MomentFeatures` does not have. Patched to the real type it then
+  fails against `local_projection.py` on an `eps` argument, because it
+  was written for the v2 signature. It has never run.
+- `contract()` on that branch renames `relative_moment_order` to
+  `global_relative_moment_order`, which breaks `test_api.py`. The key
+  is kept unrenamed here; the new keys are additive only.
+
+The last coherent state of the branch is `8f5f9d5`.
 
 ## Deferred
 

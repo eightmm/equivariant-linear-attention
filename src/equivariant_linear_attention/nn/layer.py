@@ -10,6 +10,9 @@ from torch import nn
 from .closure import EquivariantClosure
 from .equivariant_ffn import EquivariantFeedForward
 from .geometry import AdaptiveMomentBank, GeometryContext, MomentFeatures
+from .local_closure import LocalEquivariantClosure
+from .local_geometry import PointwiseLocalGeometry
+from .local_support import LocalSupport
 from .relation import KrylovMixer, SelfAdjointRelation, orthogonalize
 from .state import EquivariantRMSNorm, ParityState
 
@@ -22,7 +25,13 @@ class LayerOutput:
 
 
 class EdgeFreeELALayer(nn.Module):
-    """Compact moments + one fused PSD relation + orthogonal Krylov + closure."""
+    """Compact moments + one fused PSD relation + orthogonal Krylov + closure.
+
+    The optional pointwise local-jet branch is off unless ``local_points`` is
+    positive. When it is off nothing is constructed, so the parameter set is
+    exactly the canonical edge-free layer's; see ``docs/LOCALITY_TRACK.md`` for
+    why that branch is non-canonical.
+    """
 
     def __init__(
         self,
@@ -35,11 +44,47 @@ class EdgeFreeELALayer(nn.Module):
         num_local_charts: int = 0,
         residual_scale: float,
         eps: float,
+        local_points: int = 0,
+        local_probe_rank: int | None = None,
+        local_scales: int = 3,
+        local_chunk_size: int = 128,
     ) -> None:
         super().__init__()
         if scalar_width % num_heads:
             raise ValueError("scalar_width must be divisible by num_heads")
         self.eps = float(eps)
+        self.local_points = int(local_points)
+        if self.local_points > 0:
+            probe_rank = (
+                max(2, min(8, scalar_width // 32))
+                if local_probe_rank is None
+                else int(local_probe_rank)
+            )
+            self.local_norm = EquivariantRMSNorm(
+                scalar_width=scalar_width,
+                num_heads=num_heads,
+                eps=eps,
+            )
+            self.local_geometry = PointwiseLocalGeometry(
+                scalar_width=scalar_width,
+                moment_rank=moment_rank,
+                probe_rank=probe_rank,
+                num_scales=local_scales,
+                max_points=self.local_points,
+                chunk_size=local_chunk_size,
+                eps=eps,
+            )
+            self.local_closure = LocalEquivariantClosure(
+                scalar_width=scalar_width,
+                num_heads=num_heads,
+                moment_rank=moment_rank,
+                probe_rank=probe_rank,
+                num_scales=local_scales,
+                eps=eps,
+            )
+            self.local_scale = nn.Parameter(
+                torch.tensor(max(0.01, 0.25 * float(residual_scale)))
+            )
         self.attention_norm = EquivariantRMSNorm(
             scalar_width=scalar_width,
             num_heads=num_heads,
@@ -82,7 +127,18 @@ class EdgeFreeELALayer(nn.Module):
         self.attention_scale = nn.Parameter(torch.tensor(float(residual_scale)))
         self.ffn_scale = nn.Parameter(torch.tensor(float(residual_scale)))
 
-    def forward(self, state: ParityState, geometry: GeometryContext) -> LayerOutput:
+    def forward(
+        self,
+        state: ParityState,
+        geometry: GeometryContext,
+        support: LocalSupport | None = None,
+    ) -> LayerOutput:
+        if self.local_points > 0:
+            local_state = self.local_norm(state)
+            local = self.local_geometry(local_state.even_scalar, geometry, support)
+            state = state.add(
+                self.local_closure(local_state, local).scale(self.local_scale)
+            )
         normalized = self.attention_norm(state)
         moments = self.moments(normalized.even_scalar, geometry)
         value, content_feature = self.relation.project(normalized)

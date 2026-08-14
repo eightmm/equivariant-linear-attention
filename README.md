@@ -167,6 +167,11 @@ See [the mathematical architecture](docs/ARCHITECTURE.md).
 Current real-data evidence, including the ATOM3D PSR comparison and its
 limitations, is recorded in [PSR results](docs/PSR_RESULTS.md).
 
-How contact-scale locality entered the edge-free core, what was excluded to
-keep it edge-free, and what is still open is recorded in
-[the locality track](docs/LOCALITY_TRACK.md).
+How contact-scale locality entered the edge-free core, and what is still open,
+is recorded in [the locality track](docs/LOCALITY_TRACK.md).
+
+`local_points` enables a non-canonical pointwise local-jet branch that builds a
+transient kNN support. It is off by default, it is not edge-free, and it exists
+only to measure the hard-cutoff upper bound; `describe()` reports
+`canonical_edge_free_path` so such a model cannot be mistaken for the canonical
+one.
