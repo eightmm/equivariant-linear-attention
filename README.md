@@ -166,3 +166,7 @@ See [the mathematical architecture](docs/ARCHITECTURE.md).
 
 Current real-data evidence, including the ATOM3D PSR comparison and its
 limitations, is recorded in [PSR results](docs/PSR_RESULTS.md).
+
+How contact-scale locality entered the edge-free core, what was excluded to
+keep it edge-free, and what is still open is recorded in
+[the locality track](docs/LOCALITY_TRACK.md).

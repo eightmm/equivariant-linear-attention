@@ -77,11 +77,82 @@ $$
 35=1+3+6+10+15.
 $$
 
-Neither absolute coordinates nor the segment radius re-enters any
-feature, so with frozen coordinates the represented function is exactly
-invariant, per segment, to any similarity transform `x -> s R x + t`
-with `R` orthogonal and `s > 0` (scale invariance up to the epsilon in
-the radius).
+These monomials are unit-free and carry only the shape of a segment.
+Absolute length is supplied separately, because RMS normalization alone
+destroys it and the contact-scale sectors need it. The context also
+carries centred coordinates in fixed length-scale units,
+
+$$
+a_i=\tilde x_i/\lambda,
+\qquad
+\lambda=10\ \text{angstrom by default},
+$$
+
+and the radial gate of every learned bank reads six invariant channels,
+three unit-free and three absolute:
+
+$$
+\rho_i=\Big[
+\lVert\hat x_i\rVert^2,\;
+\log(1+\lVert\hat x_i\rVert^2),\;
+\tfrac{\lVert\hat x_i\rVert^2}{1+\lVert\hat x_i\rVert^2},\;
+\log(1+\lVert a_i\rVert^2),\;
+\tfrac{\lVert a_i\rVert^2}{1+\lVert a_i\rVert^2},\;
+\tfrac{\lVert a_i\rVert}{1+\lVert a_i\rVert}
+\Big].
+$$
+
+The absolute channels are bounded or logarithmic by construction. A
+badly broken structure reaches per-node `||a||^2` of order `5e4`, which a
+raw channel would drive into saturated softmax gates before any learning
+happened.
+
+The context optionally also builds `G` chart anchors per segment by
+`greedy_farthest_seeds`, a differentiable O(3)-equivariant relaxation of
+greedy `k-means++` seeding: seed `g` is the soft-argmax-weighted mean of
+the positions farthest from all seeds already chosen. Scores are
+invariant and divided by the segment mean square radius, so the
+sharpness is scale-free while the weighted mean of positions carries the
+rotation. The seeds are detached, being a geometric prior rather than a
+learned quantity. The routine also returns the mean square distance from
+a node to its nearest seed, which is the natural unit of chart spacing.
+
+With frozen coordinates the represented function is therefore exactly
+invariant, per segment, to `x -> R x + t` with `R` orthogonal, and
+equivariant under node permutation. It is deliberately **not** invariant
+to a uniform dilation `x -> s x` any more: that invariance held only
+while nothing read `a`, and that is what made contact-scale locality
+inexpressible. Absolute length now enters by three separate paths, so
+recovering the earlier similarity-invariant operator exactly requires
+closing all of them: zero the three absolute columns of every radial
+weight, set `num_local_charts = 0` (the local sector measures `d` and
+`gamma` in length-scale units regardless of the radial gate, and it is on
+by default), and leave `density_bandwidths` empty, which is the default.
+
+### Soft neighbour-count channel
+
+`chart_density` is an optional invariant input channel, one scalar per
+requested angstrom bandwidth, injected into the initial invariant context
+through a zero-initialized projection so it must earn its use. It is the
+row sum of the chart-recentered kernel of section 5 built on
+geometry-only charts, minus the node's own diagonal term. Because that
+kernel is a feature inner product, the row sum is one segment reduction,
+
+$$
+\sum_{j\ne i}K(i,j)
+=\big\langle\Phi_i,\textstyle\sum_j\Phi_j\big\rangle-\lVert\Phi_i\rVert^2,
+$$
+
+so the channel costs `O(N G)` rather than the `O(N^2)` of a dense
+neighbour count. It is reported as `log(1 + .)`.
+
+The channel is a stand-in for the offline dense neighbour counts used by
+the `element-local` PSR diagnostic, and it does not yet reproduce them.
+A Gaussian proxies a hard cutoff count only near `sigma` of 2 to 2.5
+angstrom, and the recentered expansion cannot reach there: its envelope
+suppresses any node farther than about `sigma` from its chart centre, so
+the bandwidth is floored by the chart radius, and the seeding degenerates
+above roughly 32 charts instead of tiling more finely.
 
 ## 4. Exact separable relative moments through order four
 
@@ -141,8 +212,9 @@ maps of section 7.
 
 ## 5. One self-adjoint PSD relation operator
 
-Three relations are expressed as explicit Gram factorizations and fused
-into a single factor.
+Four relations are expressed as explicit Gram factorizations and fused
+into a single factor. The fourth, the local sector, is optional and
+disabled by `num_local_charts = 0`.
 
 ### Content Gram
 
@@ -228,24 +300,107 @@ $$
 symmetric, PSD, and rank-bounded by the chart count. The node metric
 `G_i = sum_k A_ik G_k` is exported to the coordinate update.
 
+### Chart-recentered local Mercer sector
+
+The Mercer sector above expands at the segment centroid, and that caps
+how local it can be. The degree-`k` truncation of `exp(2 gamma x.y)` is
+only a kernel approximation while `2 gamma |x||y|` stays small; with `x`
+measured from the centroid, `|x|` is of order the segment radius `R`, so
+the usable bandwidth obeys `sigma = 1/sqrt(2 gamma) >~ R`. A 5 angstrom
+kernel on a 50 angstrom segment is not merely inaccurate, it is outside
+the truncation's domain, where the polynomial grows instead of decaying.
+
+The local sector removes that lock by expanding at per-head soft chart
+centres instead. Invariant logits, the head offset, and a seed anchor in
+units of chart spacing give a first assignment; its mass-weighted mean is
+a first centre; a second pass refines assignment and centre against the
+distance actually achieved:
+
+$$
+\ell_{ihg}=W h_i+W_\rho\rho_i+o_{hg}
+-\kappa_h\frac{\lVert a_i-s_{g(i)}\rVert^2}{\bar s^2_{g(i)}},
+\qquad
+c_{hg}=\frac{\sum_i b_{ihg}a_i}{\sum_i b_{ihg}},
+$$
+
+with `b = softmax(l)` over charts, `s` the detached farthest-point seeds
+of section 3, and `sbar^2` the chart spacing. Writing `n` for the chart
+mass of the first pass, the second pass is
+
+$$
+b^{(1)}=\mathrm{softmax}\Big(
+\ell-\tau_h\lVert a_i-c^{(0)}_{hg}\rVert^2
+-\tfrac14\log n^{(0)}_{hg}\Big),
+$$
+
+which sharpens each chart against the distance actually achieved and
+mildly discourages one chart from absorbing the segment; `c^(1)` is then
+recomputed from `b^(1)`. Expressing the anchor in
+spacing units rather than absolute distance keeps the partition equally
+soft on compact and on grossly expanded structures; anchoring at all is
+what stops the charts from collapsing, since near-uniform learned logits
+put every soft centre back at the centroid.
+
+Writing `d_{ihg} = a_i - c_{hg}` and `gamma_h = softplus(.) + 0.05`, the
+sector feature over the complete degree-two symmetric Cartesian basis is
+
+$$
+\Phi^l_{i,h,g}
+=\sqrt{b_{ihg}}\;
+e^{-\gamma_h\lVert d_{ihg}\rVert^2}
+\sqrt{\frac{(2\gamma_h)^{k}}{k!}}
+\sqrt{\binom{k}{k_x\,k_y\,k_z}}\;
+\psi_{\le2}(d_{ihg})\in\mathbb R^{10},
+$$
+
+so the induced pair kernel is
+
+$$
+K^{\mathrm{local}}_{ij}
+=\sum_g\sqrt{b_{ig}b_{jg}}\;
+e^{-\gamma(\lVert d_{ig}\rVert^2+\lVert d_{jg}\rVert^2)}
+\Big[1+2\gamma\,d_{ig}\!\cdot\!d_{jg}+2\gamma^2(d_{ig}\!\cdot\!d_{jg})^2\Big].
+$$
+
+Because `|d|` scales with the chart radius rather than the segment
+radius, the same degree-two truncation stays valid at bandwidths far
+below `R`. Initial bandwidths are spread over `sigma` in `0.5` to `1.2`
+length-scale units, that is 5 to 12 angstrom at the default `lambda`.
+
+The chart weight is the Bhattacharyya amplitude `sqrt(b)`, not `b`. With
+`b` a close pair straddling a chart boundary is suppressed, since
+`sum_g b_i b_j` falls well below one whenever the two assignments are
+spread; with `sqrt(b)` the sum is the Bhattacharyya coefficient, exactly
+one when the two assignments agree however soft they are. Per-head
+assignments then stagger the residual boundaries across heads.
+
+The sector is invariant because `b`, `gamma`, and `|d|` are invariant and
+`d` rotates with the coordinates; it is PSD by explicit Gram
+factorization; and it is a segment sum, so it adds `O(N H G)` work and no
+pair state.
+
 ### Convex mixture and the unified factor
 
-Per segment and head, the weights `(a_c, a_m, a_a)` are a softmax of the
-segment-mean scalars. With trace normalizers `t = sum_i ||F_i||^2`, the
-single fused factor is
+Per segment and head, the weights `(a_c, a_m, a_a, a_l)` are a softmax of
+the segment-mean scalars, over three components when the local sector is
+disabled. With trace normalizers `t = sum_i ||F_i||^2`, the single fused
+factor is
 
 $$
 \Phi_i=\Big[\sqrt{\alpha_c/t_c}\,F^c_i,\
 \sqrt{\alpha_m/t_m}\,F^m_i,\
-\sqrt{\alpha_a}\,\Phi^a_i\Big],
+\sqrt{\alpha_a}\,\Phi^a_i,\
+\sqrt{\alpha_l/t_l}\,\Phi^l_i\Big],
 \qquad
 R=\Phi\Phi^\top,
 \qquad
 RV=\Phi(\Phi^\top V).
 $$
 
-Trace normalization is exact for the content and Mercer blocks; the atlas
-block is mass-normalized. The relation is a scalar operator, so it acts
+Trace normalization is exact for the content, Mercer, and local blocks;
+the atlas block is mass-normalized. Because the local sector folds into
+the same factor, it inherits the PSD guarantee and the Krylov filter
+propagates it multi-hop rather than one shell at a time. The relation is a scalar operator, so it acts
 identically on every sector of the packed carrier `[N, H, Dh + 17]` and
 one segmented Gram contraction transports all six sectors at once.
 
@@ -409,8 +564,10 @@ attention close to the identity.
   coordinates; features are translation invariant, updated positions are
   translation equivariant. Together with O(3) this gives full E(3)
   equivariance.
-- **Scale**: per-segment RMS normalization makes the frozen-coordinate
-  path invariant to segment-wise uniform scaling (section 3).
+- **Scale**: not a guarantee any more, by design. The unit-free monomial
+  path is still RMS-normalized, but the absolute radial channels and the
+  local sector read length in fixed angstrom units (section 3), which is
+  what makes contact-scale locality expressible at all.
 - **Permutation**: all reductions are segment sums; the operator is
   permutation equivariant, and interaction segments are exactly isolated.
 
@@ -428,11 +585,13 @@ the quotient step).
 All reductions are segment sums over nodes:
 
 $$
-O\big(N(C^2+KC)\big)
+O\big(N(C^2+KC+10\,G\,C)\big)
 $$
 
 time with node-linear memory, where the relation feature width combines
-the content, Mercer (35), and atlas (`K`) blocks. The architecture
-contains no explicit or predicted edge list, no radius or
-k-nearest-neighbor search, no sparse message path, no pair or triangle
-state, no topology cache, and no compatibility or migration subsystem.
+the content, Mercer (35), atlas (`K`), and local (`10 G`) blocks, and `G`
+is the chart count of the local sector. The optional soft neighbour-count
+channel adds `O(N G)` per bandwidth. The architecture contains no
+explicit or predicted edge list, no radius or k-nearest-neighbor search,
+no sparse message path, no pair or triangle state, no topology cache, and
+no compatibility or migration subsystem.
