@@ -591,7 +591,19 @@ $$
 time with node-linear memory, where the relation feature width combines
 the content, Mercer (35), atlas (`K`), and local (`10 G`) blocks, and `G`
 is the chart count of the local sector. The optional soft neighbour-count
-channel adds `O(N G)` per bandwidth. The architecture contains no
-explicit or predicted edge list, no radius or k-nearest-neighbor search,
-no sparse message path, no pair or triangle state, no topology cache, and
-no compatibility or migration subsystem.
+channel adds `O(N G)` per bandwidth.
+
+In the canonical configuration, which is the default one
+(`local_points = 0`), the architecture contains no explicit or predicted
+edge list, no radius or k-nearest-neighbor search, no sparse message
+path, no pair or triangle state, no topology cache, and no compatibility
+or migration subsystem. Everything documented above is that
+configuration.
+
+The repository does contain one path outside it. Setting
+`local_points > 0` enables a non-canonical pointwise local-jet branch
+whose transient support is a bounded k-nearest-neighbour set, and which
+is consequently none of the things just listed. It is off by default,
+constructs nothing when off, and exists only to measure the hard-cutoff
+upper bound; `docs/LOCALITY_TRACK.md` records what it costs and why it is
+kept separate.
