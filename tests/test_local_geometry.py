@@ -83,6 +83,4 @@ def test_relative_and_physical_scales_have_distinct_semantics() -> None:
     torch.testing.assert_close(
         expanded[:, :2], 2.0 * original[:, :2], atol=1e-10, rtol=1e-10
     )
-    torch.testing.assert_close(
-        expanded[:, 2:], original[:, 2:], atol=1e-10, rtol=1e-10
-    )
+    torch.testing.assert_close(expanded[:, 2:], original[:, 2:], atol=1e-10, rtol=1e-10)

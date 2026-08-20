@@ -1,4 +1,4 @@
-"""Transient pointwise support for local ELA operators."""
+"""Bounded pointwise support for the canonical local TriELA operator."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def build_local_support(
             stop = min(start + chunk_size, count)
             receiver_nodes = nodes[start:stop]
             distance = torch.cdist(local_coordinate[start:stop], local_coordinate)
-            ordered_distance, ordered_index = torch.topk(
+            ordered_distance, _ = torch.topk(
                 distance, k=candidates, dim=-1, largest=False, sorted=True
             )
             if count > active:
@@ -67,10 +67,19 @@ def build_local_support(
                 local_scale, fallback.expand_as(local_scale) * 0.25
             ).clamp_min(eps)
             scale[receiver_nodes] = local_scale.detach()
-            source_parts.append(nodes[ordered_index.reshape(-1)])
-            receiver_parts.append(
-                receiver_nodes[:, None].expand(-1, candidates).reshape(-1)
+            # Include every source tied at the truncation radius. Arbitrarily
+            # choosing a subset of equal-distance nodes would make the local
+            # operator depend on packed node order and break permutation
+            # equivariance. Generic rows still contain exactly ``active``
+            # sources; degenerate ties may intentionally exceed that bound.
+            cutoff = ordered_distance[:, active - 1]
+            tied_support = distance <= cutoff[:, None]
+            receiver_row, source_column = torch.nonzero(
+                tied_support,
+                as_tuple=True,
             )
+            source_parts.append(nodes[source_column])
+            receiver_parts.append(receiver_nodes[receiver_row])
     source = torch.cat(source_parts, dim=0)
     receiver = torch.cat(receiver_parts, dim=0)
     displacement = coordinate[source] - coordinate[receiver]

@@ -1,9 +1,9 @@
-"""The single edge-free data container used by ELA."""
+"""Packed token-level 3D data and result container used by TriELA."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
@@ -68,7 +68,7 @@ def _collate_target(values: list[torch.Tensor], counts: list[int]) -> torch.Tens
 
 @dataclass(frozen=True, slots=True)
 class ELAGraph:
-    """Edge-free 3D data and result container."""
+    """Packed 3D node data, interaction isolation, and model outputs."""
 
     x: torch.Tensor
     pos: torch.Tensor
@@ -82,6 +82,12 @@ class ELAGraph:
     graph_x: torch.Tensor | None = None
     graph_sum: torch.Tensor | None = None
     delta: torch.Tensor | None = None
+    _num_graphs: int = field(init=False, repr=False, compare=False)
+    _batch_version: int = field(init=False, repr=False, compare=False)
+    _group_version: int = field(init=False, repr=False, compare=False)
+    _condition_matrix: torch.Tensor | None = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         _floating("x", self.x)
@@ -92,16 +98,36 @@ class ELAGraph:
             raise ValueError("pos must have shape (N,3)")
         if self.x.device != self.pos.device:
             raise ValueError("x and pos must share one device")
+        if self.x.dtype != self.pos.dtype:
+            raise ValueError("x and pos must share one floating-point dtype")
         nodes = self.x.shape[0]
         _, graphs, _ = canonical_batch(
             self.batch, num_nodes=nodes, device=self.x.device
+        )
+        # Validation happens when the public container is constructed.  Cache
+        # this Python metadata so the numerical forward does not repeat a
+        # Tensor.item() extraction that splits torch.compile graphs.
+        object.__setattr__(self, "_num_graphs", graphs)
+        object.__setattr__(
+            self,
+            "_batch_version",
+            -1 if self.batch is None else self.batch._version,
+        )
+        object.__setattr__(
+            self,
+            "_group_version",
+            -1 if self.group is None else self.group._version,
         )
         if self.batch is not None:
             _index("batch", self.batch, nodes, self.x.device)
         if self.group is not None:
             _index("group", self.group, nodes, self.x.device)
+        normalized_condition = None
         if self.condition is not None:
-            _graph_condition(self.condition, num_graphs=graphs, device=self.x.device)
+            normalized_condition = _graph_condition(
+                self.condition, num_graphs=graphs, device=self.x.device
+            )
+        object.__setattr__(self, "_condition_matrix", normalized_condition)
         if self.order is not None:
             _floating("order", self.order)
             if self.order.ndim != 2 or self.order.shape[0] != nodes:
@@ -138,9 +164,18 @@ class ELAGraph:
 
     @property
     def num_graphs(self) -> int:
-        if self.num_nodes == 0:
-            return 0
-        return 1 if self.batch is None else int(self.batch.max().item()) + 1
+        if not torch.compiler.is_compiling():
+            if self.batch is not None and self.batch._version != self._batch_version:
+                raise RuntimeError(
+                    "ELAGraph.batch was mutated in place after validation;"
+                    " construct a new ELAGraph instead"
+                )
+            if self.group is not None and self.group._version != self._group_version:
+                raise RuntimeError(
+                    "ELAGraph.group was mutated in place after validation;"
+                    " construct a new ELAGraph instead"
+                )
+        return self._num_graphs
 
     @property
     def batch_index(self) -> torch.Tensor:
@@ -150,12 +185,9 @@ class ELAGraph:
 
     @property
     def condition_matrix(self) -> torch.Tensor | None:
-        if self.condition is None:
-            return None
-        return _graph_condition(
-            self.condition, num_graphs=self.num_graphs, device=self.x.device
-        )
+        return self._condition_matrix
 
+    @torch.compiler.disable
     def with_output(
         self,
         *,
@@ -165,6 +197,8 @@ class ELAGraph:
         graph_sum: torch.Tensor,
         delta: torch.Tensor,
     ) -> ELAGraph:
+        """Package validated public outputs outside the compiled tensor core."""
+
         return replace(
             self, x=x, pos=pos, graph_x=graph_x, graph_sum=graph_sum, delta=delta
         )

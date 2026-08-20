@@ -50,9 +50,9 @@ class ReproducingLocalJet(nn.Module):
         local_scale = scale[support.receiver]
         coordinate = support.displacement[:, None, :] / local_scale[..., None]
         weight = wendland_c2(support.distance[:, None] / local_scale)
-        basis = symmetric_monomials(
-            coordinate.reshape(-1, 3), orthonormal=True
-        )[:, :_BASIS_SIZE].reshape(coordinate.shape[0], self.num_scales, _BASIS_SIZE)
+        basis = symmetric_monomials(coordinate.reshape(-1, 3), orthonormal=True)[
+            :, :_BASIS_SIZE
+        ].reshape(coordinate.shape[0], self.num_scales, _BASIS_SIZE)
         receiver = support.receiver
         num_nodes = scalar.shape[0]
         gram = segment_sum(

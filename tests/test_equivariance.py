@@ -4,72 +4,255 @@ import pytest
 import torch
 from conftest import orthogonal, transform_irreps
 
-from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention import (
+    BiomolecularPairContext,
+    ELAGraph,
+    TriELA,
+)
+from equivariant_linear_attention.nn.pair_state import DensePairState
 
 
-@pytest.mark.parametrize("reflection", [False, True])
-def test_full_model_obeys_o3_translation_and_mixed_irreps(reflection: bool) -> None:
-    generator = torch.Generator().manual_seed(301)
-    input_layout = "3x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o"
-    output_layout = "2x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o"
-    model = ELA(input_layout, output_layout, width=32, depth=2).double().eval()
-    x = torch.randn(8, model.input_irreps.dim, generator=generator, dtype=torch.float64)
-    pos = torch.randn(8, 3, generator=generator, dtype=torch.float64)
-    batch = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
-    transform = orthogonal(reflection=reflection, seed=303)
-    moved_x = transform_irreps(x, model.input_irreps, transform)
-    moved_pos = pos @ transform.T + torch.tensor([3.0, -2.0, 1.0])
-    with torch.no_grad():
-        reference = model(ELAGraph(x, pos, batch=batch))
-        moved = model(ELAGraph(moved_x, moved_pos, batch=batch))
-    expected = transform_irreps(reference.x, model.output_irreps, transform)
-    torch.testing.assert_close(moved.x, expected, atol=5e-10, rtol=5e-10)
-    assert reference.graph_x is not None and moved.graph_x is not None
-    expected_graph = transform_irreps(reference.graph_x, model.output_irreps, transform)
-    torch.testing.assert_close(moved.graph_x, expected_graph, atol=5e-10, rtol=5e-10)
-
-
-def test_node_permutation_equivariance() -> None:
-    generator = torch.Generator().manual_seed(307)
-    model = ELA("4x0e", "2x0e + 1x1o", width=32, depth=2).double().eval()
-    x = torch.randn(9, 4, generator=generator, dtype=torch.float64)
-    pos = torch.randn(9, 3, generator=generator, dtype=torch.float64)
-    batch = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1, 1])
-    group = torch.tensor([0, 0, 1, 1, 0, 0, 0, 1, 1])
-    permutation = torch.tensor([2, 0, 3, 1, 8, 5, 7, 4, 6])
-    with torch.no_grad():
-        reference = model(ELAGraph(x, pos, batch=batch, group=group))
-        moved = model(
-            ELAGraph(
-                x[permutation],
-                pos[permutation],
-                batch=batch[permutation],
-                group=group[permutation],
-            )
+def _tiny_model(
+    input_irreps: str,
+    output_irreps: str,
+    *,
+    update_positions: bool = False,
+    pair_feature_dim: int = 0,
+) -> TriELA:
+    return (
+        TriELA(
+            input_irreps,
+            output_irreps,
+            width=16,
+            pair_width=8,
+            triangle_hidden=8,
+            num_stages=1,
+            pair_blocks_per_stage=1,
+            local_blocks_per_stage=1,
+            pair_transition_factor=2,
+            pair_dropout=0.0,
+            local_points=3,
+            max_pair_tokens=8,
+            pair_feature_dim=pair_feature_dim,
+            distance_rbf_bins=4,
+            distogram_bins=6,
+            update_positions=update_positions,
+            max_coordinate_step=0.15,
         )
-    torch.testing.assert_close(
-        moved.x, reference.x[permutation], atol=4e-10, rtol=4e-10
+        .double()
+        .eval()
     )
 
 
-def test_interaction_components_are_isolated() -> None:
-    generator = torch.Generator().manual_seed(311)
-    model = ELA("3x0e", "1x0e", width=32, depth=2).double().eval()
+def _global_pair_tensor(pair: DensePairState) -> torch.Tensor:
+    nodes = pair.packed_batch.numel()
+    packed_index = torch.arange(nodes, device=pair.z.device)
+    dense_index = pair.unpack_node_tensor(packed_index)
+    left = dense_index[:, :, None].expand_as(pair.pair_mask)
+    right = dense_index[:, None, :].expand_as(pair.pair_mask)
+    output = pair.z.new_zeros((nodes, nodes, pair.z.shape[-1]))
+    return output.index_put(
+        (left[pair.pair_mask], right[pair.pair_mask]),
+        pair.z[pair.pair_mask],
+    )
+
+
+@pytest.mark.parametrize("reflection", [False, True])
+def test_full_model_pair_axes_and_coordinate_update_obey_o3_and_translation(
+    reflection: bool,
+) -> None:
+    generator = torch.Generator().manual_seed(101)
+    input_irreps = "2x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o"
+    output_irreps = "1x0e + 1x0o + 1x1o + 1x1e + 1x2e + 1x2o"
+    model = _tiny_model(
+        input_irreps,
+        output_irreps,
+        update_positions=True,
+    )
+    with torch.no_grad():
+        for stage in model.stages:
+            assert stage.coordinate_updates is not None
+            for updater in stage.coordinate_updates:
+                updater.vector.base_weight.fill_(0.2)
+
+    x = torch.randn(
+        5,
+        model.input_irreps.dim,
+        generator=generator,
+        dtype=torch.float64,
+    )
+    pos = torch.randn(5, 3, generator=generator, dtype=torch.float64)
+    transform = orthogonal(reflection=reflection, seed=103)
+    translation = torch.tensor([1.2, -0.7, 0.4], dtype=torch.float64)
+    reference = model.forward_with_aux(ELAGraph(x, pos))
+    moved = model.forward_with_aux(
+        ELAGraph(
+            transform_irreps(x, model.input_irreps, transform),
+            pos @ transform.T + translation,
+        )
+    )
+
+    torch.testing.assert_close(
+        moved.graph.x,
+        transform_irreps(reference.graph.x, model.output_irreps, transform),
+        atol=3e-7,
+        rtol=3e-7,
+    )
+    torch.testing.assert_close(
+        moved.graph.pos,
+        reference.graph.pos @ transform.T + translation,
+        atol=3e-7,
+        rtol=3e-7,
+    )
+    assert reference.graph.delta is not None and moved.graph.delta is not None
+    torch.testing.assert_close(
+        moved.graph.delta,
+        reference.graph.delta @ transform.T,
+        atol=3e-7,
+        rtol=3e-7,
+    )
+    assert float(reference.graph.delta.detach().abs().max()) > 0.0
+    torch.testing.assert_close(
+        moved.pair_state.z,
+        reference.pair_state.z,
+        atol=3e-7,
+        rtol=3e-7,
+    )
+    torch.testing.assert_close(
+        moved.distogram_logits,
+        reference.distogram_logits,
+        atol=3e-7,
+        rtol=3e-7,
+    )
+
+
+def test_node_permutation_moves_both_dense_pair_axes_and_metadata() -> None:
+    generator = torch.Generator().manual_seed(107)
+    model = _tiny_model("3x0e", "2x0e", pair_feature_dim=2)
+    nodes = 6
+    x = torch.randn(nodes, 3, generator=generator, dtype=torch.float64)
+    pos = torch.randn(nodes, 3, generator=generator, dtype=torch.float64)
+    batch = torch.tensor([0, 0, 0, 1, 1, 1])
+    group = torch.tensor([0, 1, 0, 0, 0, 1])
+    pair_feature = torch.randn(
+        nodes,
+        nodes,
+        2,
+        generator=generator,
+        dtype=torch.float64,
+    )
+    context = BiomolecularPairContext(
+        token_index=torch.tensor([0, 1, 2, 0, 1, 2]),
+        chain_id=torch.tensor([0, 1, 0, 0, 0, 1]),
+        molecule_type=torch.tensor([0, 1, 0, 2, 2, 1]),
+        pair_features=pair_feature,
+    )
+    reference = model.forward_with_aux(
+        ELAGraph(x, pos, batch=batch, group=group),
+        context,
+    )
+    permutation = torch.tensor([4, 1, 5, 0, 3, 2])
+    moved_context = BiomolecularPairContext(
+        token_index=context.token_index[permutation],
+        chain_id=context.chain_id[permutation],
+        molecule_type=context.molecule_type[permutation],
+        pair_features=pair_feature[permutation][:, permutation],
+    )
+    moved = model.forward_with_aux(
+        ELAGraph(
+            x[permutation],
+            pos[permutation],
+            batch=batch[permutation],
+            group=group[permutation],
+        ),
+        moved_context,
+    )
+    torch.testing.assert_close(moved.graph.x, reference.graph.x[permutation])
+    torch.testing.assert_close(moved.graph.pos, reference.graph.pos[permutation])
+    reference_pair = _global_pair_tensor(reference.pair_state)
+    moved_pair = _global_pair_tensor(moved.pair_state)
+    torch.testing.assert_close(
+        moved_pair,
+        reference_pair[permutation][:, permutation],
+        atol=3e-10,
+        rtol=3e-10,
+    )
+
+
+def test_coincident_cutoff_ties_do_not_depend_on_packed_node_order() -> None:
+    generator = torch.Generator().manual_seed(108)
+    model = _tiny_model("3x0e", "2x0e", pair_feature_dim=2)
+    nodes = 6
+    x = torch.randn(nodes, 3, generator=generator, dtype=torch.float64)
+    positions = torch.zeros(nodes, 3, dtype=torch.float64)
+    pair_features = torch.randn(
+        nodes,
+        nodes,
+        2,
+        generator=generator,
+        dtype=torch.float64,
+    )
+    reference = model.forward_with_aux(
+        ELAGraph(x, positions),
+        BiomolecularPairContext(pair_features=pair_features),
+    )
+
+    permutation = torch.tensor([4, 0, 5, 2, 1, 3])
+    moved = model.forward_with_aux(
+        ELAGraph(x[permutation], positions[permutation]),
+        BiomolecularPairContext(
+            pair_features=pair_features[permutation][:, permutation]
+        ),
+    )
+    torch.testing.assert_close(
+        moved.graph.x,
+        reference.graph.x[permutation],
+        atol=3e-10,
+        rtol=3e-10,
+    )
+    torch.testing.assert_close(
+        _global_pair_tensor(moved.pair_state),
+        _global_pair_tensor(reference.pair_state)[permutation][:, permutation],
+        atol=3e-10,
+        rtol=3e-10,
+    )
+
+
+def test_interaction_groups_have_no_node_or_pair_leakage() -> None:
+    generator = torch.Generator().manual_seed(109)
+    model = _tiny_model("3x0e", "1x0e")
     x = torch.randn(6, 3, generator=generator, dtype=torch.float64)
     pos = torch.randn(6, 3, generator=generator, dtype=torch.float64)
     group = torch.tensor([0, 0, 0, 1, 1, 1])
-    with torch.no_grad():
-        reference = model(ELAGraph(x, pos, group=group)).x
-        changed_x = x.clone()
-        changed_pos = pos.clone()
-        changed_x[3:] += 100.0
-        changed_pos[3:] += 1000.0
-        changed = model(ELAGraph(changed_x, changed_pos, group=group)).x
-    torch.testing.assert_close(changed[:3], reference[:3], atol=3e-10, rtol=3e-10)
-
-
-def test_model_has_no_quadratic_or_edge_state_parameters() -> None:
-    model = ELA("2x0e", width=32, depth=1)
-    forbidden = ("edge", "neighbor", "pair", "radius", "cutoff")
-    names = tuple(name.lower() for name, _ in model.named_parameters())
-    assert not any(any(token in name for token in forbidden) for name in names)
+    reference = model.forward_with_aux(ELAGraph(x, pos, group=group))
+    changed_x = x.clone()
+    changed_pos = pos.clone()
+    changed_x[3:] = 100.0 * torch.randn(
+        3,
+        3,
+        generator=generator,
+        dtype=torch.float64,
+    )
+    changed_pos[3:] = 100.0 * torch.randn(
+        3,
+        3,
+        generator=generator,
+        dtype=torch.float64,
+    )
+    changed = model.forward_with_aux(ELAGraph(changed_x, changed_pos, group=group))
+    torch.testing.assert_close(
+        changed.graph.x[:3],
+        reference.graph.x[:3],
+        atol=2e-10,
+        rtol=2e-10,
+    )
+    reference_pair = _global_pair_tensor(reference.pair_state)
+    changed_pair = _global_pair_tensor(changed.pair_state)
+    torch.testing.assert_close(
+        changed_pair[:3, :3],
+        reference_pair[:3, :3],
+        atol=2e-10,
+        rtol=2e-10,
+    )
+    assert torch.count_nonzero(reference_pair[:3, 3:]) == 0
+    assert torch.count_nonzero(reference_pair[3:, :3]) == 0

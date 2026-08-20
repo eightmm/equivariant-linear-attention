@@ -43,9 +43,7 @@ class LocalBodyAlgebra(nn.Module):
         w = self.polar_w(moments.polar)
         tensor_u = self.tensor_u(moments.even_tensor)
         tensor_v = self.tensor_v(moments.even_tensor)
-        axial = torch.cross(u, v, dim=-1) + st_commutator_vector(
-            tensor_u, tensor_v
-        )
+        axial = torch.cross(u, v, dim=-1) + st_commutator_vector(tensor_u, tensor_v)
         even_tensor = st_cross(u, v) + st_jordan_product(tensor_u, tensor_v)
         polar = st_matvec(tensor_u, w) + st_matvec(tensor_v, u)
         odd_scalar = (axial * w).sum(dim=-1)

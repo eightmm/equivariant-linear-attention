@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention.advanced import (
+from equivariant_linear_attention.physics import (
     DirectVectorForceHead,
     ScalarEnergyHead,
     conservative_forces,

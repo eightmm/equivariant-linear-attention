@@ -4,7 +4,7 @@ import pytest
 import torch
 from conftest import orthogonal
 
-from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention import ELAGraph, TriELA
 from equivariant_linear_attention.nn.manifold import quotient_rigid_shape_step
 
 
@@ -85,25 +85,35 @@ def test_partial_selection_retains_rigid_pose_and_fixes_unselected_nodes() -> No
 
 def test_coordinate_update_mask_bound_and_double_backward() -> None:
     generator = torch.Generator().manual_seed(407)
-    model = ELA(
-        "4x0e",
+    model = TriELA(
+        "2x0e + 1x1o",
         "1x0e",
-        width=32,
-        depth=2,
+        width=16,
+        pair_width=8,
+        triangle_hidden=8,
+        num_stages=1,
+        pair_blocks_per_stage=1,
+        local_blocks_per_stage=1,
+        pair_transition_factor=2,
+        pair_dropout=0.0,
+        local_points=3,
+        max_pair_tokens=8,
+        distance_rbf_bins=4,
+        distogram_bins=6,
         update_positions=True,
         max_coordinate_step=0.2,
     ).double()
-    # Open the vector lane so the manifold path is exercised.
     with torch.no_grad():
-        assert model.coordinate_update is not None
-        model.coordinate_update.vector.base_weight.fill_(0.25)
+        updates = model.stages[0].coordinate_updates
+        assert updates is not None
+        updates[0].vector.base_weight.fill_(0.25)
     pos = torch.randn(
         6, 3, generator=generator, dtype=torch.float64, requires_grad=True
     )
     mask = torch.tensor([True, True, True, False, False, False])
     output = model(
         ELAGraph(
-            torch.randn(6, 4, generator=generator, dtype=torch.float64),
+            torch.randn(6, 5, generator=generator, dtype=torch.float64),
             pos,
             update_mask=mask,
         )

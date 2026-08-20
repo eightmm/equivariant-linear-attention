@@ -86,7 +86,14 @@ class LocalEquivariantClosure(nn.Module):
         state: ParityState,
         local: PointwiseLocalFeatures,
     ) -> ParityState:
-        base = self.project(local)
+        projected = self.project(local)
+        # Autocast may return BF16 linear projections while the persistent
+        # equivariant carrier remains FP32.  Geometric bilinear operations
+        # (cross products and tensor products) require matching dtypes, so the
+        # local projection rejoins the carrier dtype at this explicit boundary.
+        base = ParityState(
+            *(value.to(dtype=state.even_scalar.dtype) for value in projected.as_tuple())
+        )
         pp = (state.polar_vector * base.polar_vector).sum(dim=-1)
         aa = (state.axial_vector * base.axial_vector).sum(dim=-1)
         ee = st_inner(state.even_tensor, base.even_tensor) / 5.0
@@ -96,9 +103,7 @@ class LocalEquivariantClosure(nn.Module):
         even_scalar = base.even_scalar + self.even_invariant(
             torch.cat((pp, aa, ee, oo), dim=-1)
         )
-        odd_scalar = base.odd_scalar + self.odd_invariant(
-            torch.cat((pa, eo), dim=-1)
-        )
+        odd_scalar = base.odd_scalar + self.odd_invariant(torch.cat((pa, eo), dim=-1))
 
         polar = base.polar_vector + self.polar_coupling(
             st_matvec(base.even_tensor, state.polar_vector)
@@ -156,9 +161,9 @@ class LocalEquivariantClosure(nn.Module):
             + stf4_contract_st_vector(fourth, fourth_odd, fourth_polar)
         )
 
-        gates = 2.0 * torch.sigmoid(self.gates(state_invariants(state, self.eps))).reshape(
-            state.num_nodes, 5, self.num_heads
-        )
+        gates = 2.0 * torch.sigmoid(
+            self.gates(state_invariants(state, self.eps))
+        ).reshape(state.num_nodes, 5, self.num_heads)
         return ParityState(
             bounded_scalar(even_scalar, self.eps),
             bounded_scalar(gates[:, 0] * odd_scalar, self.eps),

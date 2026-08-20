@@ -58,9 +58,7 @@ def decode_local_jet(
     trace = system.diagonal(dim1=-2, dim2=-1).sum(dim=-1)
     frobenius_square = system.square().sum(dim=(-2, -1))
     dimension = float(system.shape[-1])
-    confidence = (
-        trace.square() / (dimension * frobenius_square + eps)
-    ).clamp(0.0, 1.0)
+    confidence = (trace.square() / (dimension * frobenius_square + eps)).clamp(0.0, 1.0)
     return LocalFeatureJet(
         bounded_scalar(value, eps),
         unit_ball(gradient, eps),

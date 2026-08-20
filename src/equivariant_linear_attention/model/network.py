@@ -1,26 +1,40 @@
-"""Canonical tensor-fused edge-free equivariant linear-attention network."""
+"""The one canonical pair-centric equivariant TriELA network."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import sqrt
 
 import torch
 from torch import nn
 
-from ..context import ELAFeatures, InvariantContextEncoder
+from ..context import InvariantContextEncoder
 from ..graph import ELAGraph
+from ..heads import DistogramHead
 from ..irreps import IrrepLayout, split_irreps
-from ..nn.geometry import GeometryContext, chart_density
-from ..nn.layer import EdgeFreeELALayer
-from ..nn.local_support import LocalSupport, build_local_support
-from ..nn.manifold import QuotientCoordinateUpdate
+from ..nn.geometry import GeometryContext
 from ..nn.ops import interaction_index, segment_count, segment_sum
+from ..nn.pair_embedding import PairEmbedding
+from ..nn.pair_state import (
+    BiomolecularPairContext,
+    DensePairState,
+    build_dense_pair_layout,
+)
 from ..nn.state import InputProjection, OutputProjection, ParityState
-from .config import ELAConfig
+from .config import TriELAConfig
+from .stage import TriELAStage
 
 
-class ELA(nn.Module):
-    """Parity-complete edge-free O(3)-equivariant linear-attention network."""
+@dataclass(frozen=True)
+class TriELAOutput:
+    graph: ELAGraph
+    pair_state: DensePairState
+    distogram_logits: torch.Tensor
+    diagnostics: dict[str, torch.Tensor]
+
+
+class TriELA(nn.Module):
+    """Pair-centric O(3)-equivariant model for token-level 3D data."""
 
     def __init__(
         self,
@@ -28,31 +42,48 @@ class ELA(nn.Module):
         output_irreps: str = "1x0e",
         *,
         width: int = 128,
-        depth: int = 8,
+        pair_width: int = 64,
+        triangle_hidden: int = 64,
+        num_stages: int = 3,
+        pair_blocks_per_stage: int = 4,
+        local_blocks_per_stage: int = 2,
+        pair_transition_factor: int = 4,
+        pair_dropout: float = 0.1,
+        local_points: int = 32,
+        max_pair_tokens: int = 512,
         condition_dim: int = 0,
         order_dim: int = 0,
+        pair_feature_dim: int = 0,
+        distance_rbf_bins: int = 32,
+        distance_max: float = 32.0,
+        distogram_bins: int = 64,
+        distogram_max: float = 32.0,
         update_positions: bool = False,
         max_coordinate_step: float = 0.25,
-        num_local_charts: int = 16,
-        length_scale: float = 10.0,
-        density_bandwidths: tuple[float, ...] = (),
-        density_charts: int = 16,
-        local_points: int = 0,
     ) -> None:
         super().__init__()
-        self.config = ELAConfig(
+        self.config = TriELAConfig(
             input_irreps=input_irreps,
             output_irreps=output_irreps,
             width=width,
-            depth=depth,
-            features=ELAFeatures(condition_dim=condition_dim, order_dim=order_dim),
+            pair_width=pair_width,
+            triangle_hidden=triangle_hidden,
+            num_stages=num_stages,
+            pair_blocks_per_stage=pair_blocks_per_stage,
+            local_blocks_per_stage=local_blocks_per_stage,
+            pair_transition_factor=pair_transition_factor,
+            pair_dropout=pair_dropout,
+            local_points=local_points,
+            max_pair_tokens=max_pair_tokens,
+            condition_dim=condition_dim,
+            order_dim=order_dim,
+            pair_feature_dim=pair_feature_dim,
+            distance_rbf_bins=distance_rbf_bins,
+            distance_max=distance_max,
+            distogram_bins=distogram_bins,
+            distogram_max=distogram_max,
             update_positions=update_positions,
             max_coordinate_step=max_coordinate_step,
-            num_local_charts=num_local_charts,
-            length_scale=length_scale,
-            density_bandwidths=tuple(density_bandwidths),
-            density_charts=density_charts,
-            local_points=local_points,
         )
         config = self.config
         self.input_projection = InputProjection(
@@ -64,24 +95,46 @@ class ELA(nn.Module):
             features=config.features,
             width=config.width,
         )
-        block_scale = 0.1 / sqrt(config.depth)
-        self.layers = nn.ModuleList(
+        feature_kwargs = {
+            "scalar_width": config.width,
+            "num_heads": config.num_heads,
+            "pair_width": config.pair_width,
+            "rbf_bins": config.distance_rbf_bins,
+            "max_distance": config.distance_max,
+            "pair_feature_dim": config.pair_feature_dim,
+            "eps": config.eps,
+        }
+        self.pair_embedding = PairEmbedding(**feature_kwargs)
+        total_node_blocks = config.num_stages * (
+            config.pair_blocks_per_stage + config.local_blocks_per_stage
+        )
+        residual_scale = 0.1 / sqrt(total_node_blocks)
+        self.stages = nn.ModuleList(
             [
-                EdgeFreeELALayer(
+                TriELAStage(
                     scalar_width=config.width,
+                    pair_width=config.pair_width,
+                    triangle_hidden=config.triangle_hidden,
                     num_heads=config.num_heads,
                     moment_rank=config.moment_rank,
                     relation_width=config.relation_width,
                     num_charts=config.num_charts,
-                    num_local_charts=config.num_local_charts,
-                    residual_scale=block_scale,
-                    eps=config.eps,
+                    pair_blocks=config.pair_blocks_per_stage,
+                    local_blocks=config.local_blocks_per_stage,
+                    pair_transition_factor=config.pair_transition_factor,
+                    pair_dropout=config.pair_dropout,
                     local_points=config.local_points,
                     local_probe_rank=config.local_probe_rank,
                     local_scales=config.local_scales,
                     local_chunk_size=config.local_chunk_size,
+                    rbf_bins=config.distance_rbf_bins,
+                    max_distance=config.distance_max,
+                    pair_feature_dim=config.pair_feature_dim,
+                    residual_scale=residual_scale,
+                    update_positions=config.update_positions,
+                    eps=config.eps,
                 )
-                for _ in range(config.depth)
+                for _ in range(config.num_stages)
             ]
         )
         self.output_projection = OutputProjection(
@@ -89,40 +142,38 @@ class ELA(nn.Module):
             scalar_width=config.width,
             num_heads=config.num_heads,
         )
-        self.density_projection: nn.Linear | None = None
-        if config.density_bandwidths:
-            self.density_projection = nn.Linear(
-                len(config.density_bandwidths), config.width
-            )
-            # Start as an exact no-op so the channel has to earn its use.
-            nn.init.zeros_(self.density_projection.weight)
-            nn.init.zeros_(self.density_projection.bias)
-        self.coordinate_update: QuotientCoordinateUpdate | None = None
-        if config.update_positions:
-            self.coordinate_update = QuotientCoordinateUpdate(
-                scalar_width=config.width,
-                num_heads=config.num_heads,
-                eps=config.eps,
-            )
+        self.distogram_head = DistogramHead(
+            pair_width=config.pair_width,
+            num_bins=config.distogram_bins,
+            max_distance=config.distogram_max,
+        )
 
     @classmethod
-    def from_config(cls, config: ELAConfig) -> ELA:
-        if not isinstance(config, ELAConfig):
-            raise TypeError("config must be ELAConfig")
+    def from_config(cls, config: TriELAConfig) -> TriELA:
+        if not isinstance(config, TriELAConfig):
+            raise TypeError("config must be TriELAConfig")
         return cls(
             config.input_irreps,
             config.output_irreps,
             width=config.width,
-            depth=config.depth,
-            condition_dim=config.features.condition_dim,
-            order_dim=config.features.order_dim,
+            pair_width=config.pair_width,
+            triangle_hidden=config.triangle_hidden,
+            num_stages=config.num_stages,
+            pair_blocks_per_stage=config.pair_blocks_per_stage,
+            local_blocks_per_stage=config.local_blocks_per_stage,
+            pair_transition_factor=config.pair_transition_factor,
+            pair_dropout=config.pair_dropout,
+            local_points=config.local_points,
+            max_pair_tokens=config.max_pair_tokens,
+            condition_dim=config.condition_dim,
+            order_dim=config.order_dim,
+            pair_feature_dim=config.pair_feature_dim,
+            distance_rbf_bins=config.distance_rbf_bins,
+            distance_max=config.distance_max,
+            distogram_bins=config.distogram_bins,
+            distogram_max=config.distogram_max,
             update_positions=config.update_positions,
             max_coordinate_step=config.max_coordinate_step,
-            num_local_charts=config.num_local_charts,
-            length_scale=config.length_scale,
-            density_bandwidths=config.density_bandwidths,
-            density_charts=config.density_charts,
-            local_points=config.local_points,
         )
 
     @property
@@ -135,7 +186,7 @@ class ELA(nn.Module):
 
     @property
     def updates_positions(self) -> bool:
-        return self.coordinate_update is not None
+        return self.config.update_positions
 
     def split_input(self, value: torch.Tensor) -> dict[str, torch.Tensor]:
         return split_irreps(self.input_irreps, value)
@@ -145,16 +196,15 @@ class ELA(nn.Module):
 
     def describe(self) -> dict[str, object]:
         return {
-            "model": "ELA",
+            "model": "TriELA",
             "graph": "ELAGraph",
             "input_irreps": str(self.input_irreps),
             "output_irreps": str(self.output_irreps),
             "width": self.config.width,
-            "depth": self.config.depth,
-            "condition_dim": self.config.features.condition_dim,
-            "order_dim": self.config.features.order_dim,
-            "update_positions": self.updates_positions,
-            "max_coordinate_step": self.config.max_coordinate_step,
+            "pair_width": self.config.pair_width,
+            "num_stages": self.config.num_stages,
+            "pair_blocks_per_stage": self.config.pair_blocks_per_stage,
+            "local_blocks_per_stage": self.config.local_blocks_per_stage,
             "num_parameters": sum(parameter.numel() for parameter in self.parameters()),
             **self.config.contract(),
         }
@@ -163,18 +213,13 @@ class ELA(nn.Module):
         return (
             f"input_irreps={str(self.input_irreps)!r}, "
             f"output_irreps={str(self.output_irreps)!r}, "
-            f"width={self.config.width}, depth={self.config.depth}, "
-            f"update_positions={self.updates_positions}"
+            f"width={self.config.width}, pair_width={self.config.pair_width}, "
+            f"num_stages={self.config.num_stages}"
         )
 
-    def _initial_state(
-        self, graph: ELAGraph, density: torch.Tensor | None = None
-    ) -> ParityState:
+    def _initial_state(self, graph: ELAGraph) -> ParityState:
         state = self.input_projection(graph.x)
         context = self.context_encoder(graph)
-        if density is not None and self.density_projection is not None:
-            projected = self.density_projection(density.to(dtype=state.even_scalar.dtype))
-            context = projected if context is None else context + projected
         if context is None:
             return state
         return ParityState(
@@ -186,98 +231,133 @@ class ELA(nn.Module):
             state.odd_tensor,
         )
 
-    def _local_support(self, geometry: GeometryContext) -> LocalSupport | None:
-        """Transient kNN support for the non-canonical local-jet branch."""
-
-        if not self.config.uses_local_jet:
-            return None
-        return build_local_support(
-            geometry,
-            max_points=self.config.local_points,
-            chunk_size=self.config.local_chunk_size,
-            eps=self.config.eps,
-        )
-
-    def forward(self, graph: ELAGraph) -> ELAGraph:
+    def _run(
+        self,
+        graph: ELAGraph,
+        pair_context: BiomolecularPairContext | None,
+        *,
+        with_aux: bool,
+    ) -> ELAGraph | TriELAOutput:
         if not isinstance(graph, ELAGraph):
-            raise TypeError("ELA accepts exactly one ELAGraph")
+            raise TypeError("TriELA accepts exactly one ELAGraph")
         if graph.num_nodes == 0:
-            raise ValueError("ELA requires at least one node")
+            raise ValueError("TriELA requires at least one node")
         if graph.x.shape[-1] != self.input_irreps.dim:
             raise ValueError(f"graph.x final dimension must be {self.input_irreps.dim}")
-
         batch = graph.batch_index
-        interactions, num_interactions, interaction_counts = interaction_index(
+        interactions, num_interactions, _ = interaction_index(
             batch,
             graph.group,
+            num_graphs=graph.num_graphs,
         )
+        layout = build_dense_pair_layout(
+            batch,
+            graph.group,
+            max_pair_tokens=self.config.max_pair_tokens,
+        )
+        if pair_context is not None:
+            if not isinstance(pair_context, BiomolecularPairContext):
+                raise TypeError("pair_context must be BiomolecularPairContext")
+            pair_context.validate(
+                num_nodes=graph.num_nodes,
+                device=graph.x.device,
+                dtype=graph.x.dtype,
+            )
         positions = graph.pos
-        density = None
-        if self.config.density_bandwidths:
-            density = chart_density(
+        geometry = GeometryContext.build(
+            positions,
+            interactions,
+            num_segments=num_interactions,
+            eps=self.config.eps,
+        )
+        state = self._initial_state(graph)
+        pair = self.pair_embedding(state, positions, layout, pair_context)
+        support = None
+        coordinate_step = self.config.max_coordinate_step / (
+            self.config.num_stages * self.config.local_blocks_per_stage
+        )
+        initial_positions = positions
+        for stage in self.stages:
+            output = stage(
+                state,
+                pair,
                 positions,
-                interactions,
-                num_segments=num_interactions,
-                num_charts=self.config.density_charts,
-                bandwidths=self.config.density_bandwidths,
-                length_scale=self.config.length_scale,
-                eps=self.config.eps,
+                geometry,
+                support,
+                pair_context,
+                update_mask=graph.update_mask,
+                coordinate_step=coordinate_step,
             )
-        state = self._initial_state(graph, density)
-        total_delta = torch.zeros_like(positions)
+            state = output.state
+            pair = output.pair
+            positions = output.positions
+            geometry = output.geometry
+            support = output.support
 
-        if self.coordinate_update is None:
-            # Coordinates are immutable, so their compact monomial basis, all
-            # component metadata, and the transient local support are shared by
-            # every layer.
-            geometry = GeometryContext.build(
-                positions,
-                interactions,
-                num_segments=num_interactions,
-                eps=self.config.eps,
-                length_scale=self.config.length_scale,
-                num_seeds=self.config.num_local_charts,
-            )
-            support = self._local_support(geometry)
-            for layer in self.layers:
-                state = layer(state, geometry, support).state
-        else:
-            stage_step = self.config.max_coordinate_step / self.config.depth
-            for layer in self.layers:
-                geometry = GeometryContext.build(
-                    positions,
-                    interactions,
-                    num_segments=num_interactions,
-                    eps=self.config.eps,
-                    length_scale=self.config.length_scale,
-                    num_seeds=self.config.num_local_charts,
-                )
-                output = layer(state, geometry, self._local_support(geometry))
-                state = output.state
-                delta = self.coordinate_update(
-                    state,
-                    positions,
-                    interactions,
-                    num_segments=num_interactions,
-                    counts=interaction_counts,
-                    node_metric=output.node_metric,
-                    update_mask=graph.update_mask,
-                    max_step=stage_step,
-                )
-                positions = positions + delta
-                total_delta = total_delta + delta
-
-        node_output = self.output_projection(state)
+        # Autocast is an execution policy, not a public graph-schema change.
+        # Rejoin the input floating dtype before constructing the output graph
+        # so x, positions, pooled outputs, and coordinate deltas stay coherent.
+        node_output = self.output_projection(state).to(dtype=graph.x.dtype)
         graph_sum = segment_sum(node_output, batch, graph.num_graphs)
         graph_count = segment_count(batch, graph.num_graphs, dtype=node_output.dtype)
         graph_mean = graph_sum / graph_count.clamp_min(1.0).unsqueeze(-1)
-        return graph.with_output(
+        coordinate_delta = positions - initial_positions
+        result = graph.with_output(
             x=node_output,
             pos=positions,
             graph_x=graph_mean,
             graph_sum=graph_sum,
-            delta=total_delta,
+            delta=coordinate_delta,
+        )
+        if not with_aux:
+            return result
+        logits = self.distogram_head(pair)
+        coordinate_work_dtype = (
+            torch.float64 if coordinate_delta.dtype == torch.float64 else torch.float32
+        )
+        coordinate_mean_square = (
+            coordinate_delta.to(dtype=coordinate_work_dtype).square().mean()
+        )
+        positive_coordinate_motion = coordinate_mean_square > 0.0
+        safe_coordinate_square = torch.where(
+            positive_coordinate_motion,
+            coordinate_mean_square,
+            torch.ones_like(coordinate_mean_square),
+        )
+        coordinate_rms = torch.where(
+            positive_coordinate_motion,
+            torch.sqrt(safe_coordinate_square),
+            torch.zeros_like(coordinate_mean_square),
+        )
+        diagnostics = {
+            "pair_slots": pair.lengths,
+            "active_pairs": pair.pair_mask.sum(dim=(1, 2)),
+            "coordinate_rms": coordinate_rms.reshape(1),
+        }
+        return TriELAOutput(
+            graph=result,
+            pair_state=pair,
+            distogram_logits=logits,
+            diagnostics=diagnostics,
         )
 
+    def forward(
+        self,
+        graph: ELAGraph,
+        pair_context: BiomolecularPairContext | None = None,
+    ) -> ELAGraph:
+        output = self._run(graph, pair_context, with_aux=False)
+        assert isinstance(output, ELAGraph)
+        return output
 
-__all__ = ["ELA"]
+    def forward_with_aux(
+        self,
+        graph: ELAGraph,
+        pair_context: BiomolecularPairContext | None = None,
+    ) -> TriELAOutput:
+        output = self._run(graph, pair_context, with_aux=True)
+        assert isinstance(output, TriELAOutput)
+        return output
+
+
+__all__ = ["TriELA", "TriELAOutput"]

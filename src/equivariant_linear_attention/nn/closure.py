@@ -82,6 +82,9 @@ class EquivariantClosure(nn.Module):
         self.moment_scalar = nn.Linear(3 * moment_rank, scalar_width)
         self.moment_odd = ChannelMix(moment_rank, num_heads)
         self.moment_polar = ChannelMix(moment_rank, num_heads)
+        # Preserve the previous initialized function while allowing the missing
+        # Sym^3 trace lane to open immediately through its weight gradient.
+        self.moment_third_polar = ChannelMix(moment_rank, num_heads, zero_init=True)
         self.moment_axial = ChannelMix(moment_rank, num_heads)
         self.moment_even_tensor = ChannelMix(moment_rank, num_heads)
         self.moment_odd_tensor = ChannelMix(moment_rank, num_heads)
@@ -173,6 +176,7 @@ class EquivariantClosure(nn.Module):
         polar = (
             self.message_polar(message.polar_vector)
             + self.moment_polar(moments.polar)
+            + self.moment_third_polar(moments.third_trace)
             + self.polar_mix(
                 torch.cross(state.polar_vector, message.axial_vector, dim=-1)
                 + _commutator_vector(state_even_matrix, message_odd_matrix)

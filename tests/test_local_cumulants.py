@@ -44,9 +44,7 @@ def test_local_cumulants_obey_o3_and_parity(reflection: bool) -> None:
     moved = bank(
         scalar,
         build_local_support(
-            _geometry(
-                position @ transform.T + torch.tensor([2.0, -1.0, 3.0]), index
-            ),
+            _geometry(position @ transform.T + torch.tensor([2.0, -1.0, 3.0]), index),
             max_points=8,
             chunk_size=4,
             eps=1e-10,

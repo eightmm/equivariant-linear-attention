@@ -29,11 +29,7 @@ class LocalFeatureProjection(nn.Module):
         jet_channels = probe_rank * num_scales
         wave_channels = probe_rank * (num_scales - 1)
         scalar_dim = (
-            3 * moment_rank
-            + 2 * jet_channels
-            + 2 * wave_channels
-            + 2 * num_scales
-            + 1
+            3 * moment_rank + 2 * jet_channels + 2 * wave_channels + 2 * num_scales + 1
         )
         hidden = max(64, 2 * scalar_width)
         self.scalar = nn.Sequential(
@@ -91,8 +87,7 @@ class LocalFeatureProjection(nn.Module):
             + self.jet_hessian(_merge(jet.hessian))
             + self.wave_hessian(_merge(jet.wavelet_hessian))
             + self.body_even(body.even_tensor),
-            self.odd_tensor(moments.odd_tensor)
-            + self.body_odd_tensor(body.odd_tensor),
+            self.odd_tensor(moments.odd_tensor) + self.body_odd_tensor(body.odd_tensor),
         )
 
 

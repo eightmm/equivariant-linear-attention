@@ -1,26 +1,39 @@
-"""One-batch forward/backward smoke for canonical ELA."""
+"""One tiny CPU forward/backward smoke for canonical TriELA."""
 
 from __future__ import annotations
 
 import torch
 
-from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention import (
+    BiomolecularPairContext,
+    ELAGraph,
+    TriELA,
+)
 
 
 def main() -> None:
     torch.manual_seed(7)
-    model = ELA(
+    model = TriELA(
         "6x0e",
         "2x0e + 1x1o",
-        width=32,
-        depth=2,
+        width=16,
+        pair_width=8,
+        triangle_hidden=8,
+        num_stages=1,
+        pair_blocks_per_stage=1,
+        local_blocks_per_stage=1,
+        pair_transition_factor=2,
+        pair_dropout=0.0,
+        local_points=3,
+        max_pair_tokens=6,
         condition_dim=3,
         order_dim=1,
         update_positions=True,
     ).double()
-    assert model.coordinate_update is not None
+    coordinate_updates = model.stages[0].coordinate_updates
+    assert coordinate_updates is not None
     with torch.no_grad():
-        model.coordinate_update.vector.base_weight.fill_(0.1)
+        coordinate_updates[0].vector.base_weight.fill_(0.1)
     graph = ELAGraph(
         x=torch.randn(9, 6, dtype=torch.float64),
         pos=torch.randn(9, 3, dtype=torch.float64, requires_grad=True),
@@ -32,9 +45,18 @@ def main() -> None:
             [True, True, False, False, True, True, True, True, True]
         ),
     )
-    output = model(graph)
-    assert output.graph_x is not None and output.delta is not None
-    loss = output.graph_x.square().mean() + output.delta.square().mean()
+    metadata = BiomolecularPairContext(
+        token_index=torch.arange(9),
+        chain_id=torch.tensor([0, 0, 1, 1, 0, 0, 0, 1, 1]),
+        molecule_type=torch.tensor([0, 0, 0, 0, 0, 0, 1, 1, 1]),
+    )
+    output = model.forward_with_aux(graph, metadata)
+    assert output.graph.graph_x is not None and output.graph.delta is not None
+    loss = (
+        output.graph.graph_x.square().mean()
+        + output.graph.delta.square().mean()
+        + output.distogram_logits.square().mean()
+    )
     loss.backward()
     gradients = [
         p.grad for p in model.parameters() if p.requires_grad and p.grad is not None

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import factorial, log
+from math import factorial
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from .geometry import GeometryContext, radial_invariants
 from .ops import (
@@ -21,6 +22,27 @@ from .ops import (
     unit_ball,
 )
 from .state import ChannelMix, PairedChannelMix, ParityState
+
+# Keep the eager segmented Gram contraction from materializing its full
+# [N,H,F,D] outer product. The feature width is architecture-static, so this
+# fixed private chunk also remains straightforward for torch.compile to unroll.
+_GRAM_FEATURE_CHUNK_SIZE = 32
+
+
+def _gram_chunk_action(
+    feature: torch.Tensor,
+    value: torch.Tensor,
+    index: torch.Tensor,
+    num_segments: int,
+) -> torch.Tensor:
+    """Apply one feature block without retaining its outer product."""
+
+    summary = segment_sum(
+        feature[..., None] * value[..., None, :],
+        index,
+        num_segments,
+    )
+    return (feature[..., None] * summary[index]).sum(dim=-2)
 
 
 class RelationMessage:
@@ -155,72 +177,6 @@ class RelationMessage:
             raise ValueError("relation messages are not compatible")
 
 
-class ValueProjection(nn.Module):
-    """Standalone packed value projection retained for advanced use."""
-
-    def __init__(self, *, scalar_width: int, num_heads: int) -> None:
-        super().__init__()
-        if scalar_width % num_heads:
-            raise ValueError("scalar_width must be divisible by num_heads")
-        self.num_heads = num_heads
-        self.head_dim = scalar_width // num_heads
-        self.scalar = nn.Linear(scalar_width, scalar_width)
-        self.odd = ChannelMix(num_heads, num_heads)
-        self.vector = PairedChannelMix(num_heads, num_heads)
-        self.tensor = PairedChannelMix(num_heads, num_heads)
-
-    def forward(self, state: ParityState) -> RelationMessage:
-        polar, axial = self.vector(state.polar_vector, state.axial_vector)
-        even_tensor, odd_tensor = self.tensor(state.even_tensor, state.odd_tensor)
-        return RelationMessage(
-            self.scalar(state.even_scalar).reshape(
-                state.num_nodes,
-                self.num_heads,
-                self.head_dim,
-            ),
-            self.odd(state.odd_scalar),
-            polar,
-            axial,
-            even_tensor,
-            odd_tensor,
-        )
-
-
-class ContentGramFeatures(nn.Module):
-    """Standalone all-irrep invariant Gram feature projection."""
-
-    def __init__(
-        self, *, scalar_width: int, num_heads: int, feature_width: int
-    ) -> None:
-        super().__init__()
-        self.num_heads = num_heads
-        self.feature_width = feature_width
-        self.scalar = nn.Linear(scalar_width, num_heads * feature_width)
-        self.odd = ChannelMix(num_heads, num_heads)
-        self.vector = PairedChannelMix(num_heads, num_heads)
-        self.tensor = PairedChannelMix(num_heads, num_heads)
-
-    def forward(self, state: ParityState) -> torch.Tensor:
-        scalar = self.scalar(state.even_scalar).reshape(
-            state.num_nodes,
-            self.num_heads,
-            self.feature_width,
-        )
-        polar, axial = self.vector(state.polar_vector, state.axial_vector)
-        even_tensor, odd_tensor = self.tensor(state.even_tensor, state.odd_tensor)
-        return torch.cat(
-            (
-                scalar,
-                self.odd(state.odd_scalar).unsqueeze(-1),
-                unit_ball(polar, 1e-8),
-                unit_ball(axial, 1e-8),
-                st_orthonormal(even_tensor),
-                st_orthonormal(odd_tensor),
-            ),
-            dim=-1,
-        )
-
-
 class RelationProjection(nn.Module):
     """Fuse value and content projections into three large tensor operations."""
 
@@ -333,150 +289,6 @@ class MercerFeatures(nn.Module):
             * multinomial[None, :]
         )
         return base[..., None] * coefficient[None, :, :] * monomials[:, None, :]
-
-
-class LocalChartMercer(nn.Module):
-    """Per-head chart-recentered degree-2 truncated-Gaussian Mercer features.
-
-    The induced pair kernel is
-    ``k(i,j) = sum_g w_ig w_jg exp(-gamma(|d_i|^2+|d_j|^2)) T2(2 gamma d_i.d_j)``
-    with ``w = sqrt(b + eps)`` a Bhattacharyya amplitude of the soft chart
-    assignment ``b``, ``d = x - c_g`` in absolute (length-scale) units, and
-    ``T2`` the degree-2 Taylor truncation of ``exp``. Recentring at chart
-    centres keeps the truncation valid at bandwidths far below the graph
-    radius, which the global Mercer sector cannot reach. The sqrt weighting
-    softens chart-boundary suppression of close pairs (sum_g sqrt(b_i b_j) = 1
-    when assignments agree), and per-head assignments stagger the remaining
-    boundaries across heads.
-    """
-
-    def __init__(
-        self, *, scalar_width: int, num_heads: int, num_charts: int, eps: float
-    ) -> None:
-        super().__init__()
-        self.num_heads = num_heads
-        self.num_charts = num_charts
-        self.eps = float(eps)
-        self.logits = nn.Linear(scalar_width, num_heads * num_charts)
-        self.radial_logits = nn.Linear(6, num_heads * num_charts, bias=False)
-        nn.init.normal_(self.radial_logits.weight, std=0.3)
-        self.head_offset = nn.Parameter(torch.randn(num_heads, num_charts))
-        self.raw_temperature = nn.Parameter(torch.zeros(num_heads))
-        # Anchors each chart to its geometric seed, in units of chart spacing.
-        # Large enough at init that the seed layout, not the near-uniform
-        # content logits, decides the partition; learnable so training can
-        # loosen it.
-        self.raw_seed_scale = nn.Parameter(torch.full((num_heads,), 2.5))
-        # Spread initial bandwidths over sigma ~ 0.5..1.2 length-scale units
-        # (5-12 Angstrom at the default 10 A scale); gamma = 1/(2 sigma^2).
-        sigma = torch.exp(
-            torch.linspace(log(0.5), log(1.2), max(num_heads, 2))[:num_heads]
-        )
-        gamma = (0.5 / sigma.square() - 0.05).clamp_min(1e-4)
-        self.raw_gamma = nn.Parameter(torch.log(torch.expm1(gamma)))
-        self.register_buffer(
-            "degree",
-            torch.tensor(SYMMETRIC_DEGREES[:10], dtype=torch.float64),
-            persistent=False,
-        )
-        self.register_buffer(
-            "degree_factorial",
-            torch.tensor(
-                tuple(float(factorial(d)) for d in SYMMETRIC_DEGREES[:10]),
-                dtype=torch.float64,
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "multinomial_sqrt",
-            torch.tensor(SYMMETRIC_MULTINOMIAL_SQRT[:10], dtype=torch.float64),
-            persistent=False,
-        )
-
-    def charts(
-        self, state: ParityState, geometry: GeometryContext
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Refined per-head assignments, recentered deltas, and bandwidths."""
-
-        dtype = state.even_scalar.dtype
-        position = geometry.absolute.to(dtype=dtype)
-        radial = radial_invariants(geometry, dtype)
-        raw = (
-            self.logits(state.even_scalar) + self.radial_logits(radial)
-        ).reshape(-1, self.num_heads, self.num_charts) + self.head_offset[None]
-        if geometry.chart_seeds is not None:
-            seeds = geometry.chart_seeds.to(dtype=dtype)
-            if seeds.shape[1] != self.num_charts:
-                raise ValueError("chart seed count must match num_charts")
-            spacing2 = geometry.chart_spacing2.to(dtype=dtype)[geometry.index]
-            seed_distance2 = (
-                (position[:, None, :] - seeds[geometry.index]).square().sum(dim=-1)
-                / spacing2[:, None]
-            )
-            seed_scale = torch.nn.functional.softplus(self.raw_seed_scale) + 0.5
-            raw = raw - seed_scale[None, :, None] * seed_distance2[:, None, :]
-        moment = torch.cat(
-            (torch.ones_like(position[:, :1]), position), dim=-1
-        )[:, None, None, :]
-
-        def centers(assignment: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            statistics = segment_sum(
-                assignment[..., None] * moment,
-                geometry.index,
-                geometry.num_segments,
-            )
-            mass = statistics[..., 0].clamp_min(self.eps)
-            return mass, statistics[..., 1:] / mass[..., None]
-
-        mass, center = centers(torch.softmax(raw, dim=-1))
-        delta = position[:, None, None, :] - center[geometry.index]
-        distance2 = delta.square().sum(dim=-1)
-        temperature = torch.nn.functional.softplus(self.raw_temperature) + 0.5
-        assignment = torch.softmax(
-            raw
-            - temperature[None, :, None] * distance2
-            - 0.25 * torch.log(mass[geometry.index] + self.eps),
-            dim=-1,
-        )
-        _, center = centers(assignment)
-        delta = position[:, None, None, :] - center[geometry.index]
-        gamma = torch.nn.functional.softplus(self.raw_gamma) + 0.05
-        return assignment, delta, gamma
-
-    def features(
-        self,
-        assignment: torch.Tensor,
-        delta: torch.Tensor,
-        gamma: torch.Tensor,
-    ) -> torch.Tensor:
-        dtype = assignment.dtype
-        base = torch.exp(-gamma[None, :, None] * delta.square().sum(dim=-1))
-        x, y, z = delta.unbind(dim=-1)
-        one = torch.ones_like(x)
-        monomials = torch.stack(
-            (one, x, y, z, x.square(), x * y, x * z, y.square(), y * z, z.square()),
-            dim=-1,
-        )
-        coefficient = (
-            torch.sqrt(
-                (2.0 * gamma[:, None]).pow(self.degree.to(dtype=dtype)[None, :])
-                / self.degree_factorial.to(dtype=dtype)[None, :]
-            )
-            * self.multinomial_sqrt.to(dtype=dtype)[None, :]
-        )
-        feature = (
-            torch.sqrt(assignment + self.eps)[..., None]
-            * base[..., None]
-            * coefficient[None, :, None, :]
-            * monomials
-        )
-        return feature.reshape(feature.shape[0], self.num_heads, -1)
-
-    def forward(
-        self, state: ParityState, geometry: GeometryContext
-    ) -> torch.Tensor:
-        assignment, delta, gamma = self.charts(state, geometry)
-        return self.features(assignment, delta, gamma)
 
 
 @dataclass(frozen=True)
@@ -611,8 +423,6 @@ class RelationFactors:
     mixture: torch.Tensor
     index: torch.Tensor
     num_segments: int
-    local_feature: torch.Tensor | None = None
-    local_trace: torch.Tensor | None = None
 
 
 class SelfAdjointRelation(nn.Module):
@@ -625,7 +435,6 @@ class SelfAdjointRelation(nn.Module):
         num_heads: int,
         feature_width: int,
         num_charts: int,
-        num_local_charts: int = 0,
         eps: float,
     ) -> None:
         super().__init__()
@@ -643,15 +452,7 @@ class SelfAdjointRelation(nn.Module):
             num_charts=num_charts,
             eps=eps,
         )
-        self.local: LocalChartMercer | None = None
-        if num_local_charts > 0:
-            self.local = LocalChartMercer(
-                scalar_width=scalar_width,
-                num_heads=num_heads,
-                num_charts=num_local_charts,
-                eps=eps,
-            )
-        self.num_kinds = 4 if self.local is not None else 3
+        self.num_kinds = 3
         self.mixture = nn.Linear(scalar_width, num_heads * self.num_kinds)
 
     def project(self, state: ParityState) -> tuple[RelationMessage, torch.Tensor]:
@@ -706,19 +507,6 @@ class SelfAdjointRelation(nn.Module):
             mercer * mercer_scale[..., None],
             atlas_feature * torch.sqrt(node_mixture[:, :, 2, None]),
         ]
-        local_feature: torch.Tensor | None = None
-        local_trace: torch.Tensor | None = None
-        if self.local is not None:
-            local_feature = self.local(state, geometry)
-            local_trace = segment_sum(
-                local_feature.square().sum(dim=-1),
-                geometry.index,
-                geometry.num_segments,
-            ).clamp_min(self.eps)
-            local_scale = torch.sqrt(
-                node_mixture[:, :, 3] / local_trace[geometry.index]
-            )
-            sectors.append(local_feature * local_scale[..., None])
         feature = torch.cat(sectors, dim=-1)
         return RelationFactors(
             feature=feature,
@@ -730,8 +518,6 @@ class SelfAdjointRelation(nn.Module):
             mixture=mixture,
             index=geometry.index,
             num_segments=geometry.num_segments,
-            local_feature=local_feature,
-            local_trace=local_trace,
         )
 
     @staticmethod
@@ -741,12 +527,36 @@ class SelfAdjointRelation(nn.Module):
         index: torch.Tensor,
         num_segments: int,
     ) -> torch.Tensor:
-        summary = segment_sum(
-            feature[..., None] * value[..., None, :],
-            index,
-            num_segments,
-        )
-        return (feature[..., None] * summary[index]).sum(dim=-2)
+        output = torch.zeros_like(value)
+        correction = torch.zeros_like(value)
+        for feature_chunk in feature.split(_GRAM_FEATURE_CHUNK_SIZE, dim=-1):
+            # Each chunk contributes Phi_c (Phi_c^T V). Summing over chunks is
+            # exactly Phi (Phi^T V). During training, non-reentrant checkpoint
+            # recomputes this block in backward instead of retaining every
+            # [N,H,chunk,D] product simultaneously.
+            if torch.is_grad_enabled() and (
+                feature_chunk.requires_grad or value.requires_grad
+            ):
+                contribution = checkpoint(
+                    _gram_chunk_action,
+                    feature_chunk,
+                    value,
+                    index,
+                    num_segments,
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+            else:
+                contribution = _gram_chunk_action(
+                    feature_chunk, value, index, num_segments
+                )
+            # Chunk reassociation otherwise moves strict float64 O(3) checks
+            # across their 5e-10 numerical tolerance on the widest relation.
+            adjusted = contribution - correction
+            updated = output + adjusted
+            correction = (updated - output) - adjusted
+            output = updated
+        return output
 
     def apply_tensor(
         self, factors: RelationFactors, value: torch.Tensor
@@ -863,15 +673,12 @@ class KrylovMixer(nn.Module):
 
 __all__ = [
     "AtlasFactors",
-    "ContentGramFeatures",
     "KrylovMixer",
-    "LocalChartMercer",
     "MercerFeatures",
     "RelationFactors",
     "RelationMessage",
     "RelationProjection",
     "SelfAdjointRelation",
-    "ValueProjection",
     "message_inner",
     "orthogonalize",
 ]

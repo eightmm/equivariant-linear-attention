@@ -1,25 +1,31 @@
-"""Minimal graph-property training example."""
-
-from __future__ import annotations
+"""Minimal token-level TriELA training step."""
 
 import torch
 
-from equivariant_linear_attention import ELA, ELAGraph
+from equivariant_linear_attention import ELAGraph, TriELA
 
-model = ELA("16x0e", "1x0e", width=64, depth=4)
+model = TriELA(
+    "16x0e",
+    "1x0e",
+    width=32,
+    pair_width=16,
+    triangle_hidden=16,
+    num_stages=1,
+    pair_blocks_per_stage=1,
+    local_blocks_per_stage=1,
+    local_points=8,
+    max_pair_tokens=64,
+)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
-for step in range(20):
-    graph = ELAGraph(
-        x=torch.randn(48, 16),
-        pos=torch.randn(48, 3),
-        batch=torch.arange(4).repeat_interleave(12),
-        y=torch.randn(4, 1),
-    )
-    output = model(graph)
-    assert output.graph_x is not None and graph.y is not None
-    loss = torch.nn.functional.mse_loss(output.graph_x, graph.y)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
-    print(step, float(loss.detach()))
+graph = ELAGraph(
+    x=torch.randn(24, 16),
+    pos=torch.randn(24, 3),
+    batch=torch.tensor([0] * 12 + [1] * 12),
+    y=torch.randn(2, 1),
+)
+output = model.forward_with_aux(graph)
+assert output.graph.graph_x is not None and graph.y is not None
+loss = torch.nn.functional.mse_loss(output.graph.graph_x, graph.y)
+loss.backward()
+optimizer.step()

@@ -1,5 +1,6 @@
-"""Canonical ELA model."""
+"""Canonical TriELA model exports."""
 
-from .ela import ELA, ELAConfig
+from .config import TriELAConfig
+from .network import TriELA, TriELAOutput
 
-__all__ = ["ELA", "ELAConfig"]
+__all__ = ["TriELA", "TriELAConfig", "TriELAOutput"]

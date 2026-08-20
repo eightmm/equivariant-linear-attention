@@ -1,7 +1,7 @@
 [project]
 name = "equivariant-linear-attention"
-version = "0.2.0"
-description = "Edge-free parity-complete O(3)-equivariant linear attention for 3D data"
+version = "0.3.0"
+description = "Pair-centric O(3)-equivariant triangle and linear attention for 3D data"
 authors = [{ name = "eightmm" }]
 requires-python = ">=3.12"
 dependencies = ["torch>=2.10"]

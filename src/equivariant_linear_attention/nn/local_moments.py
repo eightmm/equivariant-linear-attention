@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from .geometry import MomentFeatures
+from .geometry import MomentFeatures, compact_third_trace
 from .local_support import LocalSupport, wendland_c2
 from .ops import (
     SYMMETRIC_DEGREE_SLICES,
@@ -135,12 +135,11 @@ class LocalCumulantBank(nn.Module):
         *,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        relative = 0.05 + 0.95 * torch.sigmoid(
-            self.raw_relative_scale.to(dtype=dtype)
+        relative = 0.05 + 0.95 * torch.sigmoid(self.raw_relative_scale.to(dtype=dtype))
+        absolute = (
+            torch.nn.functional.softplus(self.raw_absolute_scale.to(dtype=dtype))
+            + self.eps
         )
-        absolute = torch.nn.functional.softplus(
-            self.raw_absolute_scale.to(dtype=dtype)
-        ) + self.eps
         physical = torch.sigmoid(self.raw_physical_mix.to(dtype=dtype))
         return (
             (1.0 - physical)[None, :] * support_scale[:, None] * relative[None, :]
@@ -166,9 +165,9 @@ class LocalCumulantBank(nn.Module):
             ),
             dim=-1,
         )
-        temperature = torch.nn.functional.softplus(
-            self.raw_temperature.to(dtype=dtype)
-        ) + 0.25
+        temperature = (
+            torch.nn.functional.softplus(self.raw_temperature.to(dtype=dtype)) + 0.25
+        )
         logit = (
             self.source_weight(scalar)[support.source].to(dtype=dtype)
             + self.target_weight(scalar)[support.receiver].to(dtype=dtype)
@@ -191,21 +190,27 @@ class LocalCumulantBank(nn.Module):
         num_nodes = scalar.shape[0]
         displacement = support.displacement[:, None, :] / scale[receiver, :, None]
         mass = segment_sum(weight, receiver, num_nodes).clamp_min(self.eps)
-        polar = segment_sum(
-            weight[..., None] * displacement,
-            receiver,
-            num_nodes,
-        ) / mass[..., None]
+        polar = (
+            segment_sum(
+                weight[..., None] * displacement,
+                receiver,
+                num_nodes,
+            )
+            / mass[..., None]
+        )
 
         central = displacement - polar[receiver]
         monomials = symmetric_monomials(central.reshape(-1, 3)).reshape(
             central.shape[0], central.shape[1], -1
         )
-        central_moment = segment_sum(
-            weight[..., None] * monomials,
-            receiver,
-            num_nodes,
-        ) / mass[..., None]
+        central_moment = (
+            segment_sum(
+                weight[..., None] * monomials,
+                receiver,
+                num_nodes,
+            )
+            / mass[..., None]
+        )
         second = central_moment[..., SYMMETRIC_DEGREE_SLICES[2]]
         third = central_moment[..., SYMMETRIC_DEGREE_SLICES[3]]
         fourth = central_moment[..., SYMMETRIC_DEGREE_SLICES[4]]
@@ -213,6 +218,7 @@ class LocalCumulantBank(nn.Module):
         covariance = symmetric2_to_matrix(second)
         second_scalar = covariance.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / 3.0
         even_tensor = matrix_to_st(covariance)
+        third_trace = compact_third_trace(third)
         fourth = _fourth_cumulant(fourth, covariance)
         fourth_scalar, fourth_tensor, fourth_rank4 = _fourth_features(
             fourth, eps=self.eps
@@ -223,9 +229,7 @@ class LocalCumulantBank(nn.Module):
         w = self.lane_w(polar)
         tensor_u = self.tensor_u(even_tensor)
         tensor_v = self.tensor_v(even_tensor)
-        axial = torch.cross(u, v, dim=-1) + st_commutator_vector(
-            tensor_u, tensor_v
-        )
+        axial = torch.cross(u, v, dim=-1) + st_commutator_vector(tensor_u, tensor_v)
         odd_scalar = (axial * w).sum(dim=-1)
         odd_tensor = st_cross(w, axial)
         return MomentFeatures(
@@ -236,6 +240,7 @@ class LocalCumulantBank(nn.Module):
             axial=unit_ball(axial, self.eps),
             odd_scalar=bounded_scalar(odd_scalar, self.eps),
             odd_tensor=bounded_st(odd_tensor, self.eps),
+            third_trace=unit_ball(third_trace, self.eps),
             third_tensor=bounded_compact_stf3(compact_stf3(third), self.eps),
             fourth_scalar=fourth_scalar,
             fourth_tensor=fourth_tensor,

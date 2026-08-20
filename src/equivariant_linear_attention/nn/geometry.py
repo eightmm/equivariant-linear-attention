@@ -1,18 +1,16 @@
-"""Edge-free relative moments through fourth order in compact symmetric bases."""
+"""Relative moments through fourth order in compact symmetric bases."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import comb, factorial
+from math import comb
 
 import torch
 from torch import nn
 
 from .ops import (
     SYMMETRIC_DEGREE_SLICES,
-    SYMMETRIC_DEGREES,
     SYMMETRIC_EXPONENTS,
-    SYMMETRIC_MULTINOMIAL_SQRT,
     bounded_compact_stf3,
     bounded_compact_stf4,
     bounded_scalar,
@@ -21,136 +19,13 @@ from .ops import (
     compact_stf3,
     compact_stf4,
     matrix_to_st,
-    segment_mean,
-    segment_softmax,
+    segment_count,
     segment_sum,
     st_cross,
     symmetric2_to_matrix,
     symmetric_monomials,
     work_dtype,
 )
-
-
-def greedy_farthest_seeds(
-    position: torch.Tensor,
-    index: torch.Tensor,
-    num_segments: int,
-    *,
-    num_seeds: int,
-    sharpness: float,
-    eps: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Soft farthest-point seeds, one spread set of chart anchors per segment.
-
-    A differentiable, O(3)-equivariant relaxation of greedy k-means++ seeding:
-    each seed is the soft-argmax-weighted mean of the positions farthest from
-    every seed chosen so far. Scores are invariant and normalized by the
-    segment's mean square radius, so the sharpness is scale-free; the weighted
-    mean of positions carries the rotation. Learned chart logits alone leave
-    charts clustered near the centroid, which caps the local kernel's
-    selectivity; these seeds supply the spatial spread instead.
-
-    Also returns the mean square distance from a node to its nearest seed,
-    which is the natural unit of chart spacing. Expressing the assignment
-    sharpness in that unit keeps the partition equally soft on compact and on
-    grossly expanded structures, instead of collapsing to a few hard cells
-    whenever a decoy is broken.
-    """
-
-    scale = segment_mean(
-        position.square().sum(dim=-1), index, num_segments
-    ).clamp_min(eps)[index]
-    seeds: list[torch.Tensor] = []
-    nearest2: torch.Tensor | None = None
-    for slot in range(num_seeds):
-        score = position.square().sum(dim=-1) if slot == 0 else nearest2
-        weight = segment_softmax(sharpness * score / scale, index, num_segments)
-        seed = segment_sum(weight[:, None] * position, index, num_segments)
-        seeds.append(seed)
-        distance2 = (position - seed[index]).square().sum(dim=-1)
-        nearest2 = (
-            distance2 if nearest2 is None else torch.minimum(nearest2, distance2)
-        )
-    spacing2 = segment_mean(nearest2, index, num_segments).clamp_min(eps)
-    return torch.stack(seeds, dim=1), spacing2
-
-
-def chart_density(
-    positions: torch.Tensor,
-    index: torch.Tensor,
-    num_segments: int,
-    *,
-    num_charts: int,
-    bandwidths: tuple[float, ...],
-    length_scale: float,
-    seed_sharpness: float = 16.0,
-    assignment_scale: float = 3.0,
-    eps: float = 1e-8,
-) -> torch.Tensor:
-    """Node-linear soft neighbour counts at fixed Angstrom bandwidths.
-
-    Returns ``log1p`` of ``sum_j k(i,j)`` for each bandwidth, where ``k`` is
-    the chart-recentered truncated-Gaussian kernel. Because the kernel is a
-    feature inner product, the row sum is one segment reduction rather than a
-    pairwise scan, so this is an ``O(N G)`` in-model replacement for the dense
-    ``O(N^2)`` neighbour counts that the offline diagnostic feature used.
-
-    Charts come from geometry alone, so the channel is available whether or
-    not the local relation sector is enabled.
-    """
-
-    dtype = work_dtype(positions)
-    position = positions.to(dtype=dtype)
-    index = index.to(dtype=torch.long)
-    center = segment_mean(position, index, num_segments)
-    absolute = (position - center[index]) / float(length_scale)
-    seeds, spacing2 = greedy_farthest_seeds(
-        absolute,
-        index,
-        num_segments,
-        num_seeds=num_charts,
-        sharpness=seed_sharpness,
-        eps=eps,
-    )
-    delta = absolute[:, None, :] - seeds.detach()[index]
-    distance2 = delta.square().sum(dim=-1)
-    assignment = torch.softmax(
-        -assignment_scale * distance2 / spacing2.detach()[index, None],
-        dim=-1,
-    )
-    weight = torch.sqrt(assignment + eps)
-    monomials = symmetric_monomials(delta.reshape(-1, 3)).reshape(
-        delta.shape[0], delta.shape[1], -1
-    )
-    degree = torch.tensor(SYMMETRIC_DEGREES, device=position.device, dtype=dtype)
-    degree_factorial = torch.tensor(
-        tuple(float(factorial(value)) for value in SYMMETRIC_DEGREES),
-        device=position.device,
-        dtype=dtype,
-    )
-    multinomial = torch.tensor(
-        SYMMETRIC_MULTINOMIAL_SQRT, device=position.device, dtype=dtype
-    )
-
-    channels: list[torch.Tensor] = []
-    for bandwidth in bandwidths:
-        gamma = 0.5 / (float(bandwidth) / float(length_scale)) ** 2
-        coefficient = (
-            torch.sqrt((2.0 * gamma) ** degree / degree_factorial) * multinomial
-        )
-        feature = (
-            weight[..., None]
-            * torch.exp(-gamma * distance2)[..., None]
-            * coefficient
-            * monomials
-        )
-        summary = segment_sum(feature, index, num_segments)
-        total = (feature * summary[index]).sum(dim=(-2, -1))
-        # The Gram row sum includes the node's own term; a neighbour count
-        # must not.
-        total = total - feature.square().sum(dim=(-2, -1))
-        channels.append(torch.log1p(total.clamp_min(0.0)))
-    return torch.stack(channels, dim=-1)
 
 
 @dataclass(frozen=True)
@@ -165,8 +40,6 @@ class GeometryContext:
     counts: torch.Tensor
     absolute: torch.Tensor
     absolute_radius2: torch.Tensor
-    chart_seeds: torch.Tensor | None = None
-    chart_spacing2: torch.Tensor | None = None
 
     @classmethod
     def build(
@@ -177,8 +50,6 @@ class GeometryContext:
         num_segments: int,
         eps: float,
         length_scale: float = 10.0,
-        num_seeds: int = 0,
-        seed_sharpness: float = 16.0,
     ) -> GeometryContext:
         centered, radius, normalized = centered_geometry(
             positions,
@@ -190,21 +61,6 @@ class GeometryContext:
         monomials = symmetric_monomials(normalized.to(dtype=basis_dtype))
         absolute = centered / float(length_scale)
         long_index = index.to(dtype=torch.long)
-        chart_seeds = None
-        chart_spacing2 = None
-        if num_seeds > 0:
-            # Seeds are a geometric prior, not a learned quantity: detaching
-            # keeps the soft-argmax construction out of the backward pass.
-            chart_seeds, chart_spacing2 = greedy_farthest_seeds(
-                absolute,
-                long_index,
-                num_segments,
-                num_seeds=num_seeds,
-                sharpness=seed_sharpness,
-                eps=eps,
-            )
-            chart_seeds = chart_seeds.detach()
-            chart_spacing2 = chart_spacing2.detach()
         return cls(
             positions=positions,
             centered=centered,
@@ -213,11 +69,9 @@ class GeometryContext:
             radius=radius,
             index=long_index,
             num_segments=num_segments,
-            counts=torch.bincount(long_index, minlength=num_segments),
+            counts=segment_count(long_index, num_segments),
             absolute=absolute,
             absolute_radius2=absolute.square().sum(dim=-1),
-            chart_seeds=chart_seeds,
-            chart_spacing2=chart_spacing2,
         )
 
 
@@ -254,10 +108,28 @@ class MomentFeatures:
     axial: torch.Tensor
     odd_scalar: torch.Tensor
     odd_tensor: torch.Tensor
+    # Sym^3(R^3) = 3o + 1o: retain both irreducible summands.
+    third_trace: torch.Tensor
     third_tensor: torch.Tensor
     fourth_scalar: torch.Tensor
     fourth_tensor: torch.Tensor
     fourth_rank4: torch.Tensor
+
+
+def compact_third_trace(value: torch.Tensor) -> torch.Tensor:
+    """Contract a compact symmetric rank-three tensor as ``t_a = M_abb``."""
+
+    if value.shape[-1] != 10:
+        raise ValueError("value must end with ten symmetric rank-three components")
+    xxx, xxy, xxz, xyy, _, xzz, yyy, yyz, yzz, zzz = value.unbind(dim=-1)
+    return torch.stack(
+        (
+            xxx + xyy + xzz,
+            xxy + yyy + yzz,
+            xxz + yyz + zzz,
+        ),
+        dim=-1,
+    )
 
 
 def _powers(
@@ -515,6 +387,7 @@ class AdaptiveMomentBank(nn.Module):
         second_matrix = symmetric2_to_matrix(m2)
         trace2 = second_matrix.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / 3.0
         even_tensor = matrix_to_st(second_matrix)
+        third_trace = compact_third_trace(m3)
         third_tensor = bounded_compact_stf3(compact_stf3(m3), self.eps)
 
         (
@@ -566,6 +439,10 @@ class AdaptiveMomentBank(nn.Module):
             / torch.sqrt(1.0 + axial.square().sum(dim=-1, keepdim=True) + self.eps),
             odd_scalar=bounded_scalar(odd_scalar, self.eps),
             odd_tensor=bounded_st(odd_tensor, self.eps),
+            third_trace=third_trace
+            / torch.sqrt(
+                1.0 + third_trace.square().sum(dim=-1, keepdim=True) + self.eps
+            ),
             third_tensor=third_tensor,
             fourth_scalar=bounded_scalar(fourth_scalar, self.eps),
             fourth_tensor=bounded_st(fourth_tensor, self.eps),
@@ -577,9 +454,8 @@ __all__ = [
     "AdaptiveMomentBank",
     "GeometryContext",
     "MomentFeatures",
-    "chart_density",
     "compact_centered_moments",
+    "compact_third_trace",
     "explicit_centered_moments",
-    "greedy_farthest_seeds",
     "radial_invariants",
 ]

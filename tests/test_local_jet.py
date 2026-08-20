@@ -66,12 +66,8 @@ def test_reproducing_jet_recovers_quadratic_field() -> None:
         1e-10,
     )
     torch.testing.assert_close(output.value, expected_value, atol=2e-6, rtol=2e-6)
-    torch.testing.assert_close(
-        output.gradient, expected_gradient, atol=3e-6, rtol=3e-6
-    )
+    torch.testing.assert_close(output.gradient, expected_gradient, atol=3e-6, rtol=3e-6)
     torch.testing.assert_close(
         output.laplacian, expected_laplacian, atol=3e-6, rtol=3e-6
     )
-    torch.testing.assert_close(
-        output.hessian, expected_hessian, atol=3e-6, rtol=3e-6
-    )
+    torch.testing.assert_close(output.hessian, expected_hessian, atol=3e-6, rtol=3e-6)

@@ -59,7 +59,14 @@ def segment_count(
     *,
     dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
-    count = torch.bincount(index.to(dtype=torch.long), minlength=num_segments)
+    # ``bincount`` has data-dependent output-shape metadata even when
+    # ``minlength`` is fixed, which forces a Dynamo graph break.  A fixed-size
+    # indexed reduction has the same semantics for validated non-negative
+    # segment IDs and keeps the numerical core traceable.
+    long_index = index.to(dtype=torch.long)
+    count = torch.zeros(num_segments, device=index.device, dtype=torch.long)
+    if long_index.numel():
+        count.index_add_(0, long_index, torch.ones_like(long_index))
     return count if dtype is None else count.to(dtype=dtype)
 
 
@@ -117,10 +124,16 @@ def canonical_batch(
 def interaction_index(
     batch: torch.Tensor,
     group: torch.Tensor | None,
+    *,
+    num_graphs: int | None = None,
 ) -> tuple[torch.Tensor, int, torch.Tensor]:
     if group is None:
-        num = 0 if batch.numel() == 0 else int(batch.max().item()) + 1
-        return batch, num, torch.bincount(batch, minlength=num)
+        num = (
+            num_graphs
+            if num_graphs is not None
+            else (0 if batch.numel() == 0 else int(batch.max().item()) + 1)
+        )
+        return batch, num, segment_count(batch, num)
     if group.shape != batch.shape or group.device != batch.device:
         raise ValueError("group must have shape (N,) on the batch device")
     if group.dtype not in INTEGER_DTYPES:
@@ -132,7 +145,7 @@ def interaction_index(
     _, inverse = torch.unique(pair, dim=0, sorted=True, return_inverse=True)
     inverse = inverse.to(dtype=torch.long)
     num = 0 if inverse.numel() == 0 else int(inverse.max().item()) + 1
-    return inverse, num, torch.bincount(inverse, minlength=num)
+    return inverse, num, segment_count(inverse, num)
 
 
 def centered_geometry(

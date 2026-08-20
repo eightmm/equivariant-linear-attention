@@ -1,87 +1,149 @@
 # Project contract
 
-ELA exposes exactly one public workflow:
+This repository implements one canonical pair-centric equivariant architecture
+for token-level 3D graphs and point clouds:
 
 ```text
-ELAGraph -> ELA -> ELAGraph
+ELAGraph + optional BiomolecularPairContext -> TriELA -> ELAGraph
 ```
 
-The architecture is completely edge-free. `ELAGraph` contains node irreps,
-coordinates, sample IDs, optional interaction-component IDs, optional invariant
-context, targets, and an optional coordinate mask. It contains no topology.
+`TriELA` has three state streams:
 
-The canonical layer is fixed:
+- an O(3)-equivariant node state `H` with persistent `l <= 2` parity sectors;
+- an O(3)-invariant, ordered dense pair state `Z_ij`;
+- Cartesian coordinates `X`.
+
+The pair state is persistent and may be asymmetric. It is the relational memory
+of the model; the old self-adjoint node relation is not treated as a substitute
+for pair memory.
+
+## Canonical stage
+
+The model has three stages by default. Every stage executes exactly:
 
 ```text
-adaptive exact relative moments through order four
-+ self-adjoint content/Mercer/atlas relation
-+ chart-recentered degree-2 truncated-Gaussian local relation
-+ three-term invariantly orthogonal Krylov filter
-+ parity-complete l<=2 closure with transient l=3/l=4 carriers
-+ equivariant feed-forward update
+Node/Geometry -> Pair refresh once
+
+repeat four times:
+  exact gated outgoing triangle multiplication
+  exact gated incoming triangle multiplication
+  pair SwiGLU transition
+  gated outgoing/incoming Pair -> Node summary
+  invariant pair-context injection
+  Global ELA
+  equivariant node transition
+
+repeat twice:
+  pair-conditioned Local ELA
+  equivariant node transition
+  optional coordinate update
 ```
 
-The local relation recenters truncated-Gaussian Mercer features at per-head
-soft chart centers in absolute coordinates (`length_scale` units, default 10),
-so contact-scale pair bandwidths are expressible without edges or dense pairs.
-Charts are anchored to equivariant soft farthest-point seeds computed once per
-geometry, with the assignment sharpness expressed in units of chart spacing;
-learned logits alone leave chart centers clustered near the centroid.
-`num_local_charts=0` disables the whole sector. Radial gates additionally receive
-absolute-scale invariants; per-sample RMS normalization alone no longer
-removes absolute segment scale from the core.
+The production pair operator is the exact dense PairMixer core. There is no
+runtime backend choice, approximation backend, legacy ELA wrapper, silent
+fallback, checkpoint migration path, or diagnostic model route. Selected pair
+attention, chunked triangle multiplication, low-rank/sparse pair factors, and
+distillation are research proposals, not alternate production paths.
 
-Coordinate refinement uses an SPD atlas metric and an `SE(3)` quotient
-translation/rotation/shape decomposition.
+## Mathematical contracts
 
-## Non-negotiable invariants
+For normalized pair operands `A` and `B`, every pair block applies
 
-These hold for the canonical configuration, which is the default one
-(`local_points=0`). They are what the architecture is for, and no default may
-be changed in a way that breaks them.
+```text
+M_out[i,j] = sum_k A[i,k] * B[j,k]
+M_in [i,j] = sum_k A[k,j] * B[k,i]
+```
 
-- no explicit or inferred edges;
-- no dense `N x N` matrix;
-- no pair or tuple hidden state;
-- no sparse gather/scatter execution path;
-- no topology cache or checkpoint migration layer;
-- O(3), translation, and permutation equivariance;
-- exact interaction-component isolation;
-- node-linear memory at fixed representation order;
-- one PyTorch implementation without PyG, DGL, Triton, or custom kernels.
+with independent projections and gates for the two directions. Operands are
+masked before contraction, contracted features are normalized, output
+projections are zero-initialized, and padded residuals are masked back to exact
+zero.
 
-## Non-canonical diagnostic path
+Pair-to-node coupling uses normalized gated row and column summaries. It never
+adds an arbitrary `Z_ij` bias to global linear-attention logits, because that
+would destroy separability. Pair-derived quantities that gate equivariant node
+sectors are invariant scalars.
 
-`local_points > 0` enables a pointwise local-jet branch that is explicitly
-**not** part of the architecture. It exists for one purpose: to measure the
-hard-cutoff upper bound that the edge-free sectors are trying to reach.
+The local operator may gather `Z_ij` on its truncated geometric support. It uses
+relative displacements and invariant pair gates to produce parity-valid
+equivariant messages. Coordinates may change only after a local block. Geometry
+and support are rebuilt after such a change and otherwise reused.
 
-It breaks the invariants above and the breakage is not repairable within them.
-Each layer's support is a bounded k-nearest-neighbour set built by a
-per-segment `cdist` and `topk`, which means inferred edges, a sparse
-gather/scatter path, and `O(kN)` transient pair memory. The per-segment Python
-loop also defeats batching, so it is slow; that is not being fixed, because
-speed is not what the path is for.
+Pair embedding may use left/right even scalars, norms and same-irrep inner
+products, distance RBFs, relative token index, chain/entity/molecule metadata,
+bond metadata, and external invariant pair features. Raw Cartesian vector or
+tensor components never enter a scalar MLP.
 
-Nothing is constructed when it is off, so the default model's parameter set is
-exactly the canonical one. `describe()` reports `canonical_edge_free_path` and
-`transient_local_support` so a checkpoint can never be silently mistaken for
-the canonical model. Results produced with it must be labelled as such and must
-not be reported as edge-free ELA results. See `docs/LOCALITY_TRACK.md`.
+## Symmetry and isolation
 
-## Current empirical validation
+- O(3), translation, and node-permutation equivariance are exact up to floating
+  point error in deterministic evaluation. Training-time row dropout is
+  equivariant in distribution, as in standard stochastic regularization.
+- Pair states and pair-derived node contexts are O(3)-invariant.
+- Permuting nodes permutes both pair axes consistently.
+- Different batch samples never share pair slots.
+- `group` is an interaction-isolation mask inside a sample.
+- Chain and entity identifiers are features, never isolation masks; cross-chain
+  and protein-ligand pairs are preserved.
+- `Z_ij` is ordered and is not symmetrized. Only symmetric prediction heads,
+  such as a distogram head, may symmetrize their input.
 
-The current real-data validation is ATOM3D Protein Structure Ranking (PSR),
-using the official split-by-year data. The prediction unit is one CASP decoy;
-the immutable grouping key is its CASP target ID; the target is `GDT_TS`.
-Checkpoint selection uses validation mean per-target Spearman correlation.
+## Scale and intended domain
 
-Inference receives the decoy's heavy-atom coordinates and atom features. The
-`element-local` diagnostic additionally receives 3.5/5.0 Angstrom heavy-atom
-neighbor counts computed from those same coordinates. Those counts use an
-offline dense distance calculation and are not part of the edge-free ELA core.
+The model is intended for residue/token/coarse-grained 3D graphs and point
+clouds. Dense all-atom protein pair state is outside the default contract; an
+all-atom decoder should use a separate sparse local representation.
 
-The PSR test split has already been evaluated for multiple development
-variants. Its current results are descriptive and must not be treated as an
-untouched final benchmark. See `docs/PSR_RESULTS.md` and
-`docs/EXPERIMENTS.jsonl` for the full retrospective record and limitations.
+The complexity claim is deliberately narrow:
+
+- persistent pair memory: `O(B * N_max^2 * C_z)`;
+- exact triangle multiplication: `O(B * N_max^3 * C_h)`;
+- Global ELA node transport: linear in node count at fixed feature order;
+- Local ELA support: `O(kN)` for generic positions; exact cutoff ties are all
+  retained to preserve permutation equivariance, giving an `O(N^2)` degenerate
+  worst case.
+
+The complete architecture is not a linear-scaling model. `max_pair_tokens`
+must reject accidental oversized dense layouts, and size bucketing is expected
+for ragged batches.
+
+## Public surface
+
+The canonical package exports:
+
+```text
+TriELA
+TriELAConfig
+TriELAOutput
+ELAGraph
+BiomolecularPairContext
+DensePairState
+```
+
+Input and output irreps use the existing parity-aware `l <= 2` layout. The
+model returns `ELAGraph` from `forward`; `forward_with_aux` additionally returns
+the final ordered pair state, masked distogram logits, and tensor diagnostics.
+Pair-head loss weights belong to training code, not the model.
+
+`ELAGraph.x` and `ELAGraph.pos` must share a floating-point dtype and device.
+Structural index tensors are immutable after validation. No PyG, DGL, Triton,
+or custom kernel dependency is part of the canonical implementation.
+
+## Evidence gate
+
+Completion requires CPU verification of:
+
+- exact outgoing/incoming algebra against naive einsum references;
+- pair packing, padding, transpose, graph/group isolation, and token guard;
+- ordered/asymmetric pair behavior;
+- finite first and second derivatives in float64;
+- FP32 and CPU BF16 autocast forward/backward without NaN or Inf;
+- O(3), reflection, translation, and permutation behavior of node, pair, and
+  coordinate outputs;
+- distogram masking and head-only symmetrization;
+- executable benchmark and component-ablation scripts;
+- the repository fast gate.
+
+Historical QM9/LBA/PSR results describe earlier architectures and are not
+evidence for this model. New accuracy claims require new runs tied to the exact
+source revision and data split.

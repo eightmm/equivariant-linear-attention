@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from equivariant_linear_attention.advanced import (
+from equivariant_linear_attention.irreps import (
     IrrepLayout,
     TensorProductPlan,
     matrix_to_st5,
