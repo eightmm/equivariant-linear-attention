@@ -258,3 +258,69 @@ def test_adaptive_moment_bank_is_translation_invariant() -> None:
         reference.__dict__.values(), moved.__dict__.values(), strict=True
     ):
         torch.testing.assert_close(left, right, atol=2e-11, rtol=2e-11)
+
+
+def test_fp32_moments_rejoin_explicit_bfloat16_global_closure() -> None:
+    generator = torch.Generator().manual_seed(109)
+    nodes, width, heads, rank = 6, 16, 2, 4
+    dtype = torch.bfloat16
+    index = torch.tensor([0, 0, 0, 1, 1, 1])
+    position = torch.randn(
+        nodes,
+        3,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    even_scalar = torch.randn(
+        nodes,
+        width,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    state = ParityState(
+        even_scalar,
+        torch.randn(nodes, heads, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+    )
+    moments = AdaptiveMomentBank(
+        scalar_width=width,
+        rank=rank,
+        eps=1e-6,
+    ).to(dtype=dtype)(
+        even_scalar,
+        GeometryContext.build(position, index, num_segments=2, eps=1e-6),
+    )
+    assert all(value.dtype == torch.float32 for value in moments.__dict__.values())
+    message = RelationMessage(
+        torch.randn(
+            nodes,
+            heads,
+            width // heads,
+            generator=generator,
+            dtype=dtype,
+        ),
+        torch.randn(nodes, heads, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+    )
+    closure = EquivariantClosure(
+        scalar_width=width,
+        num_heads=heads,
+        head_dim=width // heads,
+        moment_rank=rank,
+        eps=1e-6,
+    ).to(dtype=dtype)
+    output = closure(state, message, moments)
+
+    assert all(value.dtype == dtype for value in output.as_tuple())
+    assert all(bool(torch.isfinite(value).all()) for value in output.as_tuple())
+    sum(value.float().square().mean() for value in output.as_tuple()).backward()
+    assert position.grad is not None and bool(torch.isfinite(position.grad).all())
+    assert even_scalar.grad is not None and bool(torch.isfinite(even_scalar.grad).all())

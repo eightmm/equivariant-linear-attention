@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+import equivariant_linear_attention.nn.local_jet as local_jet_module
 from equivariant_linear_attention.nn.geometry import GeometryContext
 from equivariant_linear_attention.nn.local_jet import ReproducingLocalJet
 from equivariant_linear_attention.nn.local_support import build_local_support
@@ -71,3 +72,58 @@ def test_reproducing_jet_recovers_quadratic_field() -> None:
         output.laplacian, expected_laplacian, atol=3e-6, rtol=3e-6
     )
     torch.testing.assert_close(output.hessian, expected_hessian, atol=3e-6, rtol=3e-6)
+
+
+def test_explicit_bfloat16_jet_factorization_stays_in_fp32(
+    monkeypatch,
+) -> None:
+    generator = torch.Generator().manual_seed(527)
+    position = torch.randn(8, 3, generator=generator, dtype=torch.bfloat16)
+    index = torch.zeros(8, dtype=torch.long)
+    support = build_local_support(
+        _geometry(position, index), max_points=8, chunk_size=4, eps=1e-6
+    )
+    scalar = torch.randn(
+        8,
+        2,
+        generator=generator,
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    jet = ReproducingLocalJet(
+        scalar_width=2,
+        probe_rank=2,
+        num_scales=2,
+        eps=1e-6,
+    ).to(dtype=torch.bfloat16)
+    observed: list[tuple[torch.dtype, torch.dtype]] = []
+    original_cholesky = local_jet_module.torch.linalg.cholesky
+    original_cholesky_solve = local_jet_module.torch.cholesky_solve
+
+    def recording_cholesky(system: torch.Tensor) -> torch.Tensor:
+        factor = original_cholesky(system)
+        observed.append((system.dtype, factor.dtype))
+        return factor
+
+    def recording_cholesky_solve(
+        right: torch.Tensor,
+        factor: torch.Tensor,
+    ) -> torch.Tensor:
+        observed.append((right.dtype, factor.dtype))
+        return original_cholesky_solve(right, factor)
+
+    monkeypatch.setattr(local_jet_module.torch.linalg, "cholesky", recording_cholesky)
+    monkeypatch.setattr(
+        local_jet_module.torch,
+        "cholesky_solve",
+        recording_cholesky_solve,
+    )
+    output = jet(scalar, support)
+
+    assert observed == [
+        (torch.float32, torch.float32),
+        (torch.float32, torch.float32),
+    ]
+    assert bool(torch.isfinite(output.value).all())
+    output.value.square().mean().backward()
+    assert scalar.grad is not None and bool(torch.isfinite(scalar.grad).all())

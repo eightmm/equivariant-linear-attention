@@ -21,6 +21,22 @@ class LocalFeatureJet:
     confidence: torch.Tensor
     scale: torch.Tensor
 
+    def to_dtype(self, dtype: torch.dtype) -> LocalFeatureJet:
+        """Cast accumulated jet features at their learned-module boundary."""
+
+        return LocalFeatureJet(
+            value=self.value.to(dtype=dtype),
+            gradient=self.gradient.to(dtype=dtype),
+            laplacian=self.laplacian.to(dtype=dtype),
+            hessian=self.hessian.to(dtype=dtype),
+            wavelet_value=self.wavelet_value.to(dtype=dtype),
+            wavelet_gradient=self.wavelet_gradient.to(dtype=dtype),
+            wavelet_laplacian=self.wavelet_laplacian.to(dtype=dtype),
+            wavelet_hessian=self.wavelet_hessian.to(dtype=dtype),
+            confidence=self.confidence.to(dtype=dtype),
+            scale=self.scale.to(dtype=dtype),
+        )
+
 
 def decode_local_jet(
     coefficient: torch.Tensor,

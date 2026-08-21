@@ -174,6 +174,46 @@ def test_tiny_cpu_bfloat16_autocast_forward_backward_is_finite(
     assert all(bool(torch.isfinite(gradient).all()) for gradient in gradients)
 
 
+@pytest.mark.parametrize("update_positions", [False, True])
+def test_tiny_explicit_bfloat16_forward_backward_is_finite(
+    update_positions: bool,
+) -> None:
+    generator = torch.Generator().manual_seed(14 + int(update_positions))
+    model = _tiny_model(update_positions=update_positions).to(
+        dtype=torch.bfloat16
+    ).train()
+    x = torch.randn(
+        4,
+        3,
+        generator=generator,
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    pos = torch.randn(
+        4,
+        3,
+        generator=generator,
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    output = model.forward_with_aux(ELAGraph(x, pos))
+    loss = (
+        output.graph.x.float().square().mean()
+        + output.distogram_logits.float().square().mean()
+    )
+    loss.backward()
+
+    assert output.graph.x.dtype == torch.bfloat16
+    assert output.graph.pos.dtype == torch.bfloat16
+    assert x.grad is not None and bool(torch.isfinite(x.grad).all())
+    assert pos.grad is not None and bool(torch.isfinite(pos.grad).all())
+    gradients = [
+        parameter.grad for parameter in model.parameters() if parameter.grad is not None
+    ]
+    assert gradients
+    assert all(bool(torch.isfinite(gradient).all()) for gradient in gradients)
+
+
 def test_forward_returns_graph_and_auxiliary_path_keeps_ordered_pair_state() -> None:
     torch.manual_seed(13)
     model = _tiny_model(pair_feature_dim=2).eval()

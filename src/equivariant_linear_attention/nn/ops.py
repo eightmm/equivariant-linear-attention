@@ -44,6 +44,26 @@ def work_dtype(*values: torch.Tensor) -> torch.dtype:
     )
 
 
+def solve_in_work_dtype(matrix: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    """Solve a small dense system in the canonical numerical work dtype.
+
+    CUDA and CPU dense solvers do not consistently support ``float16`` or
+    ``bfloat16`` inputs.  More importantly, these atlas and quotient systems
+    are sensitive to low-precision factorization even where a backend accepts
+    it.  Cast both operands to one deterministic FP32/FP64 work dtype, disable
+    ambient autocast for the factorization, and restore the right-hand-side
+    dtype at the carrier boundary.
+    """
+
+    dtype = work_dtype(matrix, right)
+    with torch.autocast(device_type=matrix.device.type, enabled=False):
+        solution = torch.linalg.solve(
+            matrix.to(dtype=dtype),
+            right.to(dtype=dtype),
+        )
+    return solution.to(dtype=right.dtype)
+
+
 def segment_sum(
     value: torch.Tensor, index: torch.Tensor, num_segments: int
 ) -> torch.Tensor:

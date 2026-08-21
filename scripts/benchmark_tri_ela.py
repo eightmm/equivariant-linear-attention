@@ -113,6 +113,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-blocks-per-stage", type=int, default=1)
     parser.add_argument("--max-pair-tokens", type=int, default=512)
     parser.add_argument(
+        "--update-positions",
+        action="store_true",
+        help="enable the canonical stagewise coordinate update path",
+    )
+    parser.add_argument(
         "--backends",
         default="eager",
         help="comma-separated subset of eager,compile",
@@ -197,6 +202,7 @@ def main() -> None:
                 local_blocks_per_stage=args.local_blocks_per_stage,
                 pair_dropout=0.0,
                 max_pair_tokens=args.max_pair_tokens,
+                update_positions=args.update_positions,
             ).to(device=device, dtype=dtype)
             if not isinstance(model.config, TriELAConfig):
                 raise TypeError("TriELA.config must expose the public TriELAConfig")
@@ -286,6 +292,7 @@ def main() -> None:
                 "pair_blocks_per_stage": args.pair_blocks_per_stage,
                 "local_blocks_per_stage": args.local_blocks_per_stage,
                 "max_pair_tokens": args.max_pair_tokens,
+                "update_positions": args.update_positions,
             },
             "environment": {
                 "torch_version": torch.__version__,

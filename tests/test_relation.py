@@ -334,3 +334,55 @@ def test_atlas_assignment_is_rotation_invariant_and_metric_equivariant() -> None
         atol=4e-10,
         rtol=4e-10,
     )
+
+
+def test_atlas_explicit_bfloat16_uses_finite_fp32_solve() -> None:
+    generator = torch.Generator().manual_seed(209)
+    nodes, width, heads = 6, 16, 2
+    index = torch.tensor([0, 0, 0, 1, 1, 1])
+    dtype = torch.bfloat16
+    position = torch.randn(
+        nodes,
+        3,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    even_scalar = torch.randn(
+        nodes,
+        width,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    state = ParityState(
+        even_scalar,
+        torch.randn(nodes, heads, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 3, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+        torch.randn(nodes, heads, 5, generator=generator, dtype=dtype),
+    )
+    relation = SelfAdjointRelation(
+        scalar_width=width,
+        num_heads=heads,
+        feature_width=4,
+        num_charts=3,
+        eps=1e-6,
+    ).to(dtype=dtype)
+    factors = relation.build(
+        state,
+        GeometryContext.build(position, index, num_segments=2, eps=1e-6),
+    )
+
+    assert factors.atlas.assignment.dtype == dtype
+    assert factors.atlas.node_metric.dtype == dtype
+    assert bool(torch.isfinite(factors.atlas.assignment).all())
+    assert bool(torch.isfinite(factors.atlas.node_metric).all())
+    loss = (
+        factors.atlas.assignment.float().square().mean()
+        + factors.atlas.node_metric.float().square().mean()
+    )
+    loss.backward()
+    assert position.grad is not None and bool(torch.isfinite(position.grad).all())
+    assert even_scalar.grad is not None and bool(torch.isfinite(even_scalar.grad).all())

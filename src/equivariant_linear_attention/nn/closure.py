@@ -125,6 +125,9 @@ class EquivariantClosure(nn.Module):
         message: RelationMessage,
         moments: MomentFeatures,
     ) -> ParityState:
+        # Moment reductions intentionally accumulate in FP32 under mixed
+        # precision. They rejoin the learned equivariant carrier only here.
+        moments = moments.to_dtype(state.even_scalar.dtype)
         scalar_message = message.scalar.flatten(1)
         pp = (state.polar_vector * message.polar_vector).sum(dim=-1)
         aa = (state.axial_vector * message.axial_vector).sum(dim=-1)

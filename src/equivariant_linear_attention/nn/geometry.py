@@ -115,6 +115,24 @@ class MomentFeatures:
     fourth_tensor: torch.Tensor
     fourth_rank4: torch.Tensor
 
+    def to_dtype(self, dtype: torch.dtype) -> MomentFeatures:
+        """Rejoin a model carrier after FP32 geometric accumulation."""
+
+        return MomentFeatures(
+            mass=self.mass.to(dtype=dtype),
+            polar=self.polar.to(dtype=dtype),
+            second_scalar=self.second_scalar.to(dtype=dtype),
+            even_tensor=self.even_tensor.to(dtype=dtype),
+            axial=self.axial.to(dtype=dtype),
+            odd_scalar=self.odd_scalar.to(dtype=dtype),
+            odd_tensor=self.odd_tensor.to(dtype=dtype),
+            third_trace=self.third_trace.to(dtype=dtype),
+            third_tensor=self.third_tensor.to(dtype=dtype),
+            fourth_scalar=self.fourth_scalar.to(dtype=dtype),
+            fourth_tensor=self.fourth_tensor.to(dtype=dtype),
+            fourth_rank4=self.fourth_rank4.to(dtype=dtype),
+        )
+
 
 def compact_third_trace(value: torch.Tensor) -> torch.Tensor:
     """Contract a compact symmetric rank-three tensor as ``t_a = M_abb``."""

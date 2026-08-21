@@ -15,6 +15,7 @@ from .ops import (
     SYMMETRIC_MULTINOMIAL_SQRT,
     segment_mean,
     segment_sum,
+    solve_in_work_dtype,
     st_inner,
     st_orthonormal,
     symmetric2_to_matrix,
@@ -349,7 +350,7 @@ class ManifoldAtlas(nn.Module):
         ridge = torch.nn.functional.softplus(self.raw_ridge)[None, :] + self.eps
         metric = covariance + (ridge * trace.clamp_min(1.0))[..., None, None] * identity
         delta = position[:, None, :] - center[geometry.index]
-        solved = torch.linalg.solve(
+        solved = solve_in_work_dtype(
             metric[geometry.index], delta.unsqueeze(-1)
         ).squeeze(-1)
         distance2 = (delta * solved).sum(dim=-1).clamp(min=0.0, max=64.0)

@@ -86,6 +86,9 @@ class LocalEquivariantClosure(nn.Module):
         state: ParityState,
         local: PointwiseLocalFeatures,
     ) -> ParityState:
+        # Cumulants and local polynomial solves accumulate in FP32. Cast once
+        # at the learned closure boundary, not inside their numerical cores.
+        local = local.to_dtype(state.even_scalar.dtype)
         projected = self.project(local)
         # Autocast may return BF16 linear projections while the persistent
         # equivariant carrier remains FP32.  Geometric bilinear operations

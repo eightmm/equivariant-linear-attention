@@ -3,9 +3,12 @@
 ## Status
 
 As of the pair-centric architecture migration, there is no registered QM9,
-LBA, PSR, promoted runtime, or promoted peak-memory result produced by
-canonical TriELA. CPU implementation evidence through E3 is recorded below;
-it is not external-task or systems-promotion evidence.
+LBA, PSR, or promoted external-task result produced by canonical TriELA. CPU
+implementation evidence through E3 and a first single-device CUDA systems
+diagnostic are recorded below. The CUDA diagnostic establishes executable
+BF16/FP32 paths and an initial memory boundary; it is not yet a promoted E4
+result because it has no dispersion estimate, compile comparison, ragged
+batching, or independent reproduction.
 
 All retained measurements from earlier revisions are **historical pre-TriELA
 results**. They used different state, relation, local, and execution contracts
@@ -29,8 +32,8 @@ completed experiments.
 | E1: algebra | exact triangle/mask/layout references | verified on CPU |
 | E2: symmetry | O(3), translation, permutation, directed pair tests | verified on CPU/eval |
 | E3: numerics | FP32/BF16 forward/backward and second derivatives | verified on CPU |
-| E4: systems | reproducible time and peak-memory benchmark | entry points smoke-tested; not promoted |
-| E5: learning | controlled component ablations | mechanism smoke only; not promoted |
+| E4: systems | reproducible time and peak-memory benchmark | single-device eager diagnostic through 512 tokens; not promoted |
+| E5: learning | controlled component ablations | 12-step mechanism smoke only; not promoted |
 | E6: external task | fresh QM9/LBA/PSR or another declared task | not run |
 
 No statement at one level may be promoted to a stronger level. Passing an
@@ -38,7 +41,7 @@ equivariance test does not imply useful learning; a one-batch overfit does not
 establish validation accuracy; a forward-only benchmark does not establish
 training efficiency.
 
-### 1.1 CPU implementation snapshot (2026-08-20)
+### 1.1 CPU implementation snapshot (2026-08-21)
 
 The source revision is the repository commit containing this document. The
 following checks were run from its code tree without a GPU:
@@ -51,10 +54,11 @@ uv build
 
 Observed implementation evidence:
 
-- 76 tests passed; statement coverage was 89.47%;
+- 82 tests passed; statement coverage was 89.51%;
 - exact FP32/FP64 outgoing and incoming triangle references passed;
 - first and second derivatives passed, including zero-motion diagnostics;
-- CPU BF16 autocast forward/backward passed with coordinate updates off/on;
+- CPU BF16 autocast and explicit-BF16 forward/backward passed with coordinate
+  updates off/on;
 - O(3), reflection, translation, graph/group isolation, ordinary permutation,
   and coincident-cutoff permutation regressions passed;
 - wheel contents imported with the six-symbol canonical public surface;
@@ -67,10 +71,68 @@ for every requested removal: pair FFN `2.43e-4`, outgoing `1.96e-4`, incoming
 These values only prove that the hooks bind to live mechanisms after a tiny
 fit; they are not accuracy estimates or component promotion evidence.
 
-Not run: CUDA, GPU peak memory, full scaling grids, multi-seed learning, QM9,
-LBA, PSR, or comparison with an external baseline. PyTorch emitted one
-environment warning because NumPy is not installed; the package itself does
-not require NumPy and all checks completed.
+Not run in this CPU snapshot: CUDA, GPU peak memory, full scaling grids,
+multi-seed learning, QM9, LBA, PSR, or comparison with an external baseline.
+PyTorch emitted one environment warning because NumPy is not installed; the
+package itself does not require NumPy and all checks completed.
+
+### 1.2 CUDA implementation snapshot (2026-08-21)
+
+One queued run used an NVIDIA RTX PRO 6000 Blackwell (95 GiB), PyTorch
+2.13.0+cu130, eager execution, batch size one, and the canonical default
+architecture (`width=128`, `Cz=64`, `Ch=64`, three stages, four pair/global
+blocks and two local blocks per stage, 5,722,731 parameters). BF16
+forward/backward completed through the default `max_pair_tokens=512` guard:
+
+| Tokens | Forward | Forward + backward | Train peak allocated |
+|---:|---:|---:|---:|
+| 32 | 222.72 ms | 826.58 ms | 0.22 GiB |
+| 64 | 228.87 ms | 843.62 ms | 0.54 GiB |
+| 128 | 222.03 ms | 824.90 ms | 1.67 GiB |
+| 256 | 231.13 ms | 843.84 ms | 5.93 GiB |
+| 384 | 232.54 ms | 856.86 ms | 12.86 GiB |
+| 512 | 266.40 ms | 923.54 ms | 22.45 GiB |
+
+The same N=64 default model in FP32 used 217.52 ms forward, 811.24 ms
+forward/backward, and 0.86 GiB peak allocated. BF16 therefore reduced this
+small-point train peak to 63% of FP32 but was not faster; launch and Python
+overhead dominate this grid. These timings include `ELAGraph` ingestion but
+exclude optimizer state and data loading.
+
+The isolated exact gated triangle (`Cz=Ch=64`, mean of outgoing/incoming)
+showed the expected larger-shape GPU regime:
+
+| Dtype | Tokens | Forward | Forward + backward | Train peak allocated |
+|---|---:|---:|---:|---:|
+| FP32 | 512 | 2.51 ms | 8.88 ms | 1.13 GiB |
+| FP32 | 1024 | 15.98 ms | 66.08 ms | 4.33 GiB |
+| BF16 | 512 | 1.23 ms | 4.89 ms | 0.79 GiB |
+| BF16 | 1024 | 9.61 ms | 41.62 ms | 2.96 GiB |
+| BF16 | 2048 | 45.98 ms | 206.90 ms | 11.64 GiB |
+
+At BF16 N=2048, activation checkpointing reduced train peak from 11.64 to
+8.14 GiB (30%) while increasing the step from 206.90 to 251.89 ms (22%). It
+is therefore not the default and is useful only near a memory boundary.
+
+The queued run exposed two explicit-BF16 implementation defects before the
+successful measurement: unsupported low-precision dense solves, followed by
+an FP32 moment/BF16 learned-closure mismatch. The canonical numerical path now
+solves atlas and coordinate systems in FP32 (FP64 remains FP64), keeps
+moment/local-jet accumulation in FP32, and casts once where those statistics
+rejoin the learned carrier. Explicit BF16 forward/backward also completed with
+stagewise coordinate updates enabled on the small GPU smoke.
+
+A 12-update synthetic intervention run produced nonzero `graph_x` RMS changes
+for every live mechanism: pair FFN 0.00243, outgoing 0.00431, incoming 0.00631,
+pair-to-node 0.04246, global 0.04270, and local 0.01528. This establishes live
+connectivity only; it is not evidence that any component improves validation
+accuracy.
+
+Raw local artifacts are under `outputs/tri_ela_gpu_20260821/` and are ignored
+by Git. The compact metrics and complete launch commands are retained in
+`docs/EXPERIMENTS.jsonl`. Not evaluated: compile, ragged batches, optimizer
+state, GPU symmetry tolerances, multi-seed learning, QM9, LBA, or an external
+baseline.
 
 ## 2. Source and run provenance
 

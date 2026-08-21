@@ -20,6 +20,15 @@ class PointwiseLocalFeatures:
     jet: LocalFeatureJet
     support_scale: torch.Tensor
 
+    def to_dtype(self, dtype: torch.dtype) -> PointwiseLocalFeatures:
+        """Cast FP32 local statistics when they rejoin the carrier."""
+
+        return PointwiseLocalFeatures(
+            moments=self.moments.to_dtype(dtype),
+            jet=self.jet.to_dtype(dtype),
+            support_scale=self.support_scale.to(dtype=dtype),
+        )
+
 
 class PointwiseLocalGeometry(nn.Module):
     """Compute compact cumulants and latent differential jets per point."""

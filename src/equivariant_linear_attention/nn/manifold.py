@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from .heads import EquivariantVectorHead
-from .ops import segment_sum
+from .ops import segment_sum, solve_in_work_dtype
 from .state import ParityState
 
 
@@ -45,7 +45,7 @@ def quotient_rigid_shape_step(
     )
     scale = inertia.diagonal(dim1=-2, dim2=-1).sum(dim=-1).div(3.0).clamp_min(1.0)
     ridge = eps + 8.0 * torch.finfo(raw.dtype).eps * scale
-    angular_velocity = torch.linalg.solve(
+    angular_velocity = solve_in_work_dtype(
         inertia + ridge[:, None, None] * identity,
         angular_momentum.unsqueeze(-1),
     ).squeeze(-1)
@@ -109,7 +109,7 @@ class QuotientCoordinateUpdate(nn.Module):
         raw = torch.sigmoid(self.node_gate(state.even_scalar)) * raw
         identity = torch.eye(3, device=raw.device, dtype=raw.dtype)
         metric = node_metric.to(dtype=raw.dtype) + self.eps * identity
-        natural = torch.linalg.solve(metric, raw.unsqueeze(-1)).squeeze(-1)
+        natural = solve_in_work_dtype(metric, raw.unsqueeze(-1)).squeeze(-1)
 
         mask = selected.to(dtype=state.even_scalar.dtype).unsqueeze(-1)
         selected_count = segment_sum(

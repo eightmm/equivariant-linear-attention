@@ -129,3 +129,40 @@ def test_coordinate_update_mask_bound_and_double_backward() -> None:
     second = torch.autograd.grad(gradient.square().sum(), pos)[0]
     assert torch.isfinite(gradient).all()
     assert torch.isfinite(second).all()
+
+
+def test_quotient_step_explicit_bfloat16_uses_finite_fp32_solve() -> None:
+    generator = torch.Generator().manual_seed(409)
+    dtype = torch.bfloat16
+    index = torch.tensor([0, 0, 0, 1, 1, 1])
+    raw = torch.randn(
+        6,
+        3,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    positions = torch.randn(
+        6,
+        3,
+        generator=generator,
+        dtype=dtype,
+        requires_grad=True,
+    )
+    step = quotient_rigid_shape_step(
+        raw,
+        positions,
+        index,
+        num_segments=2,
+        counts=torch.tensor([3, 3]),
+        selected=torch.ones(6, dtype=torch.bool),
+        component_gates=torch.ones(2, 3, dtype=dtype),
+        max_step=0.2,
+        eps=1e-6,
+    )
+
+    assert step.dtype == dtype
+    assert bool(torch.isfinite(step).all())
+    step.float().square().mean().backward()
+    assert raw.grad is not None and bool(torch.isfinite(raw.grad).all())
+    assert positions.grad is not None and bool(torch.isfinite(positions.grad).all())
